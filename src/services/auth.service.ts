@@ -3,13 +3,11 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
   signToken,
-} from "@/lib/auth";
-import {
   hashPassword,
   comparePassword,
   encryptSSID,
   decryptSSID,
-} from "@/lib/auth-crypto";
+} from "@/lib/auth";
 import type { JWTPayload } from "@/lib/auth";
 
 export interface UserProfile {

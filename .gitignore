@@ -17,3 +17,5 @@ nul
 
 # debug
 npm-debug.log*
+
+.vercel
