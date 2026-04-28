@@ -7,7 +7,9 @@ import { botSessions, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { encryptSSID, decryptSSID } from "@/lib/auth";
 import { connectPocketOption, disconnectPocketOption } from "@/services/trading.service";
+import { startBotRunner, stopBotRunner, getBotRunner, isBotRunning, getAllRunnersStatus } from "@/services/bot-runner";
 import { hasActiveSubscription } from "@/services/payment.service";
+import { TIMEFRAMES, type Timeframe } from "@/lib/trading";
 
 export async function GET(req: NextRequest) {
   try {
@@ -25,7 +27,14 @@ export async function GET(req: NextRequest) {
 
     const activeSession = sessions.find((s) => s.isRunning);
 
-    return NextResponse.json({ sessions, activeSession: activeSession || null });
+    // Include BotRunner status if running
+    const runnerStatus = getBotRunner(payload.userId)?.getStatus() || null;
+
+    return NextResponse.json({
+      sessions,
+      activeSession: activeSession || null,
+      runnerStatus,
+    });
   } catch (error) {
     return handleApiError(error, "Bot GET");
   }
@@ -47,7 +56,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { action, mode, ssid } = parsed.data;
+    const { action, mode, botType, ssid, asset, timeframe } = parsed.data;
 
     // Check subscription
     const hasAccess = await hasActiveSubscription(payload.userId);
@@ -64,7 +73,23 @@ export async function POST(req: NextRequest) {
       .where(eq(users.id, payload.userId));
 
     if (action === "START") {
-      // Stop existing sessions
+      // Validate timeframe
+      const selectedTimeframe = timeframe || "1m";
+      if (!TIMEFRAMES.includes(selectedTimeframe as Timeframe)) {
+        return NextResponse.json(
+          { error: "Timeframe invalide" },
+          { status: 400 }
+        );
+      }
+
+      const selectedAsset = asset || "EUR/USD";
+      const selectedBotType = botType || "signal";
+      const selectedMode = mode || user.tradeMode;
+
+      // Stop existing BotRunner
+      stopBotRunner(payload.userId);
+
+      // Stop existing sessions in DB
       await db
         .update(botSessions)
         .set({ isRunning: false, stoppedAt: new Date() })
@@ -82,9 +107,8 @@ export async function POST(req: NextRequest) {
 
       const encryptedSsid = rawSsid ? encryptSSID(rawSsid) : "";
 
-      // If LIVE mode and SSID provided, connect to PocketOption
-      const selectedMode = mode || user.tradeMode;
-      if (selectedMode === "LIVE" && rawSsid) {
+      // Connect to PocketOption (needed for real candle data in both DEMO and LIVE)
+      if (rawSsid) {
         const connectResult = await connectPocketOption(payload.userId, rawSsid);
         if (!connectResult.success) {
           return NextResponse.json(
@@ -101,6 +125,9 @@ export async function POST(req: NextRequest) {
           sessionToken: encryptedSsid,
           isRunning: true,
           mode: selectedMode,
+          botType: selectedBotType,
+          asset: selectedAsset,
+          timeframe: selectedTimeframe,
           totalTrades: 0,
           wins: 0,
           losses: 0,
@@ -116,8 +143,25 @@ export async function POST(req: NextRequest) {
           .where(eq(users.id, payload.userId));
       }
 
-      return NextResponse.json({ success: true, session, action: "STARTED" });
+      // Start the BotRunner background loop
+      const runner = startBotRunner({
+        userId: payload.userId,
+        botType: selectedBotType as "signal" | "auto",
+        asset: selectedAsset,
+        timeframe: selectedTimeframe as Timeframe,
+        mode: selectedMode as "DEMO" | "LIVE",
+      });
+
+      return NextResponse.json({
+        success: true,
+        session,
+        action: "STARTED",
+        runnerStatus: runner.getStatus(),
+      });
     } else if (action === "STOP") {
+      // Stop the BotRunner
+      stopBotRunner(payload.userId);
+
       // Disconnect PocketOption
       disconnectPocketOption(payload.userId);
 

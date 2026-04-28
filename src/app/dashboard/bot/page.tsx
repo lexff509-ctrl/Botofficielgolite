@@ -6,6 +6,9 @@ import DashboardLayout from "@/components/DashboardLayout";
 interface BotSession {
   id: number;
   mode: string;
+  botType: string;
+  asset: string;
+  timeframe: string;
   isRunning: boolean;
   totalTrades: number;
   wins: number;
@@ -15,15 +18,47 @@ interface BotSession {
   stoppedAt: string | null;
 }
 
+interface RunnerStatus {
+  userId: number;
+  botType: "signal" | "auto";
+  asset: string;
+  timeframe: string;
+  mode: "DEMO" | "LIVE";
+  running: boolean;
+  paused: boolean;
+  signalsGenerated: number;
+  tradesExecuted: number;
+  consecutiveErrors: number;
+  lastSignalAt: number | null;
+  startedAt: string;
+}
+
+const ASSETS = [
+  "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
+  "USD/CAD", "EUR/GBP", "BTC/USD", "ETH/USD",
+];
+
+const TIMEFRAMES = [
+  { value: "5s", label: "5 secondes" },
+  { value: "10s", label: "10 secondes" },
+  { value: "15s", label: "15 secondes" },
+  { value: "30s", label: "30 secondes" },
+  { value: "1m", label: "1 minute" },
+  { value: "3m", label: "3 minutes" },
+  { value: "5m", label: "5 minutes" },
+];
+
 export default function BotPage() {
   const [sessions, setSessions] = useState<BotSession[]>([]);
   const [activeSession, setActiveSession] = useState<BotSession | null>(null);
+  const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("DEMO");
   const [ssid, setSsid] = useState("");
   const [user, setUser] = useState<Record<string, unknown> | null>(null);
   const [botType, setBotType] = useState<"signal" | "auto">("signal");
-  const [signalCount, setSignalCount] = useState(0);
+  const [asset, setAsset] = useState("EUR/USD");
+  const [timeframe, setTimeframe] = useState("1m");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -43,8 +78,17 @@ export default function BotPage() {
       const res = await fetch("/api/bot");
       const data = await res.json();
       if (data.sessions) setSessions(data.sessions);
-      if (data.activeSession) setActiveSession(data.activeSession);
-      else setActiveSession(null);
+      if (data.activeSession) {
+        setActiveSession(data.activeSession);
+        // Sync UI state from active session
+        if (data.activeSession.botType) setBotType(data.activeSession.botType);
+        if (data.activeSession.asset) setAsset(data.activeSession.asset);
+        if (data.activeSession.timeframe) setTimeframe(data.activeSession.timeframe);
+      } else {
+        setActiveSession(null);
+      }
+      if (data.runnerStatus) setRunnerStatus(data.runnerStatus);
+      else setRunnerStatus(null);
     } catch {}
   }, []);
 
@@ -53,14 +97,14 @@ export default function BotPage() {
     fetchSessions();
   }, [fetchUser, fetchSessions]);
 
-  // Simulate signal generation for bot signal mode
+  // Poll runner status while running
   useEffect(() => {
-    if (!activeSession || botType !== "signal") return;
+    if (!activeSession?.isRunning) return;
     const interval = setInterval(() => {
-      setSignalCount((c) => c + 1);
-    }, 15000);
+      fetchSessions();
+    }, 10000);
     return () => clearInterval(interval);
-  }, [activeSession, botType]);
+  }, [activeSession, fetchSessions]);
 
   const handleBotAction = async (action: "START" | "STOP") => {
     setLoading(true);
@@ -70,7 +114,14 @@ export default function BotPage() {
       const res = await fetch("/api/bot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, mode, ssid: ssid || undefined }),
+        body: JSON.stringify({
+          action,
+          mode,
+          botType,
+          asset,
+          timeframe,
+          ssid: ssid || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -79,6 +130,7 @@ export default function BotPage() {
         setSuccess(
           action === "START" ? "Bot démarré avec succès!" : "Bot arrêté."
         );
+        if (data.runnerStatus) setRunnerStatus(data.runnerStatus);
         fetchSessions();
       }
     } catch {
@@ -118,30 +170,32 @@ export default function BotPage() {
           <div className="grid grid-cols-2 gap-4">
             <button
               onClick={() => setBotType("signal")}
+              disabled={isRunning}
               className={`p-4 rounded-xl border-2 text-left transition-all ${
                 botType === "signal"
                   ? "border-cyan-500/50 bg-cyan-500/10"
                   : "border-slate-700 hover:border-slate-600"
-              }`}
+              } disabled:opacity-50`}
             >
               <div className="text-2xl mb-2">📊</div>
               <div className="font-bold text-white">Bot Signal</div>
               <div className="text-xs text-slate-400 mt-1">
-                Génère des signaux CALL/PUT. Vous tradez manuellement.
+                Génère des signaux CALL/PUT basés sur les données réelles. Vous tradez manuellement.
               </div>
             </button>
             <button
               onClick={() => setBotType("auto")}
+              disabled={isRunning}
               className={`p-4 rounded-xl border-2 text-left transition-all ${
                 botType === "auto"
                   ? "border-violet-500/50 bg-violet-500/10"
                   : "border-slate-700 hover:border-slate-600"
-              }`}
+              } disabled:opacity-50`}
             >
               <div className="text-2xl mb-2">🤖</div>
               <div className="font-bold text-white">Bot Automatique</div>
               <div className="text-xs text-slate-400 mt-1">
-                Trade automatiquement avec votre SSID PocketOption.
+                Trade automatiquement si confiance {">="} 70%. Requiert SSID PocketOption.
               </div>
             </button>
           </div>
@@ -151,6 +205,37 @@ export default function BotPage() {
         <div className="glass-card rounded-xl p-5">
           <div className="text-slate-400 text-xs font-medium mb-4">CONFIGURATION</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Asset Selector */}
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">Actif</label>
+              <select
+                value={asset}
+                onChange={(e) => setAsset(e.target.value)}
+                disabled={isRunning}
+                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
+              >
+                {ASSETS.map((a) => (
+                  <option key={a} value={a} className="bg-slate-900">{a}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Timeframe Selector */}
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">Timeframe</label>
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value)}
+                disabled={isRunning}
+                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
+              >
+                {TIMEFRAMES.map((tf) => (
+                  <option key={tf.value} value={tf.value} className="bg-slate-900">{tf.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Mode Selector */}
             <div>
               <label className="block text-slate-400 text-xs mb-1.5">Mode de Trading</label>
               <div className="flex gap-2">
@@ -165,7 +250,7 @@ export default function BotPage() {
                           ? "border-blue-500/50 bg-blue-500/10 text-blue-400"
                           : "border-green-500/50 bg-green-500/10 text-green-400"
                         : "border-slate-700 text-slate-400 hover:border-slate-600"
-                    }`}
+                    } disabled:opacity-50`}
                   >
                     {m === "DEMO" ? "🔵 DEMO" : "🔴 LIVE"}
                   </button>
@@ -178,10 +263,11 @@ export default function BotPage() {
               </p>
             </div>
 
+            {/* SSID Input */}
             <div>
               <label className="block text-slate-400 text-xs mb-1.5">
                 SSID PocketOption{" "}
-                <span className="text-slate-600">(requis pour le bot automatique)</span>
+                <span className="text-slate-600">(requis pour les données réelles)</span>
               </label>
               <input
                 type="password"
@@ -212,15 +298,15 @@ export default function BotPage() {
               <div className="flex items-center gap-3">
                 <div
                   className={`w-3 h-3 rounded-full ${
-                    isRunning ? "bg-emerald-400 animate-pulse" : "bg-slate-500"
+                    isRunning ? "bg-emerald-400 animate-pulse" : runnerStatus?.paused ? "bg-yellow-400" : "bg-slate-500"
                   }`}
                 />
                 <span className="font-bold text-white text-lg">
-                  {isRunning ? "En cours d'exécution" : "Arrêté"}
+                  {runnerStatus?.paused ? "En pause" : isRunning ? "En cours d'exécution" : "Arrêté"}
                 </span>
                 {isRunning && activeSession && (
                   <span className="text-xs text-slate-400">
-                    Mode: {activeSession.mode}
+                    {activeSession.botType === "signal" ? "📊 Signal" : "🤖 Auto"} · {activeSession.asset} · {activeSession.timeframe}
                   </span>
                 )}
               </div>
@@ -240,9 +326,10 @@ export default function BotPage() {
           </div>
 
           {isRunning && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               {[
-                { label: "Trades", value: activeSession?.totalTrades || 0, color: "text-white" },
+                { label: "Signaux", value: runnerStatus?.signalsGenerated ?? activeSession?.totalTrades ?? 0, color: "text-cyan-400" },
+                { label: "Trades", value: runnerStatus?.tradesExecuted ?? activeSession?.totalTrades ?? 0, color: "text-white" },
                 { label: "Victoires", value: activeSession?.wins || 0, color: "text-emerald-400" },
                 { label: "Défaites", value: activeSession?.losses || 0, color: "text-red-400" },
                 {
@@ -259,10 +346,18 @@ export default function BotPage() {
             </div>
           )}
 
-          {isRunning && botType === "signal" && (
+          {isRunning && runnerStatus?.paused && (
+            <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-center">
+              <div className="text-yellow-400 text-sm font-medium">
+                ⚠️ Bot en pause - {runnerStatus.consecutiveErrors} erreurs consécutives
+              </div>
+            </div>
+          )}
+
+          {isRunning && !runnerStatus?.paused && (
             <div className="mt-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl p-3 text-center">
               <div className="text-cyan-400 text-sm font-medium">
-                📡 {signalCount} signaux générés · Analyse en cours...
+                📡 {runnerStatus?.signalsGenerated ?? 0} signaux générés · {runnerStatus?.tradesExecuted ?? 0} trades exécutés · Analyse en temps réel...
               </div>
             </div>
           )}
@@ -283,10 +378,12 @@ export default function BotPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-slate-800">
+                    <th className="text-left text-xs text-slate-400 px-4 py-3">Type</th>
+                    <th className="text-left text-xs text-slate-400 px-4 py-3">Actif</th>
+                    <th className="text-left text-xs text-slate-400 px-4 py-3">TF</th>
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Mode</th>
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Statut</th>
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Trades</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3">Victoires</th>
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Profit</th>
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Démarré</th>
                   </tr>
@@ -294,6 +391,13 @@ export default function BotPage() {
                 <tbody>
                   {sessions.map((session) => (
                     <tr key={session.id} className="border-b border-slate-800/50 hover:bg-white/5">
+                      <td className="px-4 py-3">
+                        <span className="text-sm">
+                          {session.botType === "auto" ? "🤖" : "📊"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-white">{session.asset || "-"}</td>
+                      <td className="px-4 py-3 text-sm text-slate-300">{session.timeframe || "-"}</td>
                       <td className="px-4 py-3">
                         <span
                           className={`px-2 py-0.5 rounded text-xs font-bold ${
@@ -318,7 +422,6 @@ export default function BotPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-white">{session.totalTrades}</td>
-                      <td className="px-4 py-3 text-sm text-emerald-400">{session.wins}</td>
                       <td className="px-4 py-3 text-sm font-mono">
                         <span className={parseFloat(session.totalProfit) >= 0 ? "text-emerald-400" : "text-red-400"}>
                           ${parseFloat(session.totalProfit).toFixed(2)}

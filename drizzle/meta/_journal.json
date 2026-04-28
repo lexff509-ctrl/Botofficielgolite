@@ -8,6 +8,13 @@
       "when": 1777263923874,
       "tag": "0000_clear_kingpin",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777315617224,
+      "tag": "0001_sour_invisible_woman",
+      "breakpoints": true
     }
   ]
 }

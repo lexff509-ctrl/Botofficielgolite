@@ -38,6 +38,8 @@ export const tradeResultEnum = pgEnum("trade_result", [
 
 export const userRoleEnum = pgEnum("user_role", ["ADMIN", "CLIENT"]);
 
+export const botTypeEnum = pgEnum("bot_type", ["signal", "auto"]);
+
 // Users table
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -130,6 +132,9 @@ export const botSessions = pgTable("bot_sessions", {
   sessionToken: text("session_token").notNull(),
   isRunning: boolean("is_running").default(false).notNull(),
   mode: tradeModeEnum("mode").default("DEMO").notNull(),
+  botType: botTypeEnum("bot_type").default("signal").notNull(),
+  asset: varchar("asset", { length: 50 }).default("EUR/USD").notNull(),
+  timeframe: varchar("timeframe", { length: 20 }).default("1m").notNull(),
   totalTrades: integer("total_trades").default(0),
   wins: integer("wins").default(0),
   losses: integer("losses").default(0),

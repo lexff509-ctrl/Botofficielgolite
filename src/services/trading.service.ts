@@ -3,11 +3,11 @@ import { signals, trades, users } from "@/db/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import {
   generateSignal,
-  generateMockCandles,
   type Timeframe,
   type Signal,
   TIMEFRAMES,
 } from "@/lib/trading";
+import { candleCache } from "@/lib/candle-cache";
 import { getDecryptedSSID } from "@/services/auth.service";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
 
@@ -39,7 +39,17 @@ export async function generateAndSaveSignal(
     return { signal: null, saved: null, error: "Timeframe invalide" };
   }
 
-  const candles = generateMockCandles(100);
+  // Use real candle data from CandleCache
+  const candles = candleCache.getCandlesForTimeframe(
+    selectedAsset,
+    selectedTimeframe as Timeframe,
+    100
+  );
+
+  if (candles.length < 50) {
+    return { signal: null, saved: null, error: "Pas assez de données de marché (min 50 bougies requises)" };
+  }
+
   const signal = generateSignal(
     candles,
     selectedAsset,
@@ -239,6 +249,8 @@ export async function connectPocketOption(
   try {
     await client.connect();
     activeConnections.set(userId, client);
+    // Register client with candle cache for real-time data
+    candleCache.setClient(client);
     return { success: true };
   } catch (err) {
     return {
@@ -253,6 +265,10 @@ export function disconnectPocketOption(userId: number): void {
   if (client) {
     try { client.disconnect(); } catch {}
     activeConnections.delete(userId);
+    // Clear candle cache if no more active connections
+    if (activeConnections.size === 0) {
+      candleCache.clear();
+    }
   }
 }
 

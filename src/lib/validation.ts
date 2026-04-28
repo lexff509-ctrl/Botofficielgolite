@@ -19,6 +19,7 @@ export const registerSchema = z.object({
 export const botActionSchema = z.object({
   action: z.enum(["START", "STOP"]),
   mode: z.enum(["DEMO", "LIVE"]).optional(),
+  botType: z.enum(["signal", "auto"]).optional(),
   ssid: z.string().optional(),
   timeframe: z.string().optional(),
   asset: z.string().optional(),

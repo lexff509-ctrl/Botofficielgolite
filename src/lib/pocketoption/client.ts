@@ -18,7 +18,7 @@ interface TradeResult {
   tradeId: string;
 }
 
-interface CandleData {
+export interface CandleData {
   asset: string;
   open: number;
   high: number;
@@ -45,6 +45,9 @@ export class PocketOptionClient {
     string,
     ((candle: CandleData) => void)[]
   >();
+  private activeSubscriptions = new Map<string, { asset: string; size: number }>();
+  private reconnectAttempts = 0;
+  private maxReconnectDelay = 60000;
 
   constructor(ssid: string) {
     this.ssid = ssid;
@@ -69,6 +72,7 @@ export class PocketOptionClient {
         this.ws.on("open", () => {
           clearTimeout(timeout);
           this.connected = true;
+          this.reconnectAttempts = 0;
 
           // Subscribe to candles for all assets
           this.sendMessage({
@@ -78,6 +82,17 @@ export class PocketOptionClient {
               params: { asset: "*", size: 60 },
             },
           });
+
+          // Re-subscribe to previously active subscriptions
+          for (const [, sub] of this.activeSubscriptions) {
+            this.sendMessage({
+              name: "subscribe",
+              msg: {
+                name: "candle-generated",
+                params: { asset: sub.asset, size: sub.size },
+              },
+            });
+          }
 
           // Start heartbeat
           this.heartbeatInterval = setInterval(() => {
@@ -99,12 +114,14 @@ export class PocketOptionClient {
         this.ws.on("close", () => {
           this.connected = false;
           this.cleanup();
-          // Auto-reconnect after 5 seconds
+          // Exponential backoff: 5s → 10s → 20s → 40s → 60s max
+          const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+          this.reconnectAttempts++;
           setTimeout(() => {
             if (!this.connected) {
               this.connect().catch(() => {});
             }
-          }, 5000);
+          }, delay);
         });
 
         this.ws.on("error", (err: Error) => {
@@ -213,6 +230,32 @@ export class PocketOptionClient {
     });
   }
 
+  // Request historical candle data
+  async requestCandleHistory(asset: string, size: number, count: number): Promise<CandleData[]> {
+    try {
+      const response = (await this.sendRequest({
+        name: "get-candles",
+        msg: { asset, period: size, size: count },
+      })) as Record<string, unknown>;
+
+      const msg = response.msg as Record<string, unknown> | undefined;
+      if (!msg) return [];
+
+      const candlesArr = Array.isArray(msg.candles) ? msg.candles : Array.isArray(msg) ? msg : [];
+      return candlesArr.map((c: Record<string, unknown>) => ({
+        asset,
+        open: Number(c.open || 0),
+        high: Number(c.high || 0),
+        low: Number(c.low || 0),
+        close: Number(c.close || 0),
+        volume: Number(c.volume || 0),
+        timestamp: Number(c.time || c.timestamp || 0),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   // Place a real trade on PocketOption
   async placeTrade(request: TradeRequest): Promise<TradeResult> {
     try {
@@ -245,20 +288,28 @@ export class PocketOptionClient {
   }
 
   // Subscribe to real-time candles for an asset
-  onCandle(asset: string, callback: (candle: CandleData) => void): () => void {
+  onCandle(asset: string, callback: (candle: CandleData) => void, size = 60): () => void {
     if (!this.candleListeners.has(asset)) {
       this.candleListeners.set(asset, []);
     }
     this.candleListeners.get(asset)!.push(callback);
 
+    // Track this subscription for reconnection
+    const subKey = `${asset}:${size}`;
+    if (!this.activeSubscriptions.has(subKey)) {
+      this.activeSubscriptions.set(subKey, { asset, size });
+    }
+
     // Send subscription for this specific asset
-    this.sendMessage({
-      name: "subscribe",
-      msg: {
-        name: "candle-generated",
-        params: { asset, size: 60 },
-      },
-    });
+    if (this.connected) {
+      this.sendMessage({
+        name: "subscribe",
+        msg: {
+          name: "candle-generated",
+          params: { asset, size },
+        },
+      });
+    }
 
     // Return unsubscribe function
     return () => {
