@@ -1,8 +1,16 @@
 // PocketOption WebSocket client
 // Based on real Socket.IO Engine.IO v4 protocol
 // Reference: https://github.com/Mastaaa1987/PocketOptionAPI-v2
+//
+// Connection flow:
+// 1. HTTP GET /socket.io/?EIO=4&transport=polling → get sid
+// 2. WebSocket connect wss://host/socket.io/?EIO=4&transport=websocket&sid=xxx
+// 3. Server sends "0{...}" (Engine.IO OPEN) → client sends "40" (Socket.IO CONNECT)
+// 4. Server sends "40{sid:...}" → client sends 42["auth",...] (SSID)
+// 5. Server sends 451-["successauth",...] → authenticated!
 
 import WebSocket from "ws";
+import https from "https";
 
 // ============ Types ============
 
@@ -39,9 +47,9 @@ interface TradeResult {
 
 // ============ Constants ============
 
-const WS_URLS = {
-  demo: "wss://demo-api-eu.po.market/socket.io/?EIO=4&transport=websocket",
-  real: "wss://api-eu.po.market/socket.io/?EIO=4&transport=websocket",
+const HOSTS = {
+  demo: "demo-api-eu.po.market",
+  real: "api-eu.po.market",
 };
 
 const WS_HEADERS = {
@@ -120,44 +128,65 @@ export class PocketOptionClient {
     this.isDemo = isDemo ?? this.parseIsDemoFromSsid();
     this.intentionallyClosed = false;
 
-    const url = this.isDemo ? WS_URLS.demo : WS_URLS.real;
+    const host = this.isDemo ? HOSTS.demo : HOSTS.real;
+
+    // Direct WebSocket connection (like Python reference implementation)
+    const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
+    console.log(`[PO] Connecting WebSocket to ${host}...`);
 
     return new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(url, { headers: WS_HEADERS });
+        this.ws = new WebSocket(wsUrl, {
+          headers: WS_HEADERS,
+          handshakeTimeout: 15000,
+        });
 
         const timeout = setTimeout(() => {
           reject(new Error("Connection timeout (15s)"));
           this.ws?.close();
         }, 15000);
 
+        this.ws.on("open", () => {
+          console.log("[PO] WebSocket connected, waiting for handshake...");
+        });
+
         this.ws.on("message", (raw: WebSocket.Data) => {
           try {
+            // PocketOption server may send text protocol messages as binary Buffers.
+            // Check if the buffer starts with a known text prefix before routing.
+            let text: string | null = null;
             if (Buffer.isBuffer(raw)) {
-              this.handleBinaryMessage(raw);
+              text = raw.toString("utf8");
             } else if (typeof raw === "string") {
-              this.handleTextMessage(
-                raw,
-                resolve,
-                reject,
-                timeout
-              );
-            } else if (ArrayBuffer.isView(raw) && !(raw instanceof Uint8Array)) {
-              this.handleBinaryMessage(Buffer.from(raw as ArrayBuffer));
+              text = raw;
             } else {
-              this.handleTextMessage(
-                raw.toString(),
-                resolve,
-                reject,
-                timeout
-              );
+              text = raw.toString();
+            }
+
+            // Check if this is a text protocol message (Engine.IO / Socket.IO)
+            const firstChar = text.charAt(0);
+            if (
+              firstChar === "0" || // Engine.IO OPEN
+              firstChar === "2" || // Engine.IO PING
+              firstChar === "3" || // Engine.IO PONG
+              firstChar === "4" || // Socket.IO (40, 42, 451-)
+              text.startsWith('42["ps"]') // heartbeat
+            ) {
+              this.handleTextMessage(text, resolve, reject, timeout);
+            } else {
+              // Binary data (balance, order, tick data, etc.)
+              const buf = Buffer.isBuffer(raw)
+                ? raw
+                : Buffer.from(typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer));
+              this.handleBinaryMessage(buf);
             }
           } catch (err) {
             console.error("[PO] Message handling error:", err);
           }
         });
 
-        this.ws.on("close", () => {
+        this.ws.on("close", (code: number, reason: Buffer) => {
+          console.log(`[PO] WebSocket closed. Code: ${code}, Reason: ${reason.toString()}`);
           this.connected = false;
           this.authenticated = false;
           this.cleanup();
@@ -168,9 +197,7 @@ export class PocketOptionClient {
               this.maxReconnectDelay
             );
             this.reconnectAttempts++;
-            console.log(
-              `[PO] Disconnected. Reconnecting in ${delay}ms...`
-            );
+            console.log(`[PO] Disconnected. Reconnecting in ${delay}ms...`);
             setTimeout(() => {
               if (!this.connected && !this.intentionallyClosed) {
                 this.connect(this.isDemo).catch(() => {});
@@ -180,6 +207,7 @@ export class PocketOptionClient {
         });
 
         this.ws.on("error", (err: Error) => {
+          console.error(`[PO] WebSocket error: ${err.message}`);
           clearTimeout(timeout);
           this.connected = false;
           this.authenticated = false;
@@ -189,6 +217,59 @@ export class PocketOptionClient {
       } catch (err) {
         reject(err);
       }
+    });
+  }
+
+  /**
+   * HTTP polling handshake - required by Socket.IO before WebSocket upgrade
+   */
+  private pollingHandshake(host: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const options: https.RequestOptions = {
+        hostname: host,
+        path: "/socket.io/?EIO=4&transport=polling",
+        method: "GET",
+        headers: {
+          ...WS_HEADERS,
+          Accept: "*/*",
+        },
+      };
+
+      const req = https.request(options, (res) => {
+        let data = "";
+        res.on("data", (chunk: Buffer) => {
+          data += chunk.toString();
+        });
+        res.on("end", () => {
+          try {
+            // Response format: "0{"sid":"xxx","upgrades":["websocket"],...}"
+            if (data.startsWith("0")) {
+              const jsonStr = data.substring(1);
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.sid) {
+                resolve(parsed.sid);
+              } else {
+                reject(new Error("No sid in polling response"));
+              }
+            } else {
+              reject(new Error(`Unexpected polling response: ${data.substring(0, 100)}`));
+            }
+          } catch (err) {
+            reject(new Error(`Failed to parse polling response: ${err}`));
+          }
+        });
+      });
+
+      req.on("error", (err) => {
+        reject(new Error(`Polling handshake failed: ${err.message}`));
+      });
+
+      req.setTimeout(10000, () => {
+        req.destroy();
+        reject(new Error("Polling handshake timeout"));
+      });
+
+      req.end();
     });
   }
 
@@ -211,6 +292,8 @@ export class PocketOptionClient {
     reject?: (error: Error) => void,
     timeout?: ReturnType<typeof setTimeout>
   ): void {
+    console.log(`[PO] << ${message.substring(0, 120)}`);
+
     // Engine.IO OPEN: "0{sid:...}"
     if (message.startsWith("0")) {
       this.ws?.send("40"); // Socket.IO CONNECT
@@ -224,8 +307,9 @@ export class PocketOptionClient {
     }
 
     // Socket.IO CONNECT ACK: "40{sid:...}"
-    if (message.startsWith("40") && message.includes("sid")) {
+    if (message.startsWith("40")) {
       // Send SSID auth message
+      console.log("[PO] Socket.IO connected, sending auth...");
       this.ws?.send(this.ssid);
       return;
     }
@@ -239,8 +323,7 @@ export class PocketOptionClient {
             console.error("[PO] NotAuthorized - invalid SSID");
             this.authenticated = false;
             if (timeout) clearTimeout(timeout);
-            if (reject)
-              reject(new Error("NotAuthorized: SSID invalide"));
+            if (reject) reject(new Error("NotAuthorized: SSID invalide"));
             this.ws?.close();
           }
         }
@@ -254,12 +337,7 @@ export class PocketOptionClient {
       try {
         const data = JSON.parse(jsonPart);
         if (Array.isArray(data) && data.length >= 1) {
-          this.handleSocketIOEvent(
-            data[0],
-            data[1],
-            resolve,
-            timeout
-          );
+          this.handleSocketIOEvent(data[0], data[1], resolve, timeout);
         }
       } catch (err) {
         console.error("[PO] Failed to parse 451- message:", err);
@@ -276,12 +354,14 @@ export class PocketOptionClient {
     resolve?: (value: void) => void,
     timeout?: ReturnType<typeof setTimeout>
   ): void {
+    console.log(`[PO] Event: ${eventName}`);
+
     switch (eventName) {
       case "successauth":
         this.authenticated = true;
         this.connected = true;
         this.reconnectAttempts = 0;
-        console.log("[PO] Authenticated successfully");
+        console.log("[PO] Authenticated successfully!");
 
         this.startHeartbeats();
 
@@ -290,17 +370,13 @@ export class PocketOptionClient {
 
         // Re-subscribe to previously active symbols
         for (const [, sub] of this.activeSubscriptions) {
-          this.sendEvent([
-            "changeSymbol",
-            { asset: sub.asset, period: sub.size },
-          ]);
+          this.sendEvent(["changeSymbol", { asset: sub.asset, period: sub.size }]);
         }
 
         this.onAuthCallbacks.forEach((cb) => cb());
         break;
 
       case "successupdateBalance":
-        // Balance update acknowledged
         break;
 
       case "successopenOrder":
@@ -312,7 +388,6 @@ export class PocketOptionClient {
         break;
 
       case "successcloseOrder":
-        // Order closed
         break;
 
       case "loadHistoryPeriod":
@@ -346,7 +421,6 @@ export class PocketOptionClient {
     try {
       const message = JSON.parse(buffer.toString());
 
-      // Balance data: {"balance": ..., "uid": ..., "isDemo": ...}
       if (typeof message === "object" && message !== null && "balance" in message) {
         this.lastBalance = {
           balance: Number(message.balance),
@@ -356,7 +430,6 @@ export class PocketOptionClient {
         return;
       }
 
-      // Order data: {"requestId": "buy", ...}
       if (
         typeof message === "object" &&
         message !== null &&
@@ -367,7 +440,6 @@ export class PocketOptionClient {
         return;
       }
 
-      // History period data (binary variant): {"data": [...]}
       if (
         this.loadHistoryPeriodFlag &&
         typeof message === "object" &&
@@ -379,17 +451,14 @@ export class PocketOptionClient {
         return;
       }
 
-      // UpdateStream tick data: [[asset_id, timestamp, price], ...]
       if (this.updateStreamFlag && Array.isArray(message)) {
         this.updateStreamFlag = false;
-        // Tick data - we can use server timestamp from this
         if (message.length > 0 && Array.isArray(message[0]) && message[0].length >= 3) {
           console.log("[PO] Received tick data");
         }
         return;
       }
 
-      // Closed deals
       if (this.updateClosedDealsFlag && Array.isArray(message)) {
         this.updateClosedDealsFlag = false;
         this.closedDealsData = message;
@@ -406,9 +475,9 @@ export class PocketOptionClient {
     const asset = this.currentSymbol?.asset;
     if (!asset) return;
 
-    // Parse candles: [[time, open, close, high, low], ...]
     const candlesRaw = data.candles;
     if (Array.isArray(candlesRaw) && candlesRaw.length > 0) {
+      console.log(`[PO] Received ${candlesRaw.length} candles for ${asset}`);
       for (const can of candlesRaw) {
         if (Array.isArray(can) && can.length >= 5) {
           const candle: CandleData = {
@@ -425,20 +494,14 @@ export class PocketOptionClient {
       }
     }
 
-    // Parse tick history: [[time, price], ...]
     const historyRaw = data.history;
     if (Array.isArray(historyRaw) && historyRaw.length > 0) {
-      console.log(
-        `[PO] Received ${historyRaw.length} ticks for ${asset}`
-      );
+      console.log(`[PO] Received ${historyRaw.length} ticks for ${asset}`);
     }
   }
 
   // ============ Commands ============
 
-  /**
-   * Subscribe to real-time data for an asset at a given period
-   */
   changeSymbol(asset: string, period: number): void {
     this.currentSymbol = { asset, period };
     const subKey = `${asset}:${period}`;
@@ -446,9 +509,6 @@ export class PocketOptionClient {
     this.sendEvent(["changeSymbol", { asset, period }]);
   }
 
-  /**
-   * Request historical candle data
-   */
   loadHistoryPeriod(
     asset: string,
     period: number,
@@ -457,19 +517,10 @@ export class PocketOptionClient {
   ): void {
     this.sendEvent([
       "loadHistoryPeriod",
-      {
-        asset,
-        index: endTime,
-        time: endTime,
-        offset,
-        period,
-      },
+      { asset, index: endTime, time: endTime, offset, period },
     ]);
   }
 
-  /**
-   * Open a trade on PocketOption
-   */
   openOrder(
     asset: string,
     amount: number,
@@ -479,30 +530,16 @@ export class PocketOptionClient {
   ): void {
     this.sendEvent([
       "openOrder",
-      {
-        asset,
-        amount,
-        action,
-        isDemo,
-        requestId: "buy",
-        optionType: 100,
-        time,
-      },
+      { asset, amount, action, isDemo, requestId: "buy", optionType: 100, time },
     ]);
   }
 
-  /**
-   * Request account balance
-   */
   getBalances(): void {
     this.sendEvent({ name: "get-balances", version: "1.0" });
   }
 
   // ============ Async Request Methods ============
 
-  /**
-   * Get historical candle data (waits for response)
-   */
   async requestCandleHistory(
     asset: string,
     period: number,
@@ -516,7 +553,6 @@ export class PocketOptionClient {
     const endTime = Math.floor(Date.now() / 1000);
     this.loadHistoryPeriod(asset, period, endTime, count);
 
-    // Wait for response (up to 10 seconds)
     for (let i = 0; i < 100; i++) {
       if (this.historyPeriodData !== null) break;
       await new Promise((r) => setTimeout(r, 100));
@@ -540,9 +576,6 @@ export class PocketOptionClient {
       .sort((a, b) => a.timestamp - b.timestamp);
   }
 
-  /**
-   * Subscribe to real-time candle updates
-   */
   onCandle(
     asset: string,
     callback: (candle: CandleData) => void,
@@ -553,18 +586,15 @@ export class PocketOptionClient {
     }
     this.candleListeners.get(asset)!.push(callback);
 
-    // Track subscription
     const subKey = `${asset}:${size}`;
     if (!this.activeSubscriptions.has(subKey)) {
       this.activeSubscriptions.set(subKey, { asset, size });
     }
 
-    // Subscribe via changeSymbol
     if (this.authenticated) {
       this.changeSymbol(asset, size);
     }
 
-    // Return unsubscribe function
     return () => {
       const listeners = this.candleListeners.get(asset);
       if (listeners) {
@@ -574,9 +604,6 @@ export class PocketOptionClient {
     };
   }
 
-  /**
-   * Place a trade and wait for result
-   */
   async placeTrade(request: {
     asset: string;
     direction: "CALL" | "PUT";
@@ -591,15 +618,8 @@ export class PocketOptionClient {
     this.successOpenOrderFlag = false;
 
     const action = request.direction === "CALL" ? "call" : "put";
-    this.openOrder(
-      request.asset,
-      request.amount,
-      action,
-      this.isDemo ? 1 : 0,
-      request.duration
-    );
+    this.openOrder(request.asset, request.amount, action, this.isDemo ? 1 : 0, request.duration);
 
-    // Wait for response (up to 30 seconds)
     const startTime = Date.now();
     while (Date.now() - startTime < 30000) {
       if (this.orderData !== null && this.successOpenOrderFlag) break;
@@ -622,9 +642,6 @@ export class PocketOptionClient {
     };
   }
 
-  /**
-   * Get current balance
-   */
   async getBalance(): Promise<{ demo: number; live: number }> {
     if (this.lastBalance) {
       return this.isDemo
@@ -634,14 +651,8 @@ export class PocketOptionClient {
     return { demo: 0, live: 0 };
   }
 
-  /**
-   * Get trade history (from closed deals)
-   */
   async getTradeHistory(): Promise<PocketOptionTrade[]> {
-    // Request balance update to trigger closed deals
     this.getBalances();
-
-    // Wait briefly for data
     await new Promise((r) => setTimeout(r, 2000));
 
     if (!this.closedDealsData.length) return [];
@@ -670,9 +681,7 @@ export class PocketOptionClient {
   onAuth(callback: () => void): () => void {
     this.onAuthCallbacks.push(callback);
     return () => {
-      this.onAuthCallbacks = this.onAuthCallbacks.filter(
-        (cb) => cb !== callback
-      );
+      this.onAuthCallbacks = this.onAuthCallbacks.filter((cb) => cb !== callback);
     };
   }
 
@@ -681,18 +690,14 @@ export class PocketOptionClient {
   ): () => void {
     this.onBalanceCallbacks.push(callback);
     return () => {
-      this.onBalanceCallbacks = this.onBalanceCallbacks.filter(
-        (cb) => cb !== callback
-      );
+      this.onBalanceCallbacks = this.onBalanceCallbacks.filter((cb) => cb !== callback);
     };
   }
 
   onError(callback: (error: Error) => void): () => void {
     this.onErrorCallbacks.push(callback);
     return () => {
-      this.onErrorCallbacks = this.onErrorCallbacks.filter(
-        (cb) => cb !== callback
-      );
+      this.onErrorCallbacks = this.onErrorCallbacks.filter((cb) => cb !== callback);
     };
   }
 
@@ -701,9 +706,7 @@ export class PocketOptionClient {
   private emitCandle(asset: string, candle: CandleData): void {
     const listeners = this.candleListeners.get(asset) || [];
     for (const listener of listeners) {
-      try {
-        listener(candle);
-      } catch {}
+      try { listener(candle); } catch {}
     }
   }
 
@@ -712,6 +715,7 @@ export class PocketOptionClient {
     const message = `42${JSON.stringify(data)}`;
     try {
       this.ws.send(message);
+      console.log(`[PO] >> ${message.substring(0, 100)}`);
     } catch (err) {
       console.error("[PO] Send error:", err);
     }
@@ -719,7 +723,6 @@ export class PocketOptionClient {
 
   private startHeartbeats(): void {
     this.cleanup();
-    // Socket.IO heartbeat: send 42["ps"] every 20 seconds
     this.socketIoHeartbeat = setInterval(() => {
       if (this.ws && this.connected) {
         this.ws.send('42["ps"]');
@@ -739,6 +742,6 @@ export class PocketOptionClient {
       const match = this.ssid.match(/"isDemo"\s*:\s*(\d)/);
       if (match) return match[1] === "1";
     } catch {}
-    return true; // Default to demo for safety
+    return true;
   }
 }

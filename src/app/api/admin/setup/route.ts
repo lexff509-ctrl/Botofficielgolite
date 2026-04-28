@@ -16,6 +16,17 @@ export async function POST() {
       .where(eq(users.email, adminEmail));
 
     if (existing.length > 0) {
+      // Fix admin role if it was set incorrectly
+      if (existing[0].role !== "ADMIN") {
+        await db
+          .update(users)
+          .set({ role: "ADMIN", subscriptionStatus: "ACTIVE" })
+          .where(eq(users.email, adminEmail));
+        return NextResponse.json({
+          message: "Admin role corrected",
+          email: adminEmail,
+        });
+      }
       return NextResponse.json({
         message: "Admin already exists",
         email: adminEmail,
