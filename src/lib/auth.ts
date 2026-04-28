@@ -3,12 +3,17 @@ import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 
-const JWT_SECRET = process.env.JWT_SECRET!;
-const SSID_ENCRYPTION_KEY = process.env.SSID_ENCRYPTION_KEY!;
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("JWT_SECRET environment variable is required");
+  return secret;
+}
 
-// Validate secrets exist
-if (!JWT_SECRET) throw new Error("JWT_SECRET environment variable is required");
-if (!SSID_ENCRYPTION_KEY) throw new Error("SSID_ENCRYPTION_KEY environment variable is required");
+function getSSIDEncryptionKey(): string {
+  const key = process.env.SSID_ENCRYPTION_KEY;
+  if (!key) throw new Error("SSID_ENCRYPTION_KEY environment variable is required");
+  return key;
+}
 
 const ALGORITHM = "aes-256-cbc";
 const IV_LENGTH = 16;
@@ -23,12 +28,12 @@ export interface JWTPayload {
 // ============ JWT TOKEN ============
 
 export function signToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: "7d" });
 }
 
 export function verifyToken(token: string): JWTPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
+    return jwt.verify(token, getJwtSecret()) as JWTPayload;
   } catch {
     return null;
   }
@@ -51,7 +56,7 @@ export async function comparePassword(
 
 export function encryptSSID(ssid: string): string {
   const iv = crypto.randomBytes(IV_LENGTH);
-  const key = Buffer.from(SSID_ENCRYPTION_KEY, "hex");
+  const key = Buffer.from(getSSIDEncryptionKey(), "hex");
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
   let encrypted = cipher.update(ssid, "utf8", "hex");
   encrypted += cipher.final("hex");
@@ -65,7 +70,7 @@ export function decryptSSID(encrypted: string | null): string {
     if (parts.length !== 2) return "";
     const iv = Buffer.from(parts[0], "hex");
     const encryptedText = parts[1];
-    const key = Buffer.from(SSID_ENCRYPTION_KEY, "hex");
+    const key = Buffer.from(getSSIDEncryptionKey(), "hex");
     const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
     let decrypted = decipher.update(encryptedText, "hex", "utf8");
     decrypted += decipher.final("utf8");
