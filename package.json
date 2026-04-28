@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "4.1.17",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
@@ -26,15 +27,16 @@
     "multer": "^2.1.1",
     "next": "16.2.0",
     "pg": "^8.20.0",
+    "postcss": "8.5.8",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
+    "tailwindcss": "4.1.17",
     "uuid": "^14.0.0",
     "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "4.1.17",
     "@types/node": "22.19.15",
     "@types/pg": "8.18.0",
     "@types/react": "19.2.14",
@@ -44,8 +46,6 @@
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.0",
-    "postcss": "8.5.8",
-    "tailwindcss": "4.1.17",
     "typescript": "5.9.3"
   }
 }
