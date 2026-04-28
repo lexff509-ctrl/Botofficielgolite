@@ -147,7 +147,11 @@ export default function BotPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Erreur");
+        let errorMsg = data.error || "Erreur";
+        if (data.ssidExpired || errorMsg.includes("timeout") || errorMsg.includes("SSID")) {
+          errorMsg = "SSID invalide ou expire. Allez dans Profil pour copier un nouveau SSID PocketOption.";
+        }
+        setError(errorMsg);
       } else {
         setSuccess(
           action === "START" ? "Bot démarré avec succès!" : "Bot arrêté."
