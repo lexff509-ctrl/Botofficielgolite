@@ -37,6 +37,7 @@ export default function SignalsPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high">("all");
   const [lastSignal, setLastSignal] = useState<{direction: string; asset: string; confidence: string} | null>(null);
+  const [signalError, setSignalError] = useState("");
 
   const fetchSignals = useCallback(async () => {
     setLoading(true);
@@ -50,6 +51,7 @@ export default function SignalsPage() {
 
   const generateSignal = async () => {
     setGenerating(true);
+    setSignalError("");
     try {
       const res = await fetch("/api/signals", {
         method: "POST",
@@ -64,8 +66,12 @@ export default function SignalsPage() {
           confidence: data.signal.confidence,
         });
         fetchSignals();
+      } else if (data.error) {
+        setSignalError(data.error);
       }
-    } catch {}
+    } catch {
+      setSignalError("Erreur de connexion au serveur");
+    }
     setGenerating(false);
   };
 
@@ -87,6 +93,14 @@ export default function SignalsPage() {
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6">
+        {signalError && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-amber-400 text-sm">
+            {signalError}
+            {signalError.includes("connect") && (
+              <span className="block mt-1 text-amber-400/70 text-xs">Lancez le bot d'abord pour etablir la connexion PocketOption, ou attendez que les donnees s'accumulent.</span>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-black text-white">

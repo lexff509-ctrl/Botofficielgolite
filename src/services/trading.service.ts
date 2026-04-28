@@ -53,14 +53,46 @@ export async function generateAndSaveSignal(
   }
 
   // Use real candle data from CandleCache
-  const candles = candleCache.getCandlesForTimeframe(
+  let candles = candleCache.getCandlesForTimeframe(
     selectedAsset,
     selectedTimeframe as Timeframe,
     100
   );
 
+  // If cache is empty, fetch historical candles directly from PocketOption
   if (candles.length < 50) {
-    return { signal: null, saved: null, error: "Pas assez de données de marché (min 50 bougies requises)" };
+    const client = activeConnections.get(userId);
+    if (client && client.isConnected) {
+      try {
+        const tfToSeconds = (tf: string): number => {
+          if (tf.endsWith("s")) return parseInt(tf);
+          if (tf.endsWith("m")) return parseInt(tf) * 60;
+          return 60;
+        };
+        const sizeSeconds = tfToSeconds(selectedTimeframe);
+        const historicalCandles = await client.requestCandleHistory(
+          selectedAsset,
+          sizeSeconds,
+          200
+        );
+        if (historicalCandles.length > 0) {
+          // Seed cache for future use
+          candleCache.seedCandles(selectedAsset, sizeSeconds, historicalCandles);
+          // Re-read from cache
+          candles = candleCache.getCandlesForTimeframe(
+            selectedAsset,
+            selectedTimeframe as Timeframe,
+            100
+          );
+        }
+      } catch (err) {
+        console.error("[Signal] Failed to fetch candle history:", err);
+      }
+    }
+  }
+
+  if (candles.length < 50) {
+    return { signal: null, saved: null, error: "Pas assez de données de marché. Assurez-vous que le bot est connecté à PocketOption." };
   }
 
   const signal = generateSignal(
@@ -70,7 +102,7 @@ export async function generateAndSaveSignal(
   );
 
   if (!signal) {
-    return { signal: null, saved: null, error: "Pas de signal détecté" };
+    return { signal: null, saved: null, error: "Pas de signal détecté avec les données actuelles" };
   }
 
   const [savedSignal] = await db
