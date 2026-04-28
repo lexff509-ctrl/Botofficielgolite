@@ -363,7 +363,7 @@ export default function PaymentPage() {
                     )}
                     {payment.proofFilePath && (
                       <a
-                        href={`/api/payment/proof/${payment.id}`}
+                        href={payment.proofFilePath.startsWith("http") ? payment.proofFilePath : `/api/payment/proof/${payment.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-cyan-400 hover:text-cyan-300 mt-0.5 inline-block"

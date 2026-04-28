@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest, handleApiError } from "@/lib/auth";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
+import { v2 as cloudinary } from "cloudinary";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,23 +39,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Ensure uploads directory exists
-    const uploadsDir = join(process.cwd(), "uploads", "proofs");
-    await mkdir(uploadsDir, { recursive: true });
-
-    // Generate unique filename
-    const ext = file.type.split("/")[1];
-    const filename = `${payload.userId}_${Date.now()}.${ext}`;
-    const filepath = join(uploadsDir, filename);
-
-    // Write file
+    // Convert file to base64 for Cloudinary upload
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    await writeFile(filepath, buffer);
+    const base64Data = `data:${file.type};base64,${buffer.toString("base64")}`;
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(base64Data, {
+      folder: "payment-proofs",
+      public_id: `proof_${payload.userId}_${Date.now()}`,
+      resource_type: "image",
+      transformation: [{ quality: "auto:good" }, { fetch_format: "auto" }],
+    });
 
     return NextResponse.json({
       success: true,
-      proofFilePath: `/uploads/proofs/${filename}`,
+      proofFilePath: result.secure_url,
     });
   } catch (error) {
     return handleApiError(error, "Proof Upload");

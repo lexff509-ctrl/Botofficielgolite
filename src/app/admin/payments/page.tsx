@@ -111,7 +111,7 @@ export default function AdminPaymentsPage() {
                       <div className="text-xs text-slate-500 font-mono">TX: {payment.txHash}</div>
                       {payment.proofFilePath && (
                         <a
-                          href={`/api/payment/proof/${payment.id}`}
+                          href={payment.proofFilePath.startsWith("http") ? payment.proofFilePath : `/api/payment/proof/${payment.id}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-xs text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
