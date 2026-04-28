@@ -115,7 +115,8 @@ export async function POST(req: NextRequest) {
 
       // Connect to PocketOption (needed for real candle data in both DEMO and LIVE)
       if (rawSsid) {
-        const connectResult = await connectPocketOption(payload.userId, rawSsid);
+        const isDemoConnection = selectedMode === "DEMO";
+        const connectResult = await connectPocketOption(payload.userId, rawSsid, isDemoConnection);
         if (!connectResult.success) {
           return NextResponse.json(
             { error: `Connexion PocketOption échouée: ${connectResult.error}` },

@@ -56,11 +56,12 @@ export default function ProfilePage() {
   };
 
   const ssidInstructions = [
-    "1. Connectez-vous à votre compte PocketOption",
+    "1. Connectez-vous à votre compte PocketOption dans Chrome",
     "2. Ouvrez les outils de développement (F12)",
-    "3. Allez dans l'onglet 'Application' ou 'Storage'",
-    "4. Trouvez les cookies ou le localStorage",
-    "5. Copiez la valeur 'ssid'",
+    "3. Allez dans l'onglet 'Network' puis filtrez 'WS'",
+    "4. Rechargez la page et cliquez sur la connexion WebSocket",
+    "5. Cherchez le message 42[\"auth\",...] dans les frames envoyées",
+    "6. Copiez le message complet (commence par 42[\"auth\")",
   ];
 
   return (
@@ -114,9 +115,9 @@ export default function ProfilePage() {
           <div className="glass-card rounded-xl p-5">
             <div className="text-slate-400 text-xs font-medium mb-4">CONFIGURATION POCKETOPTION</div>
             <div>
-              <label className="block text-slate-400 text-xs mb-1.5">Votre SSID PocketOption</label>
+              <label className="block text-slate-400 text-xs mb-1.5">Message Auth PocketOption (42["auth",...])</label>
               <div className="relative">
-                <input type={showSsid ? "text" : "password"} value={form.pocketOptionSsid} onChange={(e) => setForm({ ...form, pocketOptionSsid: e.target.value })} placeholder="Entrez votre SSID PocketOption..." className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 text-sm font-mono" />
+                <input type={showSsid ? "text" : "password"} value={form.pocketOptionSsid} onChange={(e) => setForm({ ...form, pocketOptionSsid: e.target.value })} placeholder='42["auth",{"session":"...","isDemo":1,...}]' className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 text-sm font-mono" />
                 <button type="button" onClick={() => setShowSsid(!showSsid)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors text-sm">{showSsid ? "🙈" : "👁️"}</button>
               </div>
               <p className="text-xs text-slate-500 mt-1">🔒 Chiffré AES-256 en base de données · Jamais exposé côté client</p>

@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
     const limit = body.limit || 100;
 
     // Fetch trade history from PocketOption
-    const poTrades = await client.getTradeHistory({ limit });
+    const poTrades = await client.getTradeHistory();
 
     if (poTrades.length === 0) {
       return NextResponse.json({

@@ -50,7 +50,8 @@ export async function recoverActiveSessions(): Promise<{
 
         // Connect to PocketOption if SSID available
         if (rawSsid) {
-          const connectResult = await connectPocketOption(session.userId, rawSsid);
+          const isDemo = session.mode === "DEMO";
+          const connectResult = await connectPocketOption(session.userId, rawSsid, isDemo);
           if (!connectResult.success) {
             errors.push(`User ${session.userId}: PocketOption connection failed - ${connectResult.error}`);
             await markSessionStopped(session.id);

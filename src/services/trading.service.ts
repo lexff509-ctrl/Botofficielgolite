@@ -250,7 +250,8 @@ export function getPocketOptionClient(userId: number): PocketOptionClient | unde
 
 export async function connectPocketOption(
   userId: number,
-  ssid: string
+  ssid: string,
+  isDemo: boolean = true
 ): Promise<{ success: boolean; error?: string }> {
   // Disconnect existing
   const existing = activeConnections.get(userId);
@@ -260,7 +261,7 @@ export async function connectPocketOption(
 
   const client = new PocketOptionClient(ssid);
   try {
-    await client.connect();
+    await client.connect(isDemo);
     activeConnections.set(userId, client);
     // Register client with candle cache for real-time data
     candleCache.setClient(client);
