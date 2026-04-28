@@ -3,10 +3,16 @@
 import { useEffect, useState, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 
-const ASSETS = [
+const REGULAR_ASSETS = [
   "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
   "USD/CAD", "EUR/GBP", "BTC/USD", "ETH/USD",
 ];
+
+const OTC_ASSETS = [
+  "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)",
+  "AUD/USD (OTC)", "BTC/USD (OTC)", "ETH/USD (OTC)",
+];
+
 const TIMEFRAMES = ["5s", "10s", "15s", "30s", "1m", "3m", "5m"];
 
 interface Signal {
@@ -29,6 +35,7 @@ export default function SignalsPage() {
   const [asset, setAsset] = useState("EUR/USD");
   const [timeframe, setTimeframe] = useState("1m");
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high">("all");
   const [lastSignal, setLastSignal] = useState<{direction: string; asset: string; confidence: string} | null>(null);
 
   const fetchSignals = useCallback(async () => {
@@ -72,6 +79,11 @@ export default function SignalsPage() {
     return () => clearInterval(interval);
   }, [autoRefresh, asset, timeframe]);
 
+  const filteredSignals =
+    confidenceFilter === "high"
+      ? signals.filter((s) => parseFloat(s.confidence) >= 80)
+      : signals;
+
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6">
@@ -81,7 +93,7 @@ export default function SignalsPage() {
               Signaux <span className="gradient-text">Trading</span>
             </h1>
             <p className="text-slate-400 text-sm mt-1">
-              Signaux CALL/PUT générés par analyse technique multi-timeframe
+              Signaux CALL/PUT generes par analyse technique multi-timeframe
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -110,9 +122,16 @@ export default function SignalsPage() {
                 onChange={(e) => setAsset(e.target.value)}
                 className="bg-[#0a0f1e] border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-cyan-500"
               >
-                {ASSETS.map((a) => (
-                  <option key={a} value={a}>{a}</option>
-                ))}
+                <optgroup label="Marche Regulier" className="bg-slate-900">
+                  {REGULAR_ASSETS.map((a) => (
+                    <option key={a} value={a} className="bg-slate-900">{a}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Marche OTC" className="bg-slate-900">
+                  {OTC_ASSETS.map((a) => (
+                    <option key={a} value={a} className="bg-slate-900">{a}</option>
+                  ))}
+                </optgroup>
               </select>
             </div>
             <div>
@@ -127,12 +146,37 @@ export default function SignalsPage() {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">Confiance</label>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setConfidenceFilter("all")}
+                  className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all border ${
+                    confidenceFilter === "all"
+                      ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  }`}
+                >
+                  Tous
+                </button>
+                <button
+                  onClick={() => setConfidenceFilter("high")}
+                  className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all border ${
+                    confidenceFilter === "high"
+                      ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  }`}
+                >
+                  80%+
+                </button>
+              </div>
+            </div>
             <button
               onClick={generateSignal}
               disabled={generating}
               className="bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 disabled:opacity-50 text-white font-bold px-6 py-2.5 rounded-xl transition-all text-sm"
             >
-              {generating ? "Analyse en cours..." : "🔍 Analyser"}
+              {generating ? "Analyse en cours..." : "Analyser"}
             </button>
           </div>
         </div>
@@ -146,7 +190,7 @@ export default function SignalsPage() {
             }`}
           >
             <div className="text-4xl font-black mb-2">
-              {lastSignal.direction === "CALL" ? "⬆️ CALL" : "⬇️ PUT"}
+              {lastSignal.direction === "CALL" ? "CALL" : "PUT"}
             </div>
             <div className="text-xl font-bold text-white">{lastSignal.asset}</div>
             <div className="text-slate-400 mt-1">
@@ -157,21 +201,32 @@ export default function SignalsPage() {
 
         <div className="glass-card rounded-xl overflow-hidden">
           <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            <div className="font-semibold text-white">Historique des Signaux</div>
+            <div className="flex items-center gap-3">
+              <div className="font-semibold text-white">Historique des Signaux</div>
+              {confidenceFilter === "high" && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                  80%+ seulement
+                </span>
+              )}
+            </div>
             <button
               onClick={fetchSignals}
               disabled={loading}
               className="text-cyan-400 hover:text-cyan-300 text-sm transition-colors"
             >
-              {loading ? "Chargement..." : "↻ Actualiser"}
+              {loading ? "Chargement..." : "Actualiser"}
             </button>
           </div>
 
-          {signals.length === 0 ? (
+          {filteredSignals.length === 0 ? (
             <div className="p-12 text-center text-slate-500">
               <div className="text-4xl mb-3">📡</div>
-              <div>Aucun signal pour le moment</div>
-              <div className="text-sm mt-1">Cliquez sur "Analyser" pour générer votre premier signal</div>
+              <div>
+                {confidenceFilter === "high"
+                  ? "Aucun signal avec 80%+ de confiance"
+                  : "Aucun signal pour le moment"}
+              </div>
+              <div className="text-sm mt-1">Cliquez sur "Analyser" pour generer votre premier signal</div>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -188,13 +243,22 @@ export default function SignalsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {signals.map((sig) => {
+                  {filteredSignals.map((sig) => {
                     const mtf = sig.multiTimeframeConfirmation || {};
                     const tfs = Object.keys(mtf);
                     const confirms = tfs.filter((tf) => mtf[tf] === sig.direction).length;
+                    const confValue = parseFloat(sig.confidence);
+                    const isHighConf = confValue >= 80;
                     return (
                       <tr key={sig.id} className="border-b border-slate-800/50 hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-3 text-sm font-semibold text-white">{sig.asset}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-white">
+                          {sig.asset}
+                          {sig.asset.includes("(OTC)") && (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/30">
+                              OTC
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <span
                             className={`px-3 py-1 rounded-full text-xs font-bold ${
@@ -203,7 +267,7 @@ export default function SignalsPage() {
                                 : "badge-put"
                             }`}
                           >
-                            {sig.direction === "CALL" ? "⬆️ CALL" : "⬇️ PUT"}
+                            {sig.direction === "CALL" ? "CALL" : "PUT"}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-slate-300 font-mono">{sig.timeframe}</td>
@@ -211,12 +275,18 @@ export default function SignalsPage() {
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 w-16 bg-slate-700 rounded-full overflow-hidden">
                               <div
-                                className="h-full bg-gradient-to-r from-cyan-500 to-violet-600 rounded-full"
-                                style={{ width: `${parseFloat(sig.confidence)}%` }}
+                                className={`h-full rounded-full ${
+                                  isHighConf
+                                    ? "bg-gradient-to-r from-amber-500 to-orange-500"
+                                    : "bg-gradient-to-r from-cyan-500 to-violet-600"
+                                }`}
+                                style={{ width: `${confValue}%` }}
                               />
                             </div>
-                            <span className="text-xs text-cyan-400 font-bold">
-                              {parseFloat(sig.confidence).toFixed(1)}%
+                            <span className={`text-xs font-bold ${
+                              isHighConf ? "text-amber-400" : "text-cyan-400"
+                            }`}>
+                              {confValue.toFixed(1)}%
                             </span>
                           </div>
                         </td>

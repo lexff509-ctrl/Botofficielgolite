@@ -128,6 +128,23 @@ export class PocketOptionClient {
     return this.lastBalance;
   }
 
+  // ============ Asset Format Conversion ============
+
+  /** Convert display format to PocketOption wire format
+   *  "EUR/USD (OTC)" → "EURUSD_otc"
+   *  "EUR/USD"       → "EURUSD"
+   *  "BTC/USD"       → "BTCUSD"
+   */
+  static toPOSymbol(asset: string): string {
+    if (asset.includes("(OTC)")) {
+      return asset.replace("/", "").replace(" (OTC)", "_otc");
+    }
+    if (asset.includes("/")) {
+      return asset.replace("/", "");
+    }
+    return asset;
+  }
+
   // ============ Connection ============
 
   async connect(isDemo?: boolean): Promise<void> {
@@ -385,7 +402,7 @@ export class PocketOptionClient {
 
         // Re-subscribe to previously active symbols
         for (const [, sub] of this.activeSubscriptions) {
-          this.sendEvent(["changeSymbol", { asset: sub.asset, period: sub.size }]);
+          this.sendEvent(["changeSymbol", { asset: PocketOptionClient.toPOSymbol(sub.asset), period: sub.size }]);
         }
 
         this.onAuthCallbacks.forEach((cb) => cb());
@@ -521,7 +538,7 @@ export class PocketOptionClient {
     this.currentSymbol = { asset, period };
     const subKey = `${asset}:${period}`;
     this.activeSubscriptions.set(subKey, { asset, size: period });
-    this.sendEvent(["changeSymbol", { asset, period }]);
+    this.sendEvent(["changeSymbol", { asset: PocketOptionClient.toPOSymbol(asset), period }]);
   }
 
   loadHistoryPeriod(
@@ -532,7 +549,7 @@ export class PocketOptionClient {
   ): void {
     this.sendEvent([
       "loadHistoryPeriod",
-      { asset, index: endTime, time: endTime, offset, period },
+      { asset: PocketOptionClient.toPOSymbol(asset), index: endTime, time: endTime, offset, period },
     ]);
   }
 
@@ -545,7 +562,7 @@ export class PocketOptionClient {
   ): void {
     this.sendEvent([
       "openOrder",
-      { asset, amount, action, isDemo, requestId: "buy", optionType: 100, time },
+      { asset: PocketOptionClient.toPOSymbol(asset), amount, action, isDemo, requestId: "buy", optionType: 100, time },
     ]);
   }
 

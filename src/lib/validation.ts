@@ -24,6 +24,7 @@ export const botActionSchema = z.object({
   timeframe: z.string().optional(),
   asset: z.string().optional(),
   tradeAmount: z.number().positive("Le montant doit être positif").optional(),
+  confidenceMode: z.enum(["standard", "high"]).optional(),
 });
 
 // Signals

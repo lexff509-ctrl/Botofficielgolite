@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { action, mode, botType, ssid, asset, timeframe, tradeAmount } = parsed.data;
+    const { action, mode, botType, ssid, asset, timeframe, tradeAmount, confidenceMode } = parsed.data;
 
     // Check subscription
     const hasAccess = await hasActiveSubscription(payload.userId);
@@ -167,6 +167,7 @@ export async function POST(req: NextRequest) {
         timeframe: selectedTimeframe as Timeframe,
         mode: selectedMode as "DEMO" | "LIVE",
         tradeAmount: selectedTradeAmount,
+        confidenceMode: confidenceMode || "standard",
       });
 
       return NextResponse.json({

@@ -18,7 +18,8 @@ import { hasActiveSubscription } from "@/services/payment.service";
 
 // ============ CONFIG ============
 
-const AUTO_TRADE_CONFIDENCE_THRESHOLD = 70; // Minimum confidence % to auto-trade
+const AUTO_TRADE_CONFIDENCE_THRESHOLD = 70; // Minimum confidence % to auto-trade (standard mode)
+const HIGH_CONFIDENCE_THRESHOLD = 80; // Minimum confidence % for high confidence mode
 const MAX_CONSECUTIVE_ERRORS = 10;
 
 function getLoopIntervalMs(timeframe: string): number {
@@ -38,6 +39,7 @@ export class BotRunner {
   readonly timeframe: Timeframe;
   readonly mode: "DEMO" | "LIVE";
   readonly tradeAmount: number;
+  readonly confidenceMode: "standard" | "high";
 
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private consecutiveErrors = 0;
@@ -56,6 +58,7 @@ export class BotRunner {
     timeframe: Timeframe;
     mode: "DEMO" | "LIVE";
     tradeAmount?: number;
+    confidenceMode?: "standard" | "high";
   }) {
     this.userId = opts.userId;
     this.botType = opts.botType;
@@ -63,6 +66,7 @@ export class BotRunner {
     this.timeframe = opts.timeframe;
     this.mode = opts.mode;
     this.tradeAmount = opts.tradeAmount || 1;
+    this.confidenceMode = opts.confidenceMode || "standard";
     this.startedAt = new Date();
   }
 
@@ -81,6 +85,7 @@ export class BotRunner {
     timeframe: Timeframe;
     mode: "DEMO" | "LIVE";
     tradeAmount: number;
+    confidenceMode: "standard" | "high";
     running: boolean;
     paused: boolean;
     pauseReason: string | null;
@@ -97,6 +102,7 @@ export class BotRunner {
       timeframe: this.timeframe,
       mode: this.mode,
       tradeAmount: this.tradeAmount,
+      confidenceMode: this.confidenceMode,
       running: this.running,
       paused: this.isPaused,
       pauseReason: this.pauseReason,
@@ -228,7 +234,10 @@ export class BotRunner {
     await this.saveSignal(signal);
 
     // Auto mode: execute trade if confidence >= threshold
-    if (this.botType === "auto" && signal.confidence >= AUTO_TRADE_CONFIDENCE_THRESHOLD) {
+    const threshold = this.confidenceMode === "high"
+      ? HIGH_CONFIDENCE_THRESHOLD
+      : AUTO_TRADE_CONFIDENCE_THRESHOLD;
+    if (this.botType === "auto" && signal.confidence >= threshold) {
       await this.executeAutoTrade(signal, candles);
     }
 
@@ -347,6 +356,7 @@ export function startBotRunner(opts: {
   timeframe: Timeframe;
   mode: "DEMO" | "LIVE";
   tradeAmount?: number;
+  confidenceMode?: "standard" | "high";
 }): BotRunner {
   // Stop existing runner if any
   const existing = activeRunners.get(opts.userId);

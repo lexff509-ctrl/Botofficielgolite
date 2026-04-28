@@ -26,6 +26,7 @@ interface RunnerStatus {
   timeframe: string;
   mode: "DEMO" | "LIVE";
   tradeAmount: number;
+  confidenceMode: "standard" | "high";
   running: boolean;
   paused: boolean;
   signalsGenerated: number;
@@ -67,6 +68,7 @@ export default function BotPage() {
   const [asset, setAsset] = useState("EUR/USD");
   const [timeframe, setTimeframe] = useState("1m");
   const [tradeAmount, setTradeAmount] = useState(1);
+  const [confidenceMode, setConfidenceMode] = useState<"standard" | "high">("standard");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -102,7 +104,10 @@ export default function BotPage() {
       } else {
         setActiveSession(null);
       }
-      if (data.runnerStatus) setRunnerStatus(data.runnerStatus);
+      if (data.runnerStatus) {
+        setRunnerStatus(data.runnerStatus);
+        if (data.runnerStatus.confidenceMode) setConfidenceMode(data.runnerStatus.confidenceMode);
+      }
       else setRunnerStatus(null);
     } catch {}
   }, []);
@@ -136,6 +141,7 @@ export default function BotPage() {
           asset,
           timeframe,
           tradeAmount,
+          confidenceMode,
           ssid: ssid || undefined,
         }),
       });
@@ -211,7 +217,7 @@ export default function BotPage() {
               <div className="text-2xl mb-2">🤖</div>
               <div className="font-bold text-white">Bot Automatique</div>
               <div className="text-xs text-slate-400 mt-1">
-                Trade automatiquement si confiance {">="} 70%. Requiert SSID PocketOption.
+                Trade automatiquement selon la strategie de confiance. Requiert SSID PocketOption.
               </div>
             </button>
           </div>
@@ -274,6 +280,40 @@ export default function BotPage() {
               />
               <p className="text-xs text-slate-500 mt-1">
                 Montant investi par trade automatique
+              </p>
+            </div>
+
+            {/* Confidence Mode */}
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">Strategie de Confiance</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setConfidenceMode("standard")}
+                  disabled={isRunning}
+                  className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all border-2 ${
+                    confidenceMode === "standard"
+                      ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  } disabled:opacity-50`}
+                >
+                  Standard 70%+
+                </button>
+                <button
+                  onClick={() => setConfidenceMode("high")}
+                  disabled={isRunning}
+                  className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all border-2 ${
+                    confidenceMode === "high"
+                      ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  } disabled:opacity-50`}
+                >
+                  Haute 80%+
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {confidenceMode === "standard"
+                  ? "Trade des 70%+ de confiance - plus de signaux"
+                  : "Trade des 80%+ de confiance - signaux plus fiables"}
               </p>
             </div>
 
@@ -348,7 +388,7 @@ export default function BotPage() {
                 </span>
                 {isRunning && activeSession && (
                   <span className="text-xs text-slate-400">
-                    {activeSession.botType === "signal" ? "📊 Signal" : "🤖 Auto"} · {activeSession.asset} · {activeSession.timeframe}
+                    {activeSession.botType === "signal" ? "Signal" : "Auto"} · {activeSession.asset} · {activeSession.timeframe} · {runnerStatus?.confidenceMode === "high" ? "80%+" : "70%+"}
                   </span>
                 )}
               </div>
