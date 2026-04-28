@@ -20,6 +20,7 @@ interface Payment {
   amount: string;
   currency: string;
   txHash: string;
+  proofFilePath: string | null;
   status: string;
   planMonths: number;
   createdAt: string;
@@ -36,6 +37,8 @@ export default function PaymentPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [txHash, setTxHash] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
@@ -93,6 +96,24 @@ export default function PaymentPage() {
     setSuccess("");
 
     try {
+      // Upload proof image first if provided
+      let proofFilePath: string | undefined;
+      if (proofFile) {
+        const formData = new FormData();
+        formData.append("proof", proofFile);
+        const uploadRes = await fetch("/api/payment/proof", {
+          method: "POST",
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) {
+          setError(uploadData.error || "Erreur lors de l'upload de l'image");
+          setLoading(false);
+          return;
+        }
+        proofFilePath = uploadData.proofFilePath;
+      }
+
       const res = await fetch("/api/payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,6 +121,7 @@ export default function PaymentPage() {
           amount: selectedPlan.price,
           planMonths: selectedPlan.months,
           txHash,
+          proofFilePath,
         }),
       });
 
@@ -109,6 +131,8 @@ export default function PaymentPage() {
       } else {
         setSuccess("Votre demande de paiement a été soumise! L'admin va vérifier sous 24h.");
         setTxHash("");
+        setProofFile(null);
+        setProofPreview(null);
         setSelectedPlan(null);
         fetchData();
       }
@@ -260,9 +284,43 @@ export default function PaymentPage() {
                   value={txHash}
                   onChange={(e) => setTxHash(e.target.value)}
                   placeholder="ex: 0x1a2b3c4d5e6f..."
-                  required
                   className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 text-sm font-mono"
                 />
+              </div>
+
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">
+                  Preuve de paiement (image)
+                </label>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setProofFile(file);
+                      const reader = new FileReader();
+                      reader.onloadend = () => setProofPreview(reader.result as string);
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:bg-cyan-500/20 file:text-cyan-400"
+                />
+                {proofPreview && (
+                  <div className="mt-2 relative">
+                    <img src={proofPreview} alt="Preview" className="max-h-32 rounded-lg border border-slate-700" />
+                    <button
+                      type="button"
+                      onClick={() => { setProofFile(null); setProofPreview(null); }}
+                      className="absolute top-1 right-1 bg-red-500/80 hover:bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-slate-500 mt-1">
+                  JPG, PNG ou WebP · Max 5MB
+                </p>
               </div>
 
               <button
@@ -302,6 +360,16 @@ export default function PaymentPage() {
                       <div className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-xs">
                         TX: {payment.txHash}
                       </div>
+                    )}
+                    {payment.proofFilePath && (
+                      <a
+                        href={`/api/payment/proof/${payment.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-cyan-400 hover:text-cyan-300 mt-0.5 inline-block"
+                      >
+                        📷 Voir la preuve
+                      </a>
                     )}
                   </div>
                   <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusColors[payment.status]}`}>

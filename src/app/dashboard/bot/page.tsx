@@ -9,6 +9,7 @@ interface BotSession {
   botType: string;
   asset: string;
   timeframe: string;
+  tradeAmount: string;
   isRunning: boolean;
   totalTrades: number;
   wins: number;
@@ -24,6 +25,7 @@ interface RunnerStatus {
   asset: string;
   timeframe: string;
   mode: "DEMO" | "LIVE";
+  tradeAmount: number;
   running: boolean;
   paused: boolean;
   signalsGenerated: number;
@@ -33,9 +35,14 @@ interface RunnerStatus {
   startedAt: string;
 }
 
-const ASSETS = [
+const REGULAR_ASSETS = [
   "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
   "USD/CAD", "EUR/GBP", "BTC/USD", "ETH/USD",
+];
+
+const OTC_ASSETS = [
+  "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)",
+  "AUD/USD (OTC)", "BTC/USD (OTC)", "ETH/USD (OTC)",
 ];
 
 const TIMEFRAMES = [
@@ -59,6 +66,7 @@ export default function BotPage() {
   const [botType, setBotType] = useState<"signal" | "auto">("signal");
   const [asset, setAsset] = useState("EUR/USD");
   const [timeframe, setTimeframe] = useState("1m");
+  const [tradeAmount, setTradeAmount] = useState(1);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -67,8 +75,15 @@ export default function BotPage() {
       const res = await fetch("/api/auth/me");
       const data = await res.json();
       if (data.user) {
-        setUser(data.user);
-        setMode((data.user as Record<string, unknown>).tradeMode as string || "DEMO");
+        const u = data.user as Record<string, unknown>;
+        setUser(u);
+        setMode(u.tradeMode as string || "DEMO");
+        // Pre-fill trade amount from profile defaults
+        const currentMode = (u.tradeMode as string) || "DEMO";
+        const defaultAmount = currentMode === "DEMO"
+          ? parseFloat(String(u.demoTradeAmount || "1"))
+          : parseFloat(String(u.liveTradeAmount || "1"));
+        setTradeAmount(defaultAmount);
       }
     } catch {}
   }, []);
@@ -120,6 +135,7 @@ export default function BotPage() {
           botType,
           asset,
           timeframe,
+          tradeAmount,
           ssid: ssid || undefined,
         }),
       });
@@ -214,9 +230,16 @@ export default function BotPage() {
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               >
-                {ASSETS.map((a) => (
-                  <option key={a} value={a} className="bg-slate-900">{a}</option>
-                ))}
+                <optgroup label="Marché Régulier" className="bg-slate-900">
+                  {REGULAR_ASSETS.map((a) => (
+                    <option key={a} value={a} className="bg-slate-900">{a}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Marché OTC" className="bg-slate-900">
+                  {OTC_ASSETS.map((a) => (
+                    <option key={a} value={a} className="bg-slate-900">{a}</option>
+                  ))}
+                </optgroup>
               </select>
             </div>
 
@@ -233,6 +256,25 @@ export default function BotPage() {
                   <option key={tf.value} value={tf.value} className="bg-slate-900">{tf.label}</option>
                 ))}
               </select>
+            </div>
+
+            {/* Trade Amount */}
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">
+                Montant par Trade ($)
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={tradeAmount}
+                onChange={(e) => setTradeAmount(parseFloat(e.target.value) || 1)}
+                disabled={isRunning}
+                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Montant investi par trade automatique
+              </p>
             </div>
 
             {/* Mode Selector */}
@@ -326,10 +368,11 @@ export default function BotPage() {
           </div>
 
           {isRunning && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
               {[
                 { label: "Signaux", value: runnerStatus?.signalsGenerated ?? activeSession?.totalTrades ?? 0, color: "text-cyan-400" },
                 { label: "Trades", value: runnerStatus?.tradesExecuted ?? activeSession?.totalTrades ?? 0, color: "text-white" },
+                { label: "Montant", value: `$${runnerStatus?.tradeAmount ?? parseFloat(activeSession?.tradeAmount as string || "1")}`, color: "text-violet-400" },
                 { label: "Victoires", value: activeSession?.wins || 0, color: "text-emerald-400" },
                 { label: "Défaites", value: activeSession?.losses || 0, color: "text-red-400" },
                 {

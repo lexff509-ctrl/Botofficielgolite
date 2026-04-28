@@ -16,7 +16,9 @@ const activeConnections = new Map<number, PocketOptionClient>();
 
 // ============ SIGNALS ============
 
-const ASSETS = [
+// ============ ASSETS ============
+
+export const REGULAR_ASSETS = [
   "EUR/USD",
   "GBP/USD",
   "USD/JPY",
@@ -27,12 +29,23 @@ const ASSETS = [
   "ETH/USD",
 ];
 
+export const OTC_ASSETS = [
+  "EUR/USD (OTC)",
+  "GBP/USD (OTC)",
+  "USD/JPY (OTC)",
+  "AUD/USD (OTC)",
+  "BTC/USD (OTC)",
+  "ETH/USD (OTC)",
+];
+
+export const ALL_ASSETS = [...REGULAR_ASSETS, ...OTC_ASSETS];
+
 export async function generateAndSaveSignal(
   userId: number,
   asset?: string,
   timeframe?: string
 ): Promise<{ signal: Signal | null; saved: unknown | null; error?: string }> {
-  const selectedAsset = asset || ASSETS[Math.floor(Math.random() * ASSETS.length)];
+  const selectedAsset = asset || ALL_ASSETS[Math.floor(Math.random() * ALL_ASSETS.length)];
   const selectedTimeframe = timeframe || "1m";
 
   if (!TIMEFRAMES.includes(selectedTimeframe as Timeframe)) {

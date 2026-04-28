@@ -36,6 +36,7 @@ export async function createPaymentRequest(
   amount: number,
   planMonths: number,
   txHash: string,
+  proofFilePath?: string,
   currency = "USDT"
 ) {
   const [payment] = await db
@@ -45,6 +46,7 @@ export async function createPaymentRequest(
       amount: String(amount),
       currency,
       txHash,
+      proofFilePath: proofFilePath || null,
       planMonths,
       status: "PENDING",
     })

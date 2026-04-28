@@ -20,7 +20,6 @@ import { hasActiveSubscription } from "@/services/payment.service";
 
 const AUTO_TRADE_CONFIDENCE_THRESHOLD = 70; // Minimum confidence % to auto-trade
 const MAX_CONSECUTIVE_ERRORS = 10;
-const AUTO_TRADE_AMOUNT = 1; // Default trade amount in USD
 
 function getLoopIntervalMs(timeframe: string): number {
   if (timeframe.endsWith("s")) return parseInt(timeframe) * 1000;
@@ -38,6 +37,7 @@ export class BotRunner {
   readonly asset: string;
   readonly timeframe: Timeframe;
   readonly mode: "DEMO" | "LIVE";
+  readonly tradeAmount: number;
 
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private consecutiveErrors = 0;
@@ -54,12 +54,14 @@ export class BotRunner {
     asset: string;
     timeframe: Timeframe;
     mode: "DEMO" | "LIVE";
+    tradeAmount?: number;
   }) {
     this.userId = opts.userId;
     this.botType = opts.botType;
     this.asset = opts.asset;
     this.timeframe = opts.timeframe;
     this.mode = opts.mode;
+    this.tradeAmount = opts.tradeAmount || 1;
     this.startedAt = new Date();
   }
 
@@ -77,6 +79,7 @@ export class BotRunner {
     asset: string;
     timeframe: Timeframe;
     mode: "DEMO" | "LIVE";
+    tradeAmount: number;
     running: boolean;
     paused: boolean;
     signalsGenerated: number;
@@ -91,6 +94,7 @@ export class BotRunner {
       asset: this.asset,
       timeframe: this.timeframe,
       mode: this.mode,
+      tradeAmount: this.tradeAmount,
       running: this.running,
       paused: this.isPaused,
       signalsGenerated: this.signalsGenerated,
@@ -254,7 +258,7 @@ export class BotRunner {
       const result = await executeTrade(this.userId, {
         asset: signal.asset,
         direction: signal.direction,
-        amount: AUTO_TRADE_AMOUNT,
+        amount: this.tradeAmount,
         timeframe: signal.timeframe,
         openPrice: currentPrice,
         mode: this.mode,
@@ -330,6 +334,7 @@ export function startBotRunner(opts: {
   asset: string;
   timeframe: Timeframe;
   mode: "DEMO" | "LIVE";
+  tradeAmount?: number;
 }): BotRunner {
   // Stop existing runner if any
   const existing = activeRunners.get(opts.userId);

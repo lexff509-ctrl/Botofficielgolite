@@ -35,20 +35,21 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { amount, planMonths, txHash } = body;
+    const { amount, planMonths, txHash, proofFilePath } = body;
 
     if (!amount || parseFloat(amount) <= 0) {
       return NextResponse.json({ error: "Montant invalide" }, { status: 400 });
     }
-    if (!txHash) {
-      return NextResponse.json({ error: "Hash de transaction requis" }, { status: 400 });
+    if (!txHash && !proofFilePath) {
+      return NextResponse.json({ error: "Hash de transaction ou preuve image requis" }, { status: 400 });
     }
 
     const payment = await createPaymentRequest(
       payload.userId,
       parseFloat(amount),
       planMonths || 1,
-      txHash
+      txHash || "",
+      proofFilePath
     );
 
     return NextResponse.json({ success: true, payment });

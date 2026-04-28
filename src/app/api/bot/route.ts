@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { action, mode, botType, ssid, asset, timeframe } = parsed.data;
+    const { action, mode, botType, ssid, asset, timeframe, tradeAmount } = parsed.data;
 
     // Check subscription
     const hasAccess = await hasActiveSubscription(payload.userId);
@@ -85,6 +85,12 @@ export async function POST(req: NextRequest) {
       const selectedAsset = asset || "EUR/USD";
       const selectedBotType = botType || "signal";
       const selectedMode = mode || user.tradeMode;
+
+      // Determine trade amount: provided > user default for mode > 1
+      const defaultAmount = selectedMode === "DEMO"
+        ? parseFloat(user.demoTradeAmount || "1")
+        : parseFloat(user.liveTradeAmount || "1");
+      const selectedTradeAmount = tradeAmount || defaultAmount;
 
       // Stop existing BotRunner
       stopBotRunner(payload.userId);
@@ -128,6 +134,7 @@ export async function POST(req: NextRequest) {
           botType: selectedBotType,
           asset: selectedAsset,
           timeframe: selectedTimeframe,
+          tradeAmount: String(selectedTradeAmount),
           totalTrades: 0,
           wins: 0,
           losses: 0,
@@ -150,6 +157,7 @@ export async function POST(req: NextRequest) {
         asset: selectedAsset,
         timeframe: selectedTimeframe as Timeframe,
         mode: selectedMode as "DEMO" | "LIVE",
+        tradeAmount: selectedTradeAmount,
       });
 
       return NextResponse.json({

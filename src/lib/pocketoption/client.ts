@@ -28,6 +28,19 @@ export interface CandleData {
   timestamp: number;
 }
 
+export interface PocketOptionTrade {
+  id: string;
+  asset: string;
+  direction: "CALL" | "PUT";
+  amount: number;
+  profit: number;
+  openPrice: number;
+  closePrice: number;
+  openTime: number;
+  closeTime: number;
+  result: "WIN" | "LOSS";
+}
+
 const POCKET_OPTION_WS_URL = "wss://ws.pocketoption.com";
 
 export class PocketOptionClient {
@@ -335,6 +348,45 @@ export class PocketOptionClient {
       };
     } catch {
       return { demo: 0, live: 0 };
+    }
+  }
+
+  // Get trade history from PocketOption account
+  async getTradeHistory(opts?: {
+    limit?: number;
+    offset?: number;
+    asset?: string;
+  }): Promise<PocketOptionTrade[]> {
+    try {
+      const response = (await this.sendRequest({
+        name: "get-trades",
+        msg: {
+          limit: opts?.limit || 100,
+          offset: opts?.offset || 0,
+          asset: opts?.asset || "",
+        },
+      })) as Record<string, unknown>;
+
+      const msg = response.msg as Record<string, unknown> | undefined;
+      if (!msg) return [];
+
+      const tradesArr = Array.isArray(msg.trades) ? msg.trades
+        : Array.isArray(msg) ? msg : [];
+
+      return tradesArr.map((t: Record<string, unknown>) => ({
+        id: String(t.id || t.deal_id || ""),
+        asset: String(t.asset || t.symbol || ""),
+        direction: String(t.direction || t.type || "").toUpperCase() === "CALL" || String(t.direction || "") === "call" ? "CALL" as const : "PUT" as const,
+        amount: Number(t.amount || 0),
+        profit: Number(t.profit || 0),
+        openPrice: Number(t.open_price || t.openPrice || 0),
+        closePrice: Number(t.close_price || t.closePrice || 0),
+        openTime: Number(t.open_time || t.openTime || 0),
+        closeTime: Number(t.close_time || t.closeTime || 0),
+        result: Number(t.profit || 0) > 0 ? "WIN" as const : "LOSS" as const,
+      }));
+    } catch {
+      return [];
     }
   }
 }

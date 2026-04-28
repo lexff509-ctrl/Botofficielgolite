@@ -23,6 +23,7 @@ export const botActionSchema = z.object({
   ssid: z.string().optional(),
   timeframe: z.string().optional(),
   asset: z.string().optional(),
+  tradeAmount: z.number().positive("Le montant doit être positif").optional(),
 });
 
 // Signals
@@ -79,6 +80,8 @@ export const profileUpdateSchema = z.object({
   username: z.string().min(2).max(50).optional(),
   tradeMode: z.enum(["DEMO", "LIVE"]).optional(),
   pocketOptionSsid: z.string().optional(),
+  demoTradeAmount: z.string().optional(),
+  liveTradeAmount: z.string().optional(),
 });
 
 // Pagination

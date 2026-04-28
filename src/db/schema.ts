@@ -60,6 +60,12 @@ export const users = pgTable("users", {
   demoBalance: numeric("demo_balance", { precision: 15, scale: 2 }).default(
     "10000.00"
   ),
+  demoTradeAmount: numeric("demo_trade_amount", { precision: 15, scale: 2 }).default(
+    "1.00"
+  ),
+  liveTradeAmount: numeric("live_trade_amount", { precision: 15, scale: 2 }).default(
+    "1.00"
+  ),
   // Backtesting
   backtestingDaysGranted: integer("backtesting_days_granted").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -100,6 +106,7 @@ export const trades = pgTable("trades", {
   result: tradeResultEnum("result").default("PENDING").notNull(),
   profit: numeric("profit", { precision: 15, scale: 2 }).default("0"),
   isAutomatic: boolean("is_automatic").default(false).notNull(),
+  poTradeId: varchar("po_trade_id", { length: 255 }),
   indicators: jsonb("indicators"),
   openedAt: timestamp("opened_at").defaultNow().notNull(),
   closedAt: timestamp("closed_at"),
@@ -135,6 +142,9 @@ export const botSessions = pgTable("bot_sessions", {
   botType: botTypeEnum("bot_type").default("signal").notNull(),
   asset: varchar("asset", { length: 50 }).default("EUR/USD").notNull(),
   timeframe: varchar("timeframe", { length: 20 }).default("1m").notNull(),
+  tradeAmount: numeric("trade_amount", { precision: 15, scale: 2 }).default(
+    "1.00"
+  ),
   totalTrades: integer("total_trades").default(0),
   wins: integer("wins").default(0),
   losses: integer("losses").default(0),

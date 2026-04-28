@@ -9,6 +9,7 @@ interface Payment {
   amount: string;
   currency: string;
   txHash: string;
+  proofFilePath: string | null;
   status: string;
   planMonths: number;
   adminNote: string | null;
@@ -108,6 +109,16 @@ export default function AdminPaymentsPage() {
                       </div>
                       <div className="text-sm text-slate-400"><span className="text-white font-medium">{payment.username}</span> ({payment.userEmail})</div>
                       <div className="text-xs text-slate-500 font-mono">TX: {payment.txHash}</div>
+                      {payment.proofFilePath && (
+                        <a
+                          href={`/api/payment/proof/${payment.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
+                        >
+                          📷 Voir la preuve image
+                        </a>
+                      )}
                       <div className="text-xs text-slate-500">Plan: {payment.planMonths} mois · {new Date(payment.createdAt).toLocaleString("fr-FR")}</div>
                     </div>
                     <div className="flex flex-col gap-2 md:items-end">
