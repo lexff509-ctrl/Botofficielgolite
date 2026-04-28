@@ -115,11 +115,19 @@ export async function POST(req: NextRequest) {
 
       // Connect to PocketOption (needed for real candle data in both DEMO and LIVE)
       if (rawSsid) {
+        // Pre-check: skip connection attempt if SSID is already known expired
+        if (user.ssidStatus === "EXPIRED" && !ssid) {
+          return NextResponse.json(
+            { error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.", ssidExpired: true },
+            { status: 400 }
+          );
+        }
+
         const isDemoConnection = selectedMode === "DEMO";
         const connectResult = await connectPocketOption(payload.userId, rawSsid, isDemoConnection);
         if (!connectResult.success) {
           return NextResponse.json(
-            { error: `Connexion PocketOption échouée: ${connectResult.error}` },
+            { error: connectResult.error, ssidExpired: connectResult.ssidExpired },
             { status: 400 }
           );
         }

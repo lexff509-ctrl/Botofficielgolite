@@ -12,6 +12,7 @@ interface User {
   tradeMode: string;
   demoBalance?: string;
   backtestingDaysGranted?: number;
+  ssidStatus?: string;
 }
 
 interface Props {
@@ -187,6 +188,34 @@ export default function DashboardLayout({ children }: Props) {
             </div>
           </div>
         </header>
+
+        {/* SSID Expired Alert */}
+        {user.ssidStatus === "EXPIRED" && (
+          <div className="bg-red-500/10 border-b border-red-500/30 px-4 lg:px-6 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-red-400 text-lg">&#9888;</span>
+              <span className="text-red-400 text-sm font-medium">
+                Votre SSID PocketOption a expiré. Le bot a été mis en pause.
+              </span>
+            </div>
+            <a
+              href="/dashboard/profile"
+              className="bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold px-4 py-1.5 rounded-lg transition-colors"
+            >
+              Mettre à jour le SSID
+            </a>
+          </div>
+        )}
+
+        {/* SSID Unknown Warning */}
+        {user.ssidStatus === "UNKNOWN" && (
+          <div className="bg-yellow-500/10 border-b border-yellow-500/30 px-4 lg:px-6 py-3 flex items-center gap-3">
+            <span className="text-yellow-400 text-lg">&#9888;</span>
+            <span className="text-yellow-400 text-sm">
+              Statut SSID non vérifié. Lancez le bot pour valider votre connexion.
+            </span>
+          </div>
+        )}
 
         <main className="flex-1 p-4 lg:p-6 overflow-auto">{children}</main>
       </div>

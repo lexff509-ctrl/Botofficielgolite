@@ -43,6 +43,14 @@ export async function recoverActiveSessions(): Promise<{
           continue;
         }
 
+        // Skip reconnection if SSID is known expired
+        if (user.ssidStatus === "EXPIRED") {
+          errors.push(`User ${session.userId}: SSID expired, skipping reconnection`);
+          await markSessionStopped(session.id);
+          failed++;
+          continue;
+        }
+
         const rawSsid =
           decryptSSID(user.pocketOptionSsid) ||
           process.env.POCKET_OPTION_SSID ||
@@ -54,6 +62,9 @@ export async function recoverActiveSessions(): Promise<{
           const connectResult = await connectPocketOption(session.userId, rawSsid, isDemo);
           if (!connectResult.success) {
             errors.push(`User ${session.userId}: PocketOption connection failed - ${connectResult.error}`);
+            if (connectResult.ssidExpired) {
+              // DB already updated by connectPocketOption
+            }
             await markSessionStopped(session.id);
             failed++;
             continue;

@@ -3,6 +3,13 @@
 import { useEffect, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 
+const ssidStatusConfig: Record<string, { label: string; color: string }> = {
+  VALID: { label: "Valide", color: "bg-emerald-500/20 text-emerald-400" },
+  EXPIRED: { label: "Expiré", color: "bg-red-500/20 text-red-400" },
+  UNKNOWN: { label: "Non vérifié", color: "bg-yellow-500/20 text-yellow-400" },
+  NOT_SET: { label: "Non configuré", color: "bg-slate-500/20 text-slate-400" },
+};
+
 export default function ProfilePage() {
   const [user, setUser] = useState<Record<string, unknown> | null>(null);
   const [form, setForm] = useState({
@@ -64,6 +71,9 @@ export default function ProfilePage() {
     "6. Copiez le message complet (commence par 42[\"auth\")",
   ];
 
+  const ssidStatus = (user?.ssidStatus as string) || "NOT_SET";
+  const statusConfig = ssidStatusConfig[ssidStatus] || ssidStatusConfig.NOT_SET;
+
   return (
     <DashboardLayout>
       <div className="max-w-3xl mx-auto space-y-6">
@@ -93,7 +103,7 @@ export default function ProfilePage() {
                 <p className="text-xs text-slate-600 mt-1">L'email ne peut pas être modifié</p>
               </div>
               <div>
-                <label className="block text-slate-400 text-xs mb-1.5">Nom d'utilisateur</label>
+                <label className="block text-slate-400 text-xs mb-1.5">Nom d&apos;utilisateur</label>
                 <input type="text" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors" />
               </div>
             </div>
@@ -113,9 +123,23 @@ export default function ProfilePage() {
           </div>
 
           <div className="glass-card rounded-xl p-5">
-            <div className="text-slate-400 text-xs font-medium mb-4">CONFIGURATION POCKETOPTION</div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-slate-400 text-xs font-medium">CONFIGURATION POCKETOPTION</div>
+              <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusConfig.color}`}>
+                SSID: {statusConfig.label}
+              </span>
+            </div>
+
+            {/* SSID Expired Warning */}
+            {ssidStatus === "EXPIRED" && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-4">
+                <div className="text-red-400 text-sm font-medium">Votre SSID est expiré. Le bot ne peut pas fonctionner.</div>
+                <div className="text-red-400/70 text-xs mt-1">Collez un nouveau SSID ci-dessous puis sauvegardez.</div>
+              </div>
+            )}
+
             <div>
-              <label className="block text-slate-400 text-xs mb-1.5">Message Auth PocketOption (42["auth",...])</label>
+              <label className="block text-slate-400 text-xs mb-1.5">Message Auth PocketOption (42[&quot;auth&quot;,...])</label>
               <div className="relative">
                 <input type={showSsid ? "text" : "password"} value={form.pocketOptionSsid} onChange={(e) => setForm({ ...form, pocketOptionSsid: e.target.value })} placeholder='42["auth",{"session":"...","isDemo":1,...}]' className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 pr-12 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 text-sm font-mono" />
                 <button type="button" onClick={() => setShowSsid(!showSsid)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors text-sm">{showSsid ? "🙈" : "👁️"}</button>

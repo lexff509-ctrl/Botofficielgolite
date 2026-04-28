@@ -79,6 +79,7 @@ export class PocketOptionClient {
     isDemo: number;
   }) => void)[] = [];
   private onErrorCallbacks: ((error: Error) => void)[] = [];
+  private onSsidExpiredCallbacks: (() => void)[] = [];
 
   // Active subscriptions tracking
   private activeSubscriptions = new Map<
@@ -108,12 +109,19 @@ export class PocketOptionClient {
   private maxReconnectDelay = 60000;
   private intentionallyClosed = false;
 
+  // SSID expiration tracking
+  private ssidExpired = false;
+
   constructor(ssid: string) {
     this.ssid = ssid;
   }
 
   get isConnected(): boolean {
     return this.connected && this.authenticated;
+  }
+
+  get isSsidExpired(): boolean {
+    return this.ssidExpired;
   }
 
   get balance(): { balance: number; isDemo: number } | null {
@@ -127,6 +135,7 @@ export class PocketOptionClient {
 
     this.isDemo = isDemo ?? this.parseIsDemoFromSsid();
     this.intentionallyClosed = false;
+    this.ssidExpired = false;
 
     const host = this.isDemo ? HOSTS.demo : HOSTS.real;
 
@@ -320,8 +329,14 @@ export class PocketOptionClient {
         const data = JSON.parse(message.substring(2));
         if (Array.isArray(data) && data.length >= 1) {
           if (data[0] === "NotAuthorized") {
-            console.error("[PO] NotAuthorized - invalid SSID");
+            console.error("[PO] NotAuthorized - SSID expired or invalid");
+            this.ssidExpired = true;
+            this.intentionallyClosed = true; // Prevent reconnection with expired SSID
             this.authenticated = false;
+            // Fire SSID expiration callbacks
+            this.onSsidExpiredCallbacks.forEach((cb) => {
+              try { cb(); } catch {}
+            });
             if (timeout) clearTimeout(timeout);
             if (reject) reject(new Error("NotAuthorized: SSID invalide"));
             this.ws?.close();
@@ -698,6 +713,13 @@ export class PocketOptionClient {
     this.onErrorCallbacks.push(callback);
     return () => {
       this.onErrorCallbacks = this.onErrorCallbacks.filter((cb) => cb !== callback);
+    };
+  }
+
+  onSsidExpired(callback: () => void): () => void {
+    this.onSsidExpiredCallbacks.push(callback);
+    return () => {
+      this.onSsidExpiredCallbacks = this.onSsidExpiredCallbacks.filter((cb) => cb !== callback);
     };
   }
 

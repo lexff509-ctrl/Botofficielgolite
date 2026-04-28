@@ -13,6 +13,7 @@ interface User {
   isActive: boolean;
   tradeMode: string;
   demoBalance: string | null;
+  ssidStatus?: string;
   createdAt: string;
 }
 
@@ -127,6 +128,13 @@ export default function AdminUsersPage() {
     PENDING_PAYMENT: "bg-yellow-500/20 text-yellow-400",
   };
 
+  const ssidStatusConfig: Record<string, { label: string; color: string }> = {
+    VALID: { label: "Valide", color: "bg-emerald-500/20 text-emerald-400" },
+    EXPIRED: { label: "Expiré", color: "bg-red-500/20 text-red-400" },
+    UNKNOWN: { label: "Inconnu", color: "bg-yellow-500/20 text-yellow-400" },
+    NOT_SET: { label: "Non configuré", color: "bg-slate-500/20 text-slate-400" },
+  };
+
   const [searchId, setSearchId] = useState("");
   const [foundUser, setFoundUser] = useState<User | null>(null);
   const [searching, setSearching] = useState(false);
@@ -216,7 +224,7 @@ export default function AdminUsersPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-slate-800">
-                    {["ID", "Email", "Pseudo", "Rôle", "Abonnement", "Mode", "Actif", "Actions"].map((h) => (
+                    {["ID", "Email", "Pseudo", "Rôle", "Abonnement", "Mode", "SSID", "Actif", "Actions"].map((h) => (
                       <th key={h} className="text-left text-xs text-slate-400 px-4 py-3 font-medium">{h}</th>
                     ))}
                   </tr>
@@ -240,6 +248,11 @@ export default function AdminUsersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-300">{user.tradeMode}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${(ssidStatusConfig[user.ssidStatus || "NOT_SET"] || ssidStatusConfig.NOT_SET).color}`}>
+                          {(ssidStatusConfig[user.ssidStatus || "NOT_SET"] || ssidStatusConfig.NOT_SET).label}
+                        </span>
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`w-2 h-2 rounded-full inline-block ${user.isActive ? "bg-emerald-400" : "bg-red-400"}`} />
                       </td>

@@ -22,6 +22,7 @@ export interface UserProfile {
   tradeMode: string;
   demoBalance: string | null;
   pocketOptionSsid: string | null;
+  ssidStatus: string;
   backtestingDaysGranted: number | null;
   createdAt: Date;
 }
@@ -137,6 +138,7 @@ export async function updateProfile(
     updates.pocketOptionSsid = data.pocketOptionSsid
       ? encryptSSID(data.pocketOptionSsid)
       : null;
+    updates.ssidStatus = data.pocketOptionSsid ? "UNKNOWN" : "NOT_SET";
   }
 
   if (Object.keys(updates).length === 0) return null;

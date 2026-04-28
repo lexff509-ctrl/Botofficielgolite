@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
         tradeMode: user.tradeMode,
         demoBalance: user.demoBalance,
         backtestingDaysGranted: user.backtestingDaysGranted,
+        ssidStatus: user.ssidStatus,
       },
     });
   } catch (error) {

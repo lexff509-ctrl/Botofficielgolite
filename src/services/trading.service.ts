@@ -248,11 +248,29 @@ export function getPocketOptionClient(userId: number): PocketOptionClient | unde
   return activeConnections.get(userId);
 }
 
+export async function updateSsidStatus(
+  userId: number,
+  status: "VALID" | "EXPIRED" | "UNKNOWN" | "NOT_SET"
+): Promise<void> {
+  await db
+    .update(users)
+    .set({ ssidStatus: status, updatedAt: new Date() })
+    .where(eq(users.id, userId));
+}
+
+export async function getSsidStatus(userId: number): Promise<string> {
+  const [user] = await db
+    .select({ ssidStatus: users.ssidStatus })
+    .from(users)
+    .where(eq(users.id, userId));
+  return user?.ssidStatus ?? "NOT_SET";
+}
+
 export async function connectPocketOption(
   userId: number,
   ssid: string,
   isDemo: boolean = true
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; ssidExpired?: boolean }> {
   // Disconnect existing
   const existing = activeConnections.get(userId);
   if (existing) {
@@ -260,13 +278,36 @@ export async function connectPocketOption(
   }
 
   const client = new PocketOptionClient(ssid);
+
+  // Register SSID expiration callback BEFORE connecting
+  client.onSsidExpired(() => {
+    console.log(`[Trading] SSID expired for user ${userId}, updating DB and pausing bot`);
+    updateSsidStatus(userId, "EXPIRED").catch(() => {});
+    activeConnections.delete(userId);
+    // Pause bot runner if active
+    const { getBotRunner } = require("@/services/bot-runner");
+    const runner = getBotRunner(userId);
+    if (runner) {
+      runner.pause("SSID_EXPIRED");
+    }
+  });
+
   try {
     await client.connect(isDemo);
     activeConnections.set(userId, client);
-    // Register client with candle cache for real-time data
     candleCache.setClient(client);
+    await updateSsidStatus(userId, "VALID");
     return { success: true };
   } catch (err) {
+    if (client.isSsidExpired) {
+      await updateSsidStatus(userId, "EXPIRED");
+      return {
+        success: false,
+        error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.",
+        ssidExpired: true,
+      };
+    }
+    await updateSsidStatus(userId, "UNKNOWN");
     return {
       success: false,
       error: err instanceof Error ? err.message : "Échec de connexion à PocketOption",

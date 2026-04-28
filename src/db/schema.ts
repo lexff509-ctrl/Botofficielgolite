@@ -38,6 +38,13 @@ export const tradeResultEnum = pgEnum("trade_result", [
 
 export const userRoleEnum = pgEnum("user_role", ["ADMIN", "CLIENT"]);
 
+export const ssidStatusEnum = pgEnum("ssid_status", [
+  "VALID",
+  "EXPIRED",
+  "UNKNOWN",
+  "NOT_SET",
+]);
+
 export const botTypeEnum = pgEnum("bot_type", ["signal", "auto"]);
 
 // Users table
@@ -55,6 +62,7 @@ export const users = pgTable("users", {
   isActive: boolean("is_active").default(true).notNull(),
   // PocketOption config
   pocketOptionSsid: text("pocket_option_ssid"),
+  ssidStatus: ssidStatusEnum("ssid_status").default("NOT_SET").notNull(),
   // Trading config
   tradeMode: tradeModeEnum("trade_mode").default("DEMO").notNull(),
   demoBalance: numeric("demo_balance", { precision: 15, scale: 2 }).default(

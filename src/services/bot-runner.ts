@@ -42,6 +42,7 @@ export class BotRunner {
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private consecutiveErrors = 0;
   private isPaused = false;
+  private pauseReason: string | null = null;
   private lastSignalAt: number | null = null;
   private signalsGenerated = 0;
   private tradesExecuted = 0;
@@ -82,6 +83,7 @@ export class BotRunner {
     tradeAmount: number;
     running: boolean;
     paused: boolean;
+    pauseReason: string | null;
     signalsGenerated: number;
     tradesExecuted: number;
     consecutiveErrors: number;
@@ -97,6 +99,7 @@ export class BotRunner {
       tradeAmount: this.tradeAmount,
       running: this.running,
       paused: this.isPaused,
+      pauseReason: this.pauseReason,
       signalsGenerated: this.signalsGenerated,
       tradesExecuted: this.tradesExecuted,
       consecutiveErrors: this.consecutiveErrors,
@@ -142,13 +145,15 @@ export class BotRunner {
 
   pause(reason: string): void {
     this.isPaused = true;
+    this.pauseReason = reason;
     console.warn(
-      `[BotRunner] Paused for user ${this.userId}: ${reason} (${this.consecutiveErrors} consecutive errors)`
+      `[BotRunner] Paused for user ${this.userId}: ${reason}`
     );
   }
 
   resume(): void {
     this.isPaused = false;
+    this.pauseReason = null;
     this.consecutiveErrors = 0;
   }
 
@@ -182,6 +187,13 @@ export class BotRunner {
 
   private async tick(): Promise<void> {
     if (this.isPaused || this.stopped) return;
+
+    // Check if SSID has expired
+    const poClient = getPocketOptionClient(this.userId);
+    if (poClient && poClient.isSsidExpired) {
+      this.pause("SSID_EXPIRED");
+      return;
+    }
 
     // Check subscription is still active
     const hasAccess = await hasActiveSubscription(this.userId);
