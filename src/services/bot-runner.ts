@@ -209,11 +209,33 @@ export class BotRunner {
     }
 
     // Get candles from cache
-    const candles = candleCache.getCandlesForTimeframe(
+    let candles = candleCache.getCandlesForTimeframe(
       this.asset,
       this.timeframe,
       100
     );
+
+    // If cache is empty, try fetching historical candles directly
+    if (candles.length < 50 && poClient && poClient.isConnected) {
+      try {
+        const sizeSeconds = this.timeframeToSeconds();
+        const historicalCandles = await poClient.requestCandleHistory(
+          this.asset,
+          sizeSeconds,
+          200
+        );
+        if (historicalCandles.length > 0) {
+          candleCache.seedCandles(this.asset, sizeSeconds, historicalCandles);
+          candles = candleCache.getCandlesForTimeframe(
+            this.asset,
+            this.timeframe,
+            100
+          );
+        }
+      } catch {
+        // Historical fetch failed, will retry next tick
+      }
+    }
 
     // Need at least 50 candles for signal generation
     if (candles.length < 50) return;
