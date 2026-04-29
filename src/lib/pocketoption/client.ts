@@ -766,7 +766,7 @@ export class PocketOptionClient {
       if (this.ws && this.connected) {
         this.ws.send('42["ps"]');
       }
-    }, 20000);
+    }, 10000);
   }
 
   private cleanup(): void {

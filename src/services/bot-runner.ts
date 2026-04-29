@@ -1,10 +1,11 @@
 // BotRunner - Background trading loop per user
 // Signal mode: generates signals from real candle data
 // Auto mode: generates signals + executes trades when confidence >= threshold
+// Risk management: daily stop-loss and take-profit
 
 import { db } from "@/db";
 import { botSessions, signals, trades, users } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte } from "drizzle-orm";
 import {
   generateSignal,
   type Timeframe,
@@ -21,6 +22,8 @@ import { hasActiveSubscription } from "@/services/payment.service";
 const AUTO_TRADE_CONFIDENCE_THRESHOLD = 70; // Minimum confidence % to auto-trade (standard mode)
 const HIGH_CONFIDENCE_THRESHOLD = 80; // Minimum confidence % for high confidence mode
 const MAX_CONSECUTIVE_ERRORS = 10;
+const DEFAULT_DAILY_STOP_LOSS = 5; // Max consecutive losses before pause
+const DEFAULT_DAILY_TAKE_PROFIT = 10; // Max consecutive wins before pause
 
 function getLoopIntervalMs(timeframe: string): number {
   if (timeframe.endsWith("s")) return parseInt(timeframe) * 1000;
@@ -40,6 +43,8 @@ export class BotRunner {
   readonly mode: "DEMO" | "LIVE";
   readonly tradeAmount: number;
   readonly confidenceMode: "standard" | "high";
+  readonly maxDailyLosses: number;
+  readonly maxDailyWins: number;
 
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private consecutiveErrors = 0;
@@ -48,6 +53,9 @@ export class BotRunner {
   private lastSignalAt: number | null = null;
   private signalsGenerated = 0;
   private tradesExecuted = 0;
+  private dailyWins = 0;
+  private dailyLosses = 0;
+  private dailyProfit = 0;
   private startedAt: Date;
   private stopped = false;
 
@@ -59,6 +67,8 @@ export class BotRunner {
     mode: "DEMO" | "LIVE";
     tradeAmount?: number;
     confidenceMode?: "standard" | "high";
+    maxDailyLosses?: number;
+    maxDailyWins?: number;
   }) {
     this.userId = opts.userId;
     this.botType = opts.botType;
@@ -67,6 +77,8 @@ export class BotRunner {
     this.mode = opts.mode;
     this.tradeAmount = opts.tradeAmount || 1;
     this.confidenceMode = opts.confidenceMode || "standard";
+    this.maxDailyLosses = opts.maxDailyLosses || DEFAULT_DAILY_STOP_LOSS;
+    this.maxDailyWins = opts.maxDailyWins || DEFAULT_DAILY_TAKE_PROFIT;
     this.startedAt = new Date();
   }
 
@@ -91,6 +103,9 @@ export class BotRunner {
     pauseReason: string | null;
     signalsGenerated: number;
     tradesExecuted: number;
+    dailyWins: number;
+    dailyLosses: number;
+    dailyProfit: number;
     consecutiveErrors: number;
     lastSignalAt: number | null;
     startedAt: Date;
@@ -108,6 +123,9 @@ export class BotRunner {
       pauseReason: this.pauseReason,
       signalsGenerated: this.signalsGenerated,
       tradesExecuted: this.tradesExecuted,
+      dailyWins: this.dailyWins,
+      dailyLosses: this.dailyLosses,
+      dailyProfit: this.dailyProfit,
       consecutiveErrors: this.consecutiveErrors,
       lastSignalAt: this.lastSignalAt,
       startedAt: this.startedAt,
@@ -116,6 +134,9 @@ export class BotRunner {
 
   start(): void {
     if (this.intervalHandle) return;
+
+    // Load today's trade stats from DB for risk management
+    this.loadDailyStats().catch(() => {});
 
     // Subscribe to candle data via cache
     const sizeSeconds = this.timeframeToSeconds();
@@ -126,7 +147,8 @@ export class BotRunner {
 
     const intervalMs = getLoopIntervalMs(this.timeframe);
     this.intervalHandle = setInterval(() => {
-      this.tick().catch(() => {
+      this.tick().catch((err) => {
+        console.error(`[BotRunner] Tick error for user ${this.userId}:`, err);
         this.consecutiveErrors++;
         if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
           this.pause("Trop d'erreurs consécutives");
@@ -134,8 +156,8 @@ export class BotRunner {
       });
     }, intervalMs);
 
-    // Run first tick immediately
-    this.tick().catch(() => {});
+    // Run first tick after a short delay to let connection settle
+    setTimeout(() => this.tick().catch(() => {}), 2000);
   }
 
   stop(): void {
@@ -152,9 +174,7 @@ export class BotRunner {
   pause(reason: string): void {
     this.isPaused = true;
     this.pauseReason = reason;
-    console.warn(
-      `[BotRunner] Paused for user ${this.userId}: ${reason}`
-    );
+    console.warn(`[BotRunner] Paused for user ${this.userId}: ${reason}`);
   }
 
   resume(): void {
@@ -164,6 +184,30 @@ export class BotRunner {
   }
 
   // ============ PRIVATE ============
+
+  private async loadDailyStats(): Promise<void> {
+    try {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const todayTrades = await db
+        .select()
+        .from(trades)
+        .where(
+          and(
+            eq(trades.userId, this.userId),
+            eq(trades.isAutomatic, true),
+            gte(trades.openedAt, todayStart)
+          )
+        );
+
+      this.dailyWins = todayTrades.filter((t) => t.result === "WIN").length;
+      this.dailyLosses = todayTrades.filter((t) => t.result === "LOSS").length;
+      this.dailyProfit = todayTrades.reduce((sum, t) => sum + parseFloat(t.profit || "0"), 0);
+    } catch {
+      // Stats load failure is non-critical
+    }
+  }
 
   private timeframeToSeconds(): number {
     const tf = this.timeframe;
@@ -184,6 +228,7 @@ export class BotRunner {
         );
         if (historicalCandles.length > 0) {
           candleCache.seedCandles(this.asset, sizeSeconds, historicalCandles);
+          console.log(`[BotRunner] Bootstrapped ${historicalCandles.length} candles for ${this.asset}`);
         }
       } catch {
         // Historical bootstrap failed, will rely on real-time data
@@ -205,6 +250,16 @@ export class BotRunner {
     const hasAccess = await hasActiveSubscription(this.userId);
     if (!hasAccess) {
       this.pause("Abonnement expiré");
+      return;
+    }
+
+    // Risk management: check daily limits
+    if (this.dailyLosses >= this.maxDailyLosses) {
+      this.pause(`Stop-loss atteint: ${this.dailyLosses} pertes aujourd'hui`);
+      return;
+    }
+    if (this.dailyWins >= this.maxDailyWins) {
+      this.pause(`Take-profit atteint: ${this.dailyWins} gains aujourd'hui`);
       return;
     }
 
@@ -252,6 +307,8 @@ export class BotRunner {
     this.lastSignalAt = Date.now();
     this.signalsGenerated++;
 
+    console.log(`[BotRunner] Signal: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence`);
+
     // Save signal to DB
     await this.saveSignal(signal);
 
@@ -297,6 +354,17 @@ export class BotRunner {
     candles: Candle[]
   ): Promise<void> {
     const currentPrice = candles[candles.length - 1]?.close;
+
+    // Double-check daily limits before executing
+    if (this.dailyLosses >= this.maxDailyLosses) {
+      this.pause(`Stop-loss atteint: ${this.dailyLosses} pertes aujourd'hui`);
+      return;
+    }
+    if (this.dailyWins >= this.maxDailyWins) {
+      this.pause(`Take-profit atteint: ${this.dailyWins} gains aujourd'hui`);
+      return;
+    }
+
     try {
       const result = await executeTrade(this.userId, {
         asset: signal.asset,
@@ -310,10 +378,17 @@ export class BotRunner {
 
       if (result.trade) {
         this.tradesExecuted++;
+        // Update daily risk tracking
+        if (result.profit > 0) {
+          this.dailyWins++;
+        } else {
+          this.dailyLosses++;
+        }
+        this.dailyProfit += result.profit;
+        console.log(`[BotRunner] Trade executed: ${signal.direction} ${signal.asset} profit=${result.profit.toFixed(2)} (W:${this.dailyWins}/L:${this.dailyLosses})`);
       }
-    } catch {
-      // Trade execution failure - increment error counter but don't pause
-      // (the trade might fail for legitimate reasons like insufficient balance)
+    } catch (err) {
+      console.error(`[BotRunner] Trade execution failed:`, err);
     }
   }
 
@@ -328,17 +403,6 @@ export class BotRunner {
         .limit(1);
 
       if (!session || !session.isRunning) return;
-
-      // Get updated trade counts
-      const tradeStats = await db
-        .select({
-          total: botSessions.totalTrades,
-          wins: botSessions.wins,
-          losses: botSessions.losses,
-          totalProfit: botSessions.totalProfit,
-        })
-        .from(botSessions)
-        .where(eq(botSessions.id, session.id));
 
       // Count actual trades from DB for accuracy
       const userTrades = await db
@@ -379,6 +443,8 @@ export function startBotRunner(opts: {
   mode: "DEMO" | "LIVE";
   tradeAmount?: number;
   confidenceMode?: "standard" | "high";
+  maxDailyLosses?: number;
+  maxDailyWins?: number;
 }): BotRunner {
   // Stop existing runner if any
   const existing = activeRunners.get(opts.userId);

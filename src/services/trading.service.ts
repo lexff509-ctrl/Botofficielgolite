@@ -188,15 +188,13 @@ export async function executeTrade(
     }
   }
 
-  // For LIVE mode, execute via PocketOption API
   let result: "WIN" | "LOSS" = "LOSS";
   let profit = -params.amount;
+  let tradeId = "";
 
-  if (tradeMode === "LIVE") {
-    const client = activeConnections.get(userId);
-    if (!client || !client.isConnected) {
-      return { trade: null, profit: 0, error: "Bot PocketOption non connecté. Démarrez le bot automatique d'abord." };
-    }
+  // Try to execute via PocketOption WebSocket (both DEMO and LIVE)
+  const client = activeConnections.get(userId);
+  if (client && client.isConnected) {
     try {
       const tradeResult = await client.placeTrade({
         asset: params.asset,
@@ -205,12 +203,23 @@ export async function executeTrade(
         duration: parseTimeframe(params.timeframe),
       });
       result = tradeResult.win ? "WIN" : "LOSS";
-      profit = tradeResult.win ? params.amount * 0.85 : -params.amount;
+      profit = tradeResult.profit;
+      tradeId = tradeResult.tradeId;
     } catch (err) {
-      return { trade: null, profit: 0, error: "Erreur d'exécution sur PocketOption" };
+      console.error("[Trade] PO execution failed:", err);
+      // Fallback to simulation only for DEMO mode
+      if (tradeMode !== "DEMO") {
+        return { trade: null, profit: 0, error: "Erreur d'exécution sur PocketOption" };
+      }
+      // DEMO fallback simulation
+      const isWin = Math.random() < 0.62;
+      result = isWin ? "WIN" : "LOSS";
+      profit = isWin ? params.amount * 0.85 : -params.amount;
     }
+  } else if (tradeMode === "LIVE") {
+    return { trade: null, profit: 0, error: "Bot PocketOption non connecté. Démarrez le bot d'abord." };
   } else {
-    // DEMO simulation: 62% win rate
+    // DEMO mode without PO connection - simulation
     const isWin = Math.random() < 0.62;
     result = isWin ? "WIN" : "LOSS";
     profit = isWin ? params.amount * 0.85 : -params.amount;

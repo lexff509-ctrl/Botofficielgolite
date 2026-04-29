@@ -111,26 +111,32 @@ export async function POST(req: NextRequest) {
         process.env.POCKET_OPTION_SSID ||
         "";
 
-      const encryptedSsid = rawSsid ? encryptSSID(rawSsid) : "";
+      // SSID is REQUIRED for both signal and auto bot
+      if (!rawSsid) {
+        return NextResponse.json(
+          { error: "SSID PocketOption requis. Ajoutez votre SSID dans votre profil ou dans le champ ci-dessus.", ssidMissing: true },
+          { status: 400 }
+        );
+      }
 
-      // Connect to PocketOption (needed for real candle data in both DEMO and LIVE)
-      if (rawSsid) {
-        // Pre-check: skip connection attempt if SSID is already known expired
-        if (user.ssidStatus === "EXPIRED" && !ssid) {
-          return NextResponse.json(
-            { error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.", ssidExpired: true },
-            { status: 400 }
-          );
-        }
+      const encryptedSsid = encryptSSID(rawSsid);
 
-        const isDemoConnection = selectedMode === "DEMO";
-        const connectResult = await connectPocketOption(payload.userId, rawSsid, isDemoConnection);
-        if (!connectResult.success) {
-          return NextResponse.json(
-            { error: connectResult.error, ssidExpired: connectResult.ssidExpired },
-            { status: 400 }
-          );
-        }
+      // Pre-check: skip connection attempt if SSID is already known expired
+      if (user.ssidStatus === "EXPIRED" && !ssid) {
+        return NextResponse.json(
+          { error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.", ssidExpired: true },
+          { status: 400 }
+        );
+      }
+
+      // Connect to PocketOption
+      const isDemoConnection = selectedMode === "DEMO";
+      const connectResult = await connectPocketOption(payload.userId, rawSsid, isDemoConnection);
+      if (!connectResult.success) {
+        return NextResponse.json(
+          { error: connectResult.error, ssidExpired: connectResult.ssidExpired },
+          { status: 400 }
+        );
       }
 
       const [session] = await db
