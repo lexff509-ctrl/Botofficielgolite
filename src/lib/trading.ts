@@ -1,6 +1,17 @@
 // Trading strategy engine - L'Impulsion Multi-Confirmation
+// Using technicalindicators library for professional-grade indicator calculations
 // Rule-based strategy: EMA20/50 trend + Stochastic momentum + Fractal reversal + Doji filter
 // ALL conditions must be met for a signal to be generated
+
+import {
+  EMA,
+  Stochastic,
+  ATR,
+  RSI,
+  MACD,
+  BollingerBands,
+  SMA,
+} from "technicalindicators";
 
 export type Timeframe = "5s" | "10s" | "15s" | "30s" | "1m" | "3m" | "5m";
 
@@ -57,34 +68,23 @@ export interface Signal {
   timestamp: number;
 }
 
-// ============ INDICATOR CALCULATIONS ============
+// ============ PROFESSIONAL INDICATOR CALCULATIONS ============
+// All indicators use the technicalindicators library - tested against TradingView
 
-// EMA calculation using standard SMA seed + exponential smoothing
+// EMA calculation using technicalindicators library
 export function calculateEMA(closes: number[], period: number): number {
-  if (closes.length < period) return closes[closes.length - 1];
-  const k = 2 / (period + 1);
-  let ema = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < closes.length; i++) {
-    ema = closes[i] * k + ema * (1 - k);
-  }
-  return ema;
+  if (closes.length < period) return closes[closes.length - 1] || 0;
+  const result = EMA.calculate({ period, values: closes });
+  return result.length > 0 ? result[result.length - 1] : closes[closes.length - 1];
 }
 
 // Full EMA series for gap comparison
 export function calculateEMASeries(closes: number[], period: number): number[] {
-  if (closes.length === 0) return [];
-  const k = 2 / (period + 1);
-  const result: number[] = [];
-  let ema = closes[0];
-  result.push(ema);
-  for (let i = 1; i < closes.length; i++) {
-    ema = closes[i] * k + ema * (1 - k);
-    result.push(ema);
-  }
-  return result;
+  if (closes.length < period) return closes;
+  return EMA.calculate({ period, values: closes });
 }
 
-// Stochastic(14,3,3) - proper slow stochastic with %K smoothed and %D
+// Stochastic(14,3,3) - proper slow stochastic using technicalindicators
 export function calculateStochastic(
   candles: Candle[],
   period = 14,
@@ -93,134 +93,44 @@ export function calculateStochastic(
 ): { k: number; d: number } {
   if (candles.length < period + smoothK) return { k: 50, d: 50 };
 
-  // Compute raw %K values for the last (smoothK + smoothD - 1) periods
-  const rawKValues: number[] = [];
-  const startIdx = Math.max(period - 1, candles.length - smoothK - smoothD + 1);
+  const input = {
+    high: candles.map((c) => c.high),
+    low: candles.map((c) => c.low),
+    close: candles.map((c) => c.close),
+    period,
+    signalPeriod: smoothD,
+  };
 
-  for (let idx = startIdx; idx < candles.length; idx++) {
-    const sliceStart = Math.max(0, idx - period + 1);
-    const slice = candles.slice(sliceStart, idx + 1);
-    const lowest = Math.min(...slice.map((c) => c.low));
-    const highest = Math.max(...slice.map((c) => c.high));
-    const close = candles[idx].close;
-    rawKValues.push(
-      highest === lowest ? 50 : ((close - lowest) / (highest - lowest)) * 100
-    );
-  }
+  const result = Stochastic.calculate(input);
+  if (result.length === 0) return { k: 50, d: 50 };
 
-  if (rawKValues.length < smoothK) return { k: 50, d: 50 };
-
-  // Smoothed %K = SMA of raw %K over smoothK periods
-  const smoothedK: number[] = [];
-  for (let i = smoothK - 1; i < rawKValues.length; i++) {
-    const sum = rawKValues.slice(i - smoothK + 1, i + 1).reduce((a, b) => a + b, 0);
-    smoothedK.push(sum / smoothK);
-  }
-
-  // %K = last smoothed value
-  const k = smoothedK[smoothedK.length - 1];
-
-  // %D = SMA of smoothed %K over smoothD periods
-  if (smoothedK.length < smoothD) return { k, d: k };
-  const d = smoothedK.slice(-smoothD).reduce((a, b) => a + b, 0) / smoothD;
-
-  return { k, d };
+  const last = result[result.length - 1];
+  return { k: last.k, d: last.d };
 }
 
-// ATR - Average True Range
+// ATR - Average True Range using technicalindicators
 export function calculateATR(candles: Candle[], period = 14): number {
   if (candles.length < 2) return 0;
-  const trueRanges: number[] = [];
-  for (let i = 1; i < candles.length; i++) {
-    const c = candles[i];
-    const prev = candles[i - 1];
-    trueRanges.push(
-      Math.max(
-        c.high - c.low,
-        Math.abs(c.high - prev.close),
-        Math.abs(c.low - prev.close)
-      )
-    );
-  }
-  const slice = trueRanges.slice(-period);
-  if (slice.length === 0) return 0;
-  let atr = slice[0];
-  const k = 2 / (period + 1);
-  for (let i = 1; i < slice.length; i++) {
-    atr = slice[i] * k + atr * (1 - k);
-  }
-  return atr;
+
+  const input = {
+    high: candles.map((c) => c.high),
+    low: candles.map((c) => c.low),
+    close: candles.map((c) => c.close),
+    period,
+  };
+
+  const result = ATR.calculate(input);
+  return result.length > 0 ? result[result.length - 1] : 0;
 }
 
-// Bill Williams Fractals - detect reversal points
-// High fractal at index i: high[i] > high[i-1] AND high[i] > high[i-2] AND high[i] > high[i+1] AND high[i] > high[i+2]
-// Low fractal at index i: low[i] < low[i-1] AND low[i] < low[i-2] AND low[i] < low[i+1] AND low[i] < low[i+2]
-export function calculateFractals(candles: Candle[]): {
-  lowFractal: boolean;
-  highFractal: boolean;
-} {
-  // We check if the candle at index (n-2) is a fractal
-  // We need at least 5 candles, and we check the 3rd from the end
-  if (candles.length < 5) return { lowFractal: false, highFractal: false };
-
-  const n = candles.length;
-  // Check the candle at index n-2 (one candle back from current)
-  // This is the "previous completed candle" relative to the current price
-  const i = n - 2;
-  if (i < 2 || i >= n - 1) return { lowFractal: false, highFractal: false };
-
-  const high = candles[i].high;
-  const low = candles[i].low;
-
-  // High fractal: center candle's high is higher than 2 bars on each side
-  let highFractal = true;
-  let lowFractal = true;
-
-  // Check left side (i-2, i-1) and right side (i+1)
-  // For the right side, we only have i+1 (the current/latest candle)
-  for (let j = Math.max(0, i - 2); j < i; j++) {
-    if (candles[j].high >= high) highFractal = false;
-    if (candles[j].low <= low) lowFractal = false;
-  }
-  // Right side: check i+1 if it exists
-  if (i + 1 < n) {
-    if (candles[i + 1].high >= high) highFractal = false;
-    if (candles[i + 1].low <= low) lowFractal = false;
-  }
-
-  return { lowFractal, highFractal };
-}
-
-// Doji detection: body size less than threshold in pips
-// A doji candle has a very small body relative to its wicks
-// For forex: 2 pips = 0.0002; for crypto we use ATR-relative threshold
-export function isDojiCandle(
-  candle: Candle,
-  thresholdPips: number = 2,
-  pipValue: number = 0.0001
-): boolean {
-  const bodySize = Math.abs(candle.close - candle.open);
-  return bodySize < thresholdPips * pipValue;
-}
-
-// RSI - kept for legacy/DB compatibility
+// RSI using technicalindicators
 export function calculateRSI(closes: number[], period = 14): number {
   if (closes.length < period + 1) return 50;
-  let gains = 0;
-  let losses = 0;
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) gains += diff;
-    else losses -= diff;
-  }
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - 100 / (1 + rs);
+  const result = RSI.calculate({ period, values: closes });
+  return result.length > 0 ? result[result.length - 1] : 50;
 }
 
-// MACD - kept for legacy/DB compatibility
+// MACD using technicalindicators
 export function calculateMACD(closes: number[]): {
   macd: number;
   signal: number;
@@ -230,36 +140,106 @@ export function calculateMACD(closes: number[]): {
   if (closes.length < 26) {
     return { macd: 0, signal: 0, histogram: 0, signalLine: [] };
   }
-  const ema12Series = calculateEMASeries(closes, 12);
-  const ema26Series = calculateEMASeries(closes, 26);
-  const macdLine: number[] = [];
-  for (let i = 0; i < closes.length; i++) {
-    macdLine.push(ema12Series[i] - ema26Series[i]);
+
+  const result = MACD.calculate({
+    values: closes,
+    fastPeriod: 12,
+    slowPeriod: 26,
+    signalPeriod: 9,
+    SimpleMAOscillator: false,
+    SimpleMASignal: false,
+  });
+
+  if (result.length === 0) {
+    return { macd: 0, signal: 0, histogram: 0, signalLine: [] };
   }
-  const signalLine = calculateEMASeries(macdLine, 9);
-  const lastMacd = macdLine[macdLine.length - 1];
-  const lastSignal = signalLine[signalLine.length - 1];
-  const histogram = lastMacd - lastSignal;
-  return { macd: lastMacd, signal: lastSignal, histogram, signalLine };
+
+  const last = result[result.length - 1];
+  return {
+    macd: last.MACD || 0,
+    signal: last.signal || 0,
+    histogram: last.histogram || 0,
+    signalLine: result.map((r) => r.signal || 0),
+  };
 }
 
-// Bollinger Bands - kept for legacy/DB compatibility
+// Bollinger Bands using technicalindicators
 export function calculateBollinger(
   closes: number[],
   period = 20,
   stdDevMultiplier = 2
 ): { upper: number; middle: number; lower: number } {
-  const slice = closes.slice(-period);
-  const middle = slice.reduce((a, b) => a + b, 0) / slice.length;
-  const variance =
-    slice.reduce((acc, val) => acc + Math.pow(val - middle, 2), 0) /
-    slice.length;
-  const stdDev = Math.sqrt(variance);
+  if (closes.length < period) {
+    const price = closes[closes.length - 1] || 0;
+    return { upper: price, middle: price, lower: price };
+  }
+
+  const result = BollingerBands.calculate({
+    period,
+    stdDev: stdDevMultiplier,
+    values: closes,
+  });
+
+  if (result.length === 0) {
+    const price = closes[closes.length - 1];
+    return { upper: price, middle: price, lower: price };
+  }
+
+  const last = result[result.length - 1];
   return {
-    upper: middle + stdDevMultiplier * stdDev,
-    middle,
-    lower: middle - stdDevMultiplier * stdDev,
+    upper: last.upper,
+    middle: last.middle,
+    lower: last.lower,
   };
+}
+
+// ============ CUSTOM INDICATORS (not in technicalindicators) ============
+
+// Bill Williams Fractals - detect reversal points
+// High fractal at index i: high[i] > high[i-1..i-2] AND high[i] > high[i+1..i+2]
+// Low fractal at index i: low[i] < low[i-1..i-2] AND low[i] < low[i+1..i+2]
+export function calculateFractals(candles: Candle[]): {
+  lowFractal: boolean;
+  highFractal: boolean;
+} {
+  // We check if the candle at index (n-2) is a fractal
+  if (candles.length < 5) return { lowFractal: false, highFractal: false };
+
+  const n = candles.length;
+  // Check the candle at index n-3 (two candles back from current)
+  // This gives the most recent confirmed fractal with 2 bars on each side
+  const i = n - 3;
+  if (i < 2 || i >= n - 2) return { lowFractal: false, highFractal: false };
+
+  const high = candles[i].high;
+  const low = candles[i].low;
+
+  let highFractal = true;
+  let lowFractal = true;
+
+  // Check both sides: 2 bars left and 2 bars right
+  for (let j = i - 2; j <= i + 2; j++) {
+    if (j === i) continue;
+    if (candles[j].high >= high) highFractal = false;
+    if (candles[j].low <= low) lowFractal = false;
+  }
+
+  return { lowFractal, highFractal };
+}
+
+// Doji detection: body size relative to candle range
+// A doji candle has a very small body relative to its wicks
+export function isDojiCandle(
+  candle: Candle,
+  thresholdPips: number = 2,
+  pipValue: number = 0.0001
+): boolean {
+  const bodySize = Math.abs(candle.close - candle.open);
+  const totalRange = candle.high - candle.low;
+  // A doji has body < threshold AND body is small relative to total range
+  if (totalRange === 0) return true; // No movement at all
+  const bodyRatio = bodySize / totalRange;
+  return bodySize < thresholdPips * pipValue || bodyRatio < 0.1;
 }
 
 // ============ L'IMPULSION MULTI-CONFIRMATION STRATEGY ============
@@ -289,7 +269,7 @@ function evaluateImpulsion(
   const closes = candles.map((c) => c.close);
   const currentPrice = closes[closes.length - 1];
 
-  // Calculate core indicators
+  // Calculate core indicators using professional library
   const ema20 = calculateEMA(closes, 20);
   const ema50 = calculateEMA(closes, 50);
   const { k: stochK, d: stochD } = calculateStochastic(candles, 14, 3, 3);
@@ -423,7 +403,7 @@ export function generateSignal(
     return null; // No signal - conditions not met
   }
 
-  // Calculate legacy indicators for DB compatibility
+  // Calculate legacy indicators using professional library
   const closes = candles.map((c) => c.close);
   const rsi = calculateRSI(closes);
   const { macd, signal: macdSignal, histogram: macdHistogram } = calculateMACD(closes);
@@ -544,7 +524,7 @@ function aggregateCandles(candles: Candle[], factor: number): Candle[] {
   return result;
 }
 
-// ============ MOCK CANDLE GENERATION ============
+// ============ MOCK CANDLE GENERATION (for testing) ============
 
 export function generateMockCandles(
   count: number,
