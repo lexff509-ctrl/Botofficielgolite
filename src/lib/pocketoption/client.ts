@@ -2,12 +2,19 @@
 // Based on real Socket.IO Engine.IO v4 protocol
 // Reference: https://github.com/Mastaaa1987/PocketOptionAPI-v2
 //
-// Connection flow:
-// 1. HTTP GET /socket.io/?EIO=4&transport=polling → get sid
-// 2. WebSocket connect wss://host/socket.io/?EIO=4&transport=websocket&sid=xxx
-// 3. Server sends "0{...}" (Engine.IO OPEN) → client sends "40" (Socket.IO CONNECT)
-// 4. Server sends "40{sid:...}" → client sends 42["auth",...] (SSID)
-// 5. Server sends 451-["successauth",...] → authenticated!
+// Connection flow (direct WebSocket - like Python reference client):
+// 1. Connect wss://host/socket.io/?EIO=4&transport=websocket
+// 2. Server sends "0{...}" (Engine.IO OPEN) → client sends "40" (Socket.IO CONNECT)
+// 3. Server sends "40{sid:...}" → client sends 42["auth",...] (SSID)
+// 4. Server sends 451-["successauth",...] → authenticated!
+//
+// Fallback: Engine.IO v4 HTTP polling upgrade flow:
+// 1. GET /socket.io/?EIO=4&transport=polling → get sid + cookies
+// 2. POST /socket.io/?EIO=4&transport=polling&sid=xxx body "40" (Socket.IO CONNECT)
+// 3. GET /socket.io/?EIO=4&transport=polling&sid=xxx → read CONNECT ACK
+// 4. WebSocket connect wss://host/socket.io/?EIO=4&transport=websocket&sid=xxx
+// 5. Send "2probe" → wait for "3probe" → send "5" (upgrade complete)
+// 6. Send auth 42["auth",...]
 
 import WebSocket from "ws";
 import https from "https";
@@ -68,6 +75,12 @@ export class PocketOptionClient {
   private authenticated = false;
   private isDemo = true;
 
+  // Connection state
+  private isUpgradeConnection = false; // true when using HTTP polling → WS upgrade
+  private upgradeResolve: ((value: void) => void) | null = null;
+  private upgradeReject: ((error: Error) => void) | null = null;
+  private connectionTimeout: ReturnType<typeof setTimeout> | null = null;
+
   // Callbacks
   private onAuthCallbacks: (() => void)[] = [];
   private candleListeners = new Map<
@@ -93,6 +106,11 @@ export class PocketOptionClient {
   private updateClosedDealsFlag = false;
   private loadHistoryPeriodFlag = false;
   private successOpenOrderFlag = false;
+
+  // Binary attachment tracking: when a 451- event has _placeholder,
+  // the actual data arrives in the next binary WebSocket frame
+  private pendingBinaryEvent: string | null = null;
+  private pendingBinaryEventData: unknown = null;
 
   // Cached response data
   private historyPeriodData: Record<string, unknown> | null = null;
@@ -153,91 +171,70 @@ export class PocketOptionClient {
     this.isDemo = isDemo ?? this.parseIsDemoFromSsid();
     this.intentionallyClosed = false;
     this.ssidExpired = false;
+    this.isUpgradeConnection = false;
 
     const host = this.isDemo ? HOSTS.demo : HOSTS.real;
 
-    // Direct WebSocket connection (like Python reference implementation)
-    const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
-    console.log(`[PO] Connecting WebSocket to ${host}...`);
+    // Strategy 1: Direct WebSocket (like the Python reference client)
+    try {
+      await this.connectDirect(host);
+      return;
+    } catch (directErr) {
+      const errMsg = directErr instanceof Error ? directErr.message : String(directErr);
+      console.log(`[PO] Direct WebSocket failed: ${errMsg}`);
+      console.log("[PO] Trying Engine.IO v4 HTTP polling upgrade...");
+    }
 
+    // Strategy 2: Full Engine.IO v4 polling → WebSocket upgrade
+    try {
+      await this.connectWithUpgrade(host);
+      return;
+    } catch (upgradeErr) {
+      const errMsg = upgradeErr instanceof Error ? upgradeErr.message : String(upgradeErr);
+      throw new Error(`Failed to connect: direct WS and upgrade both failed. Last: ${errMsg}`);
+    }
+  }
+
+  /** Strategy 1: Direct WebSocket connection (Python reference client approach) */
+  private connectDirect(host: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
+      console.log(`[PO] Direct WebSocket to ${host}...`);
+
       try {
         this.ws = new WebSocket(wsUrl, {
-          headers: WS_HEADERS,
+          headers: {
+            ...WS_HEADERS,
+            Host: host,
+          },
           handshakeTimeout: 15000,
-        });
+        } as WebSocket.ClientOptions);
 
-        const timeout = setTimeout(() => {
+        this.upgradeResolve = resolve;
+        this.upgradeReject = reject;
+
+        this.connectionTimeout = setTimeout(() => {
           reject(new Error("Connection timeout (15s)"));
           this.ws?.close();
         }, 15000);
 
         this.ws.on("open", () => {
-          console.log("[PO] WebSocket connected, waiting for handshake...");
+          console.log("[PO] WebSocket connected, waiting for Engine.IO OPEN...");
         });
 
         this.ws.on("message", (raw: WebSocket.Data) => {
-          try {
-            // PocketOption server may send text protocol messages as binary Buffers.
-            // Check if the buffer starts with a known text prefix before routing.
-            let text: string | null = null;
-            if (Buffer.isBuffer(raw)) {
-              text = raw.toString("utf8");
-            } else if (typeof raw === "string") {
-              text = raw;
-            } else {
-              text = raw.toString();
-            }
-
-            // Check if this is a text protocol message (Engine.IO / Socket.IO)
-            const firstChar = text.charAt(0);
-            if (
-              firstChar === "0" || // Engine.IO OPEN
-              firstChar === "2" || // Engine.IO PING
-              firstChar === "3" || // Engine.IO PONG
-              firstChar === "4" || // Socket.IO (40, 42, 451-)
-              text.startsWith('42["ps"]') // heartbeat
-            ) {
-              this.handleTextMessage(text, resolve, reject, timeout);
-            } else {
-              // Binary data (balance, order, tick data, etc.)
-              const buf = Buffer.isBuffer(raw)
-                ? raw
-                : Buffer.from(typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer));
-              this.handleBinaryMessage(buf);
-            }
-          } catch (err) {
-            console.error("[PO] Message handling error:", err);
-          }
+          this.handleRawMessage(raw);
         });
 
         this.ws.on("close", (code: number, reason: Buffer) => {
           console.log(`[PO] WebSocket closed. Code: ${code}, Reason: ${reason.toString()}`);
-          this.connected = false;
-          this.authenticated = false;
-          this.cleanup();
-
-          if (!this.intentionallyClosed) {
-            const delay = Math.min(
-              5000 * Math.pow(2, this.reconnectAttempts),
-              this.maxReconnectDelay
-            );
-            this.reconnectAttempts++;
-            console.log(`[PO] Disconnected. Reconnecting in ${delay}ms...`);
-            setTimeout(() => {
-              if (!this.connected && !this.intentionallyClosed) {
-                this.connect(this.isDemo).catch(() => {});
-              }
-            }, delay);
-          }
+          this.handleDisconnect();
         });
 
         this.ws.on("error", (err: Error) => {
           console.error(`[PO] WebSocket error: ${err.message}`);
-          clearTimeout(timeout);
-          this.connected = false;
-          this.authenticated = false;
-          this.cleanup();
+          if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
+          this.handleDisconnect();
           reject(err);
         });
       } catch (err) {
@@ -246,83 +243,276 @@ export class PocketOptionClient {
     });
   }
 
-  /**
-   * HTTP polling handshake - required by Socket.IO before WebSocket upgrade
-   */
-  private pollingHandshake(host: string): Promise<string> {
+  /** Strategy 2: Engine.IO v4 HTTP polling → WebSocket upgrade */
+  private async connectWithUpgrade(host: string): Promise<void> {
+    // Step 1: HTTP GET polling → get sid + cookies
+    const { sid, cookies } = await this.httpPollingOpen(host);
+    if (!sid) {
+      throw new Error("Failed to get sid from HTTP polling handshake");
+    }
+    console.log(`[PO] Got sid from polling: ${sid}`);
+
+    // Step 2: HTTP POST polling with Socket.IO CONNECT (40)
+    await this.httpPollingPost(host, sid, "40", cookies);
+
+    // Step 3: HTTP GET polling to read CONNECT ACK
+    await this.httpPollingRead(host, sid, cookies);
+
+    // Step 4: WebSocket upgrade with sid + cookies
+    this.isUpgradeConnection = true;
     return new Promise((resolve, reject) => {
-      const options: https.RequestOptions = {
+      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
+      console.log(`[PO] WebSocket upgrade to ${host}...`);
+
+      try {
+        const wsOptions: WebSocket.ClientOptions = {
+          headers: {
+            ...WS_HEADERS,
+            Host: host,
+            ...(cookies.length > 0 ? { Cookie: cookies.join("; ") } : {}),
+          },
+          handshakeTimeout: 15000,
+        };
+
+        this.ws = new WebSocket(wsUrl, wsOptions);
+        this.upgradeResolve = resolve;
+        this.upgradeReject = reject;
+
+        this.connectionTimeout = setTimeout(() => {
+          reject(new Error("Upgrade timeout (15s)"));
+          this.ws?.close();
+        }, 15000);
+
+        this.ws.on("open", () => {
+          // Engine.IO v4 upgrade probe sequence
+          console.log("[PO] WebSocket connected, sending probe...");
+          this.ws?.send("2probe");
+        });
+
+        this.ws.on("message", (raw: WebSocket.Data) => {
+          this.handleRawMessage(raw);
+        });
+
+        this.ws.on("close", (code: number, reason: Buffer) => {
+          console.log(`[PO] WebSocket closed. Code: ${code}, Reason: ${reason.toString()}`);
+          this.handleDisconnect();
+        });
+
+        this.ws.on("error", (err: Error) => {
+          console.error(`[PO] Upgrade error: ${err.message}`);
+          if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
+          this.handleDisconnect();
+          reject(err);
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  // ============ HTTP Polling Methods ============
+
+  /** HTTP GET polling - Engine.IO OPEN handshake */
+  private httpPollingOpen(host: string): Promise<{ sid: string; cookies: string[] }> {
+    return new Promise((resolve, reject) => {
+      console.log(`[PO] HTTP polling handshake to ${host}...`);
+
+      const req = https.get({
         hostname: host,
         path: "/socket.io/?EIO=4&transport=polling",
         method: "GET",
         headers: {
           ...WS_HEADERS,
+          Host: host,
           Accept: "*/*",
+        },
+      }, (res) => {
+        const cookies = (res.headers["set-cookie"] || []).map(
+          (c: string) => c.split(";")[0]
+        );
+
+        let body = "";
+        res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+        res.on("end", () => {
+          try {
+            console.log(`[PO] Polling response: ${body.substring(0, 200)}`);
+            // Response format: "0{"sid":"xxx","upgrades":["websocket"],...}"
+            if (body.startsWith("0")) {
+              const jsonStr = body.substring(1);
+              const parsed = JSON.parse(jsonStr);
+              resolve({ sid: parsed.sid || "", cookies });
+            } else {
+              // Try regex fallback
+              const match = body.match(/"sid"\s*:\s*"([^"]+)"/);
+              resolve({ sid: match ? match[1] : "", cookies });
+            }
+          } catch (err) {
+            console.error("[PO] Polling parse error:", err);
+            resolve({ sid: "", cookies });
+          }
+        });
+      });
+
+      req.on("error", (err: Error) => {
+        console.error(`[PO] HTTP polling error: ${err.message}`);
+        reject(new Error(`HTTP polling failed: ${err.message}`));
+      });
+
+      req.setTimeout(10000, () => {
+        req.destroy();
+        reject(new Error("HTTP polling timeout"));
+      });
+    });
+  }
+
+  /** HTTP POST polling - send data via polling transport */
+  private httpPollingPost(
+    host: string,
+    sid: string,
+    body: string,
+    cookies: string[]
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const path = `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`;
+      const bodyBuf = Buffer.from(body, "utf8");
+
+      const options: https.RequestOptions = {
+        hostname: host,
+        path,
+        method: "POST",
+        headers: {
+          ...WS_HEADERS,
+          Host: host,
+          "Content-Type": "text/plain; charset=UTF-8",
+          "Content-Length": bodyBuf.length,
+          ...(cookies.length > 0 ? { Cookie: cookies.join("; ") } : {}),
         },
       };
 
       const req = https.request(options, (res) => {
         let data = "";
-        res.on("data", (chunk: Buffer) => {
-          data += chunk.toString();
-        });
+        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
         res.on("end", () => {
-          try {
-            // Response format: "0{"sid":"xxx","upgrades":["websocket"],...}"
-            if (data.startsWith("0")) {
-              const jsonStr = data.substring(1);
-              const parsed = JSON.parse(jsonStr);
-              if (parsed.sid) {
-                resolve(parsed.sid);
-              } else {
-                reject(new Error("No sid in polling response"));
-              }
-            } else {
-              reject(new Error(`Unexpected polling response: ${data.substring(0, 100)}`));
-            }
-          } catch (err) {
-            reject(new Error(`Failed to parse polling response: ${err}`));
+          console.log(`[PO] POST response: ${data.substring(0, 100)} (status: ${res.statusCode})`);
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+          } else {
+            reject(new Error(`POST polling returned ${res.statusCode}`));
           }
         });
       });
 
-      req.on("error", (err) => {
-        reject(new Error(`Polling handshake failed: ${err.message}`));
+      req.on("error", (err: Error) => {
+        reject(new Error(`POST polling failed: ${err.message}`));
       });
 
       req.setTimeout(10000, () => {
         req.destroy();
-        reject(new Error("Polling handshake timeout"));
+        reject(new Error("POST polling timeout"));
+      });
+
+      req.write(bodyBuf);
+      req.end();
+    });
+  }
+
+  /** HTTP GET polling - read data from polling transport */
+  private httpPollingRead(
+    host: string,
+    sid: string,
+    cookies: string[]
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const path = `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`;
+
+      const options: https.RequestOptions = {
+        hostname: host,
+        path,
+        method: "GET",
+        headers: {
+          ...WS_HEADERS,
+          Host: host,
+          Accept: "*/*",
+          ...(cookies.length > 0 ? { Cookie: cookies.join("; ") } : {}),
+        },
+      };
+
+      const req = https.request(options, (res) => {
+        let data = "";
+        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+        res.on("end", () => {
+          console.log(`[PO] GET polling data: ${data.substring(0, 200)}`);
+          resolve(data);
+        });
+      });
+
+      req.on("error", (err: Error) => {
+        reject(new Error(`GET polling failed: ${err.message}`));
+      });
+
+      req.setTimeout(10000, () => {
+        req.destroy();
+        reject(new Error("GET polling timeout"));
       });
 
       req.end();
     });
   }
 
-  disconnect(): void {
-    this.intentionallyClosed = true;
-    this.cleanup();
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+  // ============ Message Routing ============
+
+  private handleRawMessage(raw: WebSocket.Data): void {
+    try {
+      // PocketOption server may send text protocol messages as binary Buffers.
+      let text: string;
+      if (Buffer.isBuffer(raw)) {
+        text = raw.toString("utf8");
+      } else if (typeof raw === "string") {
+        text = raw;
+      } else {
+        text = raw.toString();
+      }
+
+      // Check if this is a text protocol message (Engine.IO / Socket.IO)
+      const firstChar = text.charAt(0);
+      if (
+        firstChar === "0" || // Engine.IO OPEN
+        firstChar === "1" || // Engine.IO CLOSE
+        firstChar === "2" || // Engine.IO PING
+        firstChar === "3" || // Engine.IO PONG
+        firstChar === "4" || // Socket.IO (40, 42, 451-)
+        firstChar === "5" || // Engine.IO UPGRADE
+        firstChar === "6"    // Engine.IO NOOP
+      ) {
+        this.handleTextMessage(text);
+      } else {
+        // Binary data (balance, order, tick data, etc.)
+        const buf = Buffer.isBuffer(raw)
+          ? raw
+          : Buffer.from(typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer));
+        this.handleBinaryMessage(buf);
+      }
+    } catch (err) {
+      console.error("[PO] Message handling error:", err);
     }
-    this.connected = false;
-    this.authenticated = false;
   }
 
   // ============ Text Message Handler ============
 
-  private handleTextMessage(
-    message: string,
-    resolve?: (value: void) => void,
-    reject?: (error: Error) => void,
-    timeout?: ReturnType<typeof setTimeout>
-  ): void {
-    console.log(`[PO] << ${message.substring(0, 120)}`);
+  private handleTextMessage(message: string): void {
+    console.log(`[PO] << ${message.substring(0, 150)}`);
 
     // Engine.IO OPEN: "0{sid:...}"
     if (message.startsWith("0")) {
+      console.log("[PO] Engine.IO OPEN received, sending Socket.IO CONNECT...");
       this.ws?.send("40"); // Socket.IO CONNECT
+      return;
+    }
+
+    // Engine.IO CLOSE: "1"
+    if (message.startsWith("1")) {
+      console.log("[PO] Engine.IO CLOSE received");
+      this.ws?.close();
       return;
     }
 
@@ -332,10 +522,35 @@ export class PocketOptionClient {
       return;
     }
 
+    // Engine.IO PONG with probe: "3probe"
+    if (message === "3probe") {
+      console.log("[PO] Probe ACK received, sending upgrade complete...");
+      this.ws?.send("5"); // Engine.IO UPGRADE COMPLETE
+      // After upgrade, send Socket.IO CONNECT if not already sent via polling
+      if (!this.isUpgradeConnection) {
+        // Direct connection: CONNECT already sent after OPEN
+      } else {
+        // Upgrade connection: Socket.IO CONNECT was sent via polling,
+        // but we need to re-send via WebSocket to establish namespace
+        console.log("[PO] Sending Socket.IO CONNECT via WebSocket...");
+        this.ws?.send("40");
+      }
+      return;
+    }
+
+    // Engine.IO PONG: "3"
+    if (message === "3") {
+      return; // Regular pong, nothing to do
+    }
+
+    // Engine.IO NOOP: "6" (sent by server to close active polling GET requests)
+    if (message === "6") {
+      return;
+    }
+
     // Socket.IO CONNECT ACK: "40{sid:...}"
     if (message.startsWith("40")) {
-      // Send SSID auth message
-      console.log("[PO] Socket.IO connected, sending auth...");
+      console.log("[PO] Socket.IO CONNECT ACK received, sending auth...");
       this.ws?.send(this.ssid);
       return;
     }
@@ -345,19 +560,24 @@ export class PocketOptionClient {
       try {
         const data = JSON.parse(message.substring(2));
         if (Array.isArray(data) && data.length >= 1) {
-          if (data[0] === "NotAuthorized") {
+          const eventName = data[0];
+
+          if (eventName === "NotAuthorized") {
             console.error("[PO] NotAuthorized - SSID expired or invalid");
             this.ssidExpired = true;
-            this.intentionallyClosed = true; // Prevent reconnection with expired SSID
+            this.intentionallyClosed = true;
             this.authenticated = false;
-            // Fire SSID expiration callbacks
             this.onSsidExpiredCallbacks.forEach((cb) => {
               try { cb(); } catch {}
             });
-            if (timeout) clearTimeout(timeout);
-            if (reject) reject(new Error("NotAuthorized: SSID invalide"));
+            if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
+            if (this.upgradeReject) this.upgradeReject(new Error("NotAuthorized: SSID invalide"));
             this.ws?.close();
+            return;
           }
+
+          // Handle other Socket.IO events inline
+          this.handleSocketIOEvent(eventName, data[1]);
         }
       } catch {}
       return;
@@ -369,7 +589,19 @@ export class PocketOptionClient {
       try {
         const data = JSON.parse(jsonPart);
         if (Array.isArray(data) && data.length >= 1) {
-          this.handleSocketIOEvent(data[0], data[1], resolve, timeout);
+          const eventName = data[0];
+          const eventData = data[1];
+
+          // Check if this event has a binary placeholder (_placeholder: true)
+          // The actual data will arrive in the next binary WebSocket frame
+          if (eventData && typeof eventData === "object" && (eventData as Record<string, unknown>)._placeholder) {
+            console.log(`[PO] Binary event pending: ${eventName} (waiting for binary attachment)`);
+            this.pendingBinaryEvent = eventName;
+            this.pendingBinaryEventData = null;
+          } else {
+            // No placeholder - process immediately
+            this.handleSocketIOEvent(eventName, eventData);
+          }
         }
       } catch (err) {
         console.error("[PO] Failed to parse 451- message:", err);
@@ -382,9 +614,7 @@ export class PocketOptionClient {
 
   private handleSocketIOEvent(
     eventName: string,
-    eventData: unknown,
-    resolve?: (value: void) => void,
-    timeout?: ReturnType<typeof setTimeout>
+    eventData: unknown
   ): void {
     console.log(`[PO] Event: ${eventName}`);
 
@@ -397,8 +627,8 @@ export class PocketOptionClient {
 
         this.startHeartbeats();
 
-        if (timeout) clearTimeout(timeout);
-        if (resolve) resolve();
+        if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
+        if (this.upgradeResolve) this.upgradeResolve();
 
         // Re-subscribe to previously active symbols
         for (const [, sub] of this.activeSubscriptions) {
@@ -447,16 +677,154 @@ export class PocketOptionClient {
     }
   }
 
+  // ============ Disconnect Handler ============
+
+  private handleDisconnect(): void {
+    this.connected = false;
+    this.authenticated = false;
+    this.isUpgradeConnection = false;
+    this.upgradeResolve = null;
+    this.upgradeReject = null;
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+    }
+    this.cleanup();
+
+    if (!this.intentionallyClosed) {
+      const delay = Math.min(
+        5000 * Math.pow(2, this.reconnectAttempts),
+        this.maxReconnectDelay
+      );
+      this.reconnectAttempts++;
+      console.log(`[PO] Disconnected. Reconnecting in ${delay}ms...`);
+      setTimeout(() => {
+        if (!this.connected && !this.intentionallyClosed) {
+          this.connect(this.isDemo).catch((err) => {
+            console.error(`[PO] Reconnection failed: ${err.message}`);
+          });
+        }
+      }, delay);
+    }
+  }
+
+  disconnect(): void {
+    this.intentionallyClosed = true;
+    this.cleanup();
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.connected = false;
+    this.authenticated = false;
+    this.upgradeResolve = null;
+    this.upgradeReject = null;
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+    }
+  }
+
   // ============ Binary Message Handler ============
 
   private handleBinaryMessage(buffer: Buffer): void {
     try {
-      const message = JSON.parse(buffer.toString());
+      const raw = buffer.toString("utf8");
+      let message: unknown;
+      try {
+        message = JSON.parse(raw);
+      } catch {
+        // Not JSON - might be msgpack or other binary format
+        console.log(`[PO] Non-JSON binary frame (${buffer.length} bytes), pending: ${this.pendingBinaryEvent}`);
+        this.pendingBinaryEvent = null;
+        return;
+      }
 
-      if (typeof message === "object" && message !== null && "balance" in message) {
+      // If we have a pending binary event from a 451- placeholder,
+      // match this binary data with that event
+      if (this.pendingBinaryEvent) {
+        const eventName = this.pendingBinaryEvent;
+        this.pendingBinaryEvent = null;
+        console.log(`[PO] Binary attachment for event: ${eventName}`);
+
+        switch (eventName) {
+          case "loadHistoryPeriod":
+          case "loadHistoryPeriodFast":
+            if (typeof message === "object" && message !== null && "data" in (message as Record<string, unknown>)) {
+              const msg = message as Record<string, unknown>;
+              this.loadHistoryPeriodFlag = true;
+              this.historyPeriodData = msg;
+              const dataArr = msg.data;
+              console.log(`[PO] History period data: ${Array.isArray(dataArr) ? dataArr.length + ' candles' : 'received'}`);
+            }
+            return;
+
+          case "updateHistoryNew":
+          case "updateHistoryNewFast":
+            if (typeof message === "object" && message !== null) {
+              this.historyNewData = message as Record<string, unknown>;
+              this.processHistoryNew(message as Record<string, unknown>);
+            }
+            return;
+
+          case "updateClosedDeals":
+            if (Array.isArray(message)) {
+              this.updateClosedDealsFlag = true;
+              this.closedDealsData = message;
+            }
+            return;
+
+          case "updateAssets":
+            console.log("[PO] Assets data received (binary)");
+            return;
+
+          case "updateCharts":
+            console.log("[PO] Charts update received (binary)");
+            return;
+
+          case "updateOpenedDeals":
+            console.log("[PO] Opened deals update received (binary)");
+            return;
+
+          case "successauth":
+            // Authentication successful - the binary data may contain user info/balance
+            console.log("[PO] Auth success binary data received");
+            if (typeof message === "object" && message !== null && "balance" in (message as Record<string, unknown>)) {
+              const msg = message as Record<string, unknown>;
+              this.lastBalance = {
+                balance: Number(msg.balance),
+                isDemo: Number(msg.isDemo || 0),
+              };
+              this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+            }
+            // Now trigger the auth success handler
+            this.handleSocketIOEvent("successauth", message);
+            return;
+
+          case "successupdateBalance":
+          case "successupdatePending":
+            if (typeof message === "object" && message !== null && "balance" in (message as Record<string, unknown>)) {
+              const msg = message as Record<string, unknown>;
+              this.lastBalance = {
+                balance: Number(msg.balance),
+                isDemo: Number(msg.isDemo || 0),
+              };
+              this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+            }
+            return;
+
+          default:
+            console.log(`[PO] Unhandled binary event: ${eventName}`);
+            return;
+        }
+      }
+
+      // No pending binary event - handle as standalone binary data
+      if (typeof message === "object" && message !== null && "balance" in (message as Record<string, unknown>)) {
+        const msg = message as Record<string, unknown>;
         this.lastBalance = {
-          balance: Number(message.balance),
-          isDemo: Number(message.isDemo || 0),
+          balance: Number(msg.balance),
+          isDemo: Number(msg.isDemo || 0),
         };
         this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
         return;
@@ -465,10 +833,10 @@ export class PocketOptionClient {
       if (
         typeof message === "object" &&
         message !== null &&
-        "requestId" in message &&
-        message.requestId === "buy"
+        "requestId" in (message as Record<string, unknown>) &&
+        (message as Record<string, unknown>).requestId === "buy"
       ) {
-        this.orderData = message;
+        this.orderData = message as Record<string, unknown>;
         return;
       }
 
@@ -476,10 +844,10 @@ export class PocketOptionClient {
         this.loadHistoryPeriodFlag &&
         typeof message === "object" &&
         message !== null &&
-        "data" in message
+        "data" in (message as Record<string, unknown>)
       ) {
         this.loadHistoryPeriodFlag = false;
-        this.historyPeriodData = message;
+        this.historyPeriodData = message as Record<string, unknown>;
         return;
       }
 
@@ -507,6 +875,32 @@ export class PocketOptionClient {
     const asset = this.currentSymbol?.asset;
     if (!asset) return;
 
+    // Handle binary data with "data" field (from loadHistoryPeriod binary attachment)
+    if ("data" in data && Array.isArray(data.data)) {
+      const dataArr = data.data as unknown[];
+      console.log(`[PO] History data: ${dataArr.length} items for ${asset}`);
+
+      // Format: array of objects with {time, open, high, low, close}
+      for (const item of dataArr) {
+        if (typeof item === "object" && item !== null && "time" in (item as Record<string, unknown>)) {
+          const c = item as Record<string, unknown>;
+          const candle: CandleData = {
+            asset,
+            open: Number(c.open || 0),
+            close: Number(c.close || 0),
+            high: Number(c.high || 0),
+            low: Number(c.low || 0),
+            volume: 0,
+            timestamp: Number(c.time || 0),
+          };
+          if (candle.timestamp > 0 && candle.close > 0) {
+            this.emitCandle(asset, candle);
+          }
+        }
+      }
+    }
+
+    // Handle "candles" field (from updateHistoryNew binary attachment)
     const candlesRaw = data.candles;
     if (Array.isArray(candlesRaw) && candlesRaw.length > 0) {
       console.log(`[PO] Received ${candlesRaw.length} candles for ${asset}`);
@@ -521,7 +915,9 @@ export class PocketOptionClient {
             volume: 0,
             timestamp: Number(can[0]),
           };
-          this.emitCandle(asset, candle);
+          if (candle.timestamp > 0 && candle.close > 0) {
+            this.emitCandle(asset, candle);
+          }
         }
       }
     }
@@ -572,6 +968,10 @@ export class PocketOptionClient {
 
   // ============ Async Request Methods ============
 
+  /**
+   * Fetch historical candles by subscribing to the asset and waiting for
+   * updateHistoryNew data. Falls back to loadHistoryPeriod if needed.
+   */
   async requestCandleHistory(
     asset: string,
     period: number,
@@ -579,33 +979,151 @@ export class PocketOptionClient {
   ): Promise<CandleData[]> {
     if (!this.connected || !this.authenticated) return [];
 
+    // Reset state
+    this.historyPeriodData = null;
+    this.historyNewData = null;
+    this.loadHistoryPeriodFlag = false;
+
+    const poAsset = PocketOptionClient.toPOSymbol(asset);
+
+    // Strategy 1: Subscribe via changeSymbol and wait for updateHistoryNew
+    // This typically provides the most complete candle history
+    this.currentSymbol = { asset, period };
+    this.sendEvent(["changeSymbol", { asset: poAsset, period }]);
+
+    // Wait for updateHistoryNew/Fast binary data to arrive
+    for (let i = 0; i < 50; i++) {
+      if (this.historyNewData !== null) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    // Check if we got candle data from the subscription
+    if (this.historyNewData) {
+      const candles = this.parseCandleData(asset, this.historyNewData);
+      if (candles.length >= 10) {
+        console.log(`[PO] Got ${candles.length} candles from subscription for ${asset}`);
+        return candles;
+      }
+    }
+
+    // Strategy 2: Try loadHistoryPeriod for additional data
     this.historyPeriodData = null;
     this.loadHistoryPeriodFlag = false;
 
     const endTime = Math.floor(Date.now() / 1000);
-    this.loadHistoryPeriod(asset, period, endTime, count);
+    this.sendEvent([
+      "loadHistoryPeriod",
+      { asset: poAsset, index: endTime, time: endTime, offset: count, period },
+    ]);
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 50; i++) {
       if (this.historyPeriodData !== null) break;
       await new Promise((r) => setTimeout(r, 100));
     }
 
-    if (!this.historyPeriodData) return [];
+    if (this.historyPeriodData) {
+      const candles = this.parseCandleData(asset, this.historyPeriodData);
+      if (candles.length > 0) {
+        console.log(`[PO] Got ${candles.length} candles from loadHistoryPeriod for ${asset}`);
+        return candles;
+      }
+    }
 
-    const dataArr = (this.historyPeriodData as Record<string, unknown>).data;
-    if (!Array.isArray(dataArr)) return [];
+    // Strategy 3: Try with different offset values
+    // Sometimes the server needs a specific time range
+    for (const offsetMult of [1, 5, 10]) {
+      this.historyPeriodData = null;
+      this.loadHistoryPeriodFlag = false;
 
-    return dataArr
-      .map((c: Record<string, unknown>) => ({
-        asset,
-        open: Number(c.open || 0),
-        high: Number(c.high || 0),
-        low: Number(c.low || 0),
-        close: Number(c.close || 0),
-        volume: 0,
-        timestamp: Number(c.time || 0),
-      }))
-      .sort((a, b) => a.timestamp - b.timestamp);
+      const offsetTime = endTime - (count * period * offsetMult);
+      this.sendEvent([
+        "loadHistoryPeriod",
+        { asset: poAsset, index: offsetTime, time: offsetTime, offset: count, period },
+      ]);
+
+      for (let i = 0; i < 30; i++) {
+        if (this.historyPeriodData !== null) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      if (this.historyPeriodData) {
+        const candles = this.parseCandleData(asset, this.historyPeriodData);
+        if (candles.length > 0) {
+          console.log(`[PO] Got ${candles.length} candles from loadHistoryPeriod (offset=${offsetMult}) for ${asset}`);
+          return candles;
+        }
+      }
+    }
+
+    console.log(`[PO] Could not get candle history for ${asset}`);
+    return [];
+  }
+
+  /** Parse candle data from server response (both historyPeriod and historyNew formats) */
+  private parseCandleData(asset: string, data: Record<string, unknown>): CandleData[] {
+    const dataArr = data.data;
+    if (Array.isArray(dataArr) && dataArr.length > 0) {
+      // Format 1: array of objects with {time, open, high, low, close}
+      if (typeof dataArr[0] === "object" && dataArr[0] !== null && "time" in (dataArr[0] as Record<string, unknown>)) {
+        return dataArr
+          .map((c: Record<string, unknown>) => ({
+            asset,
+            open: Number(c.open || 0),
+            high: Number(c.high || 0),
+            low: Number(c.low || 0),
+            close: Number(c.close || 0),
+            volume: 0,
+            timestamp: Number(c.time || 0),
+          }))
+          .filter((c: CandleData) => c.timestamp > 0 && c.close > 0)
+          .sort((a: CandleData, b: CandleData) => a.timestamp - b.timestamp);
+      }
+
+      // Format 2: array of arrays [[time, open, close, high, low, volume], ...]
+      if (Array.isArray(dataArr[0])) {
+        return dataArr
+          .map((c: unknown[]) => {
+            if (Array.isArray(c) && c.length >= 5) {
+              return {
+                asset,
+                open: Number(c[1] || 0),
+                close: Number(c[2] || 0),
+                high: Number(c[3] || 0),
+                low: Number(c[4] || 0),
+                volume: Number(c[5] || 0),
+                timestamp: Number(c[0] || 0),
+              };
+            }
+            return null;
+          })
+          .filter((c): c is CandleData => c !== null && c.timestamp > 0 && c.close > 0)
+          .sort((a, b) => a.timestamp - b.timestamp);
+      }
+    }
+
+    // Format 3: candles field from updateHistoryNew
+    const candlesRaw = data.candles;
+    if (Array.isArray(candlesRaw) && candlesRaw.length > 0) {
+      return candlesRaw
+        .map((c: unknown) => {
+          if (Array.isArray(c) && c.length >= 5) {
+            return {
+              asset,
+              open: Number(c[1]),
+              close: Number(c[2]),
+              high: Number(c[3]),
+              low: Number(c[4]),
+              volume: 0,
+              timestamp: Number(c[0]),
+            };
+          }
+          return null;
+        })
+        .filter((c): c is CandleData => c !== null && c.timestamp > 0 && c.close > 0)
+        .sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    return [];
   }
 
   onCandle(
