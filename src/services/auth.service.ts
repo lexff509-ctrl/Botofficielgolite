@@ -19,11 +19,16 @@ export interface UserProfile {
   subscriptionExpiresAt: Date | null;
   trialUsed: boolean;
   isActive: boolean;
+  isVerified: boolean;
   tradeMode: string;
   demoBalance: string | null;
+  demoTradeAmount: string | null;
+  liveTradeAmount: string | null;
   pocketOptionSsid: string | null;
   ssidStatus: string;
   backtestingDaysGranted: number | null;
+  profitTarget: string | null;
+  lossLimit: string | null;
   createdAt: Date;
 }
 
@@ -68,6 +73,7 @@ export async function registerUser(
     email: newUser.email,
     role: newUser.role,
     subscriptionStatus: newUser.subscriptionStatus,
+    sessionVersion: newUser.sessionVersion || 0,
   });
 
   return { token, user: mapUser(newUser) };
@@ -109,11 +115,19 @@ export async function loginUser(
       .where(eq(users.id, user.id));
   }
 
+  // Increment session version to invalidate previous sessions (single-device enforcement)
+  const newSessionVersion = (user.sessionVersion || 0) + 1;
+  await db
+    .update(users)
+    .set({ sessionVersion: newSessionVersion, updatedAt: new Date() })
+    .where(eq(users.id, user.id));
+
   const token = signToken({
     userId: user.id,
     email: user.email,
     role: user.role,
     subscriptionStatus,
+    sessionVersion: newSessionVersion,
   });
 
   return { token, user: { ...mapUser(user), subscriptionStatus } };
@@ -129,7 +143,15 @@ export async function getUserProfile(userId: number): Promise<UserProfile | null
 
 export async function updateProfile(
   userId: number,
-  data: { username?: string; tradeMode?: string; pocketOptionSsid?: string }
+  data: {
+    username?: string;
+    tradeMode?: string;
+    pocketOptionSsid?: string;
+    demoTradeAmount?: string;
+    liveTradeAmount?: string;
+    profitTarget?: number | null;
+    lossLimit?: number | null;
+  }
 ): Promise<UserProfile | null> {
   const updates: Record<string, unknown> = {};
   if (data.username) updates.username = data.username;
@@ -140,6 +162,10 @@ export async function updateProfile(
       : null;
     updates.ssidStatus = data.pocketOptionSsid ? "UNKNOWN" : "NOT_SET";
   }
+  if (data.demoTradeAmount !== undefined) updates.demoTradeAmount = data.demoTradeAmount;
+  if (data.liveTradeAmount !== undefined) updates.liveTradeAmount = data.liveTradeAmount;
+  if (data.profitTarget !== undefined) updates.profitTarget = data.profitTarget ? String(data.profitTarget) : null;
+  if (data.lossLimit !== undefined) updates.lossLimit = data.lossLimit ? String(data.lossLimit) : null;
 
   if (Object.keys(updates).length === 0) return null;
 
@@ -154,6 +180,20 @@ export async function updateProfile(
 
 export function getDecryptedSSID(user: UserProfile): string {
   return decryptSSID(user.pocketOptionSsid);
+}
+
+// Single-device session enforcement: check if the JWT's sessionVersion matches the DB
+export async function validateSessionVersion(
+  userId: number,
+  tokenSessionVersion: number
+): Promise<boolean> {
+  const [user] = await db
+    .select({ sessionVersion: users.sessionVersion })
+    .from(users)
+    .where(eq(users.id, userId));
+
+  if (!user) return false;
+  return (user.sessionVersion || 0) === tokenSessionVersion;
 }
 
 // Auth wrapper for routes

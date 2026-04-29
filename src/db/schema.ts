@@ -60,6 +60,8 @@ export const users = pgTable("users", {
   subscriptionExpiresAt: timestamp("subscription_expires_at"),
   trialUsed: boolean("trial_used").default(false).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
+  isVerified: boolean("is_verified").default(false).notNull(),
+  sessionVersion: integer("session_version").default(0).notNull(),
   // PocketOption config
   pocketOptionSsid: text("pocket_option_ssid"),
   ssidStatus: ssidStatusEnum("ssid_status").default("NOT_SET").notNull(),
@@ -74,6 +76,9 @@ export const users = pgTable("users", {
   liveTradeAmount: numeric("live_trade_amount", { precision: 15, scale: 2 }).default(
     "1.00"
   ),
+  // User-defined trading limits
+  profitTarget: numeric("profit_target", { precision: 15, scale: 2 }),
+  lossLimit: numeric("loss_limit", { precision: 15, scale: 2 }),
   // Backtesting
   backtestingDaysGranted: integer("backtesting_days_granted").default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -90,6 +95,9 @@ export const paymentRequests = pgTable("payment_requests", {
   currency: varchar("currency", { length: 10 }).default("USDT").notNull(),
   txHash: varchar("tx_hash", { length: 255 }),
   proofFilePath: text("proof_file_path"),
+  // MonCash fields
+  moncashSenderPhone: varchar("moncash_sender_phone", { length: 20 }),
+  moncashValidationName: varchar("moncash_validation_name", { length: 100 }),
   status: paymentStatusEnum("status").default("PENDING").notNull(),
   planMonths: integer("plan_months").default(1).notNull(),
   adminNote: text("admin_note"),
@@ -128,11 +136,20 @@ export const signals = pgTable("signals", {
   direction: tradeDirectionEnum("direction").notNull(),
   timeframe: varchar("timeframe", { length: 20 }).notNull(),
   confidence: numeric("confidence", { precision: 5, scale: 2 }),
+  // Legacy indicators (kept for backward compatibility)
   rsi: numeric("rsi", { precision: 8, scale: 4 }),
   macd: numeric("macd", { precision: 15, scale: 8 }),
   ema: numeric("ema", { precision: 15, scale: 8 }),
   bollinger: jsonb("bollinger"),
   stochastic: numeric("stochastic", { precision: 8, scale: 4 }),
+  // New strategy indicators
+  ema20: numeric("ema20", { precision: 15, scale: 8 }),
+  ema50: numeric("ema50", { precision: 15, scale: 8 }),
+  stochK: numeric("stoch_k", { precision: 8, scale: 4 }),
+  stochD: numeric("stoch_d", { precision: 8, scale: 4 }),
+  lowFractal: boolean("low_fractal").default(false),
+  highFractal: boolean("high_fractal").default(false),
+  dojiFiltered: boolean("doji_filtered").default(false),
   multiTimeframeConfirmation: jsonb("multi_timeframe_confirmation"),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),

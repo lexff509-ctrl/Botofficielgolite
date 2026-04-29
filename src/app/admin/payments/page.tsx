@@ -17,6 +17,8 @@ interface Payment {
   createdAt: string;
   userEmail: string;
   username: string;
+  moncashSenderPhone?: string;
+  moncashValidationName?: string;
 }
 
 export default function AdminPaymentsPage() {
@@ -104,11 +106,23 @@ export default function AdminPaymentsPage() {
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="space-y-1">
                       <div className="flex items-center gap-3">
-                        <span className="text-lg font-bold text-white">${parseFloat(payment.amount).toFixed(2)} USDT</span>
+                        <span className="text-lg font-bold text-white">
+                          {payment.currency === "MONCASH"
+                            ? `${parseFloat(payment.amount).toLocaleString()} G HTG`
+                            : `$${parseFloat(payment.amount).toFixed(2)} USDT`}
+                        </span>
                         <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">EN ATTENTE</span>
+                        {payment.currency === "MONCASH" && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400">MONCASH</span>
+                        )}
                       </div>
                       <div className="text-sm text-slate-400"><span className="text-white font-medium">{payment.username}</span> ({payment.userEmail})</div>
-                      <div className="text-xs text-slate-500 font-mono">TX: {payment.txHash}</div>
+                      {payment.currency === "MONCASH" && payment.moncashSenderPhone && (
+                        <div className="text-xs text-amber-400 font-mono">MonCash: {payment.moncashSenderPhone} {payment.moncashValidationName ? `(${payment.moncashValidationName})` : ""}</div>
+                      )}
+                      {payment.txHash && payment.currency !== "MONCASH" && (
+                        <div className="text-xs text-slate-500 font-mono">TX: {payment.txHash}</div>
+                      )}
                       {payment.proofFilePath && (
                         <a
                           href={payment.proofFilePath.startsWith("http") ? payment.proofFilePath : `/api/payment/proof/${payment.id}`}

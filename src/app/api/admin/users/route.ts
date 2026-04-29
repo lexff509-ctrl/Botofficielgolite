@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
         subscriptionStatus: users.subscriptionStatus,
         subscriptionExpiresAt: users.subscriptionExpiresAt,
         isActive: users.isActive,
+        isVerified: users.isVerified,
         tradeMode: users.tradeMode,
         demoBalance: users.demoBalance,
         backtestingDaysGranted: users.backtestingDaysGranted,

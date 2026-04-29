@@ -34,6 +34,8 @@ export async function PUT(req: NextRequest) {
         subscriptionStatus: updated.subscriptionStatus,
         tradeMode: updated.tradeMode,
         demoBalance: updated.demoBalance,
+        profitTarget: updated.profitTarget,
+        lossLimit: updated.lossLimit,
       },
     });
   } catch (error) {

@@ -113,6 +113,7 @@ export async function generateAndSaveSignal(
       direction: signal.direction,
       timeframe: signal.timeframe,
       confidence: signal.confidence.toFixed(2),
+      // Legacy indicators
       rsi: signal.indicators.rsi.toFixed(4),
       macd: signal.indicators.macd.toFixed(8),
       ema: signal.indicators.ema9.toFixed(8),
@@ -122,6 +123,14 @@ export async function generateAndSaveSignal(
         lower: signal.indicators.bollingerLower,
       },
       stochastic: signal.indicators.stochastic.toFixed(4),
+      // New strategy indicators
+      ema20: signal.indicators.ema20.toFixed(8),
+      ema50: signal.indicators.ema50.toFixed(8),
+      stochK: signal.indicators.stochK.toFixed(4),
+      stochD: signal.indicators.stochD.toFixed(4),
+      lowFractal: signal.indicators.lowFractal,
+      highFractal: signal.indicators.highFractal,
+      dojiFiltered: signal.indicators.dojiRejected,
       multiTimeframeConfirmation: signal.multiTimeframeConfirmation,
       isActive: true,
     })

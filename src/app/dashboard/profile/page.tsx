@@ -59,12 +59,25 @@ export default function ProfilePage() {
     username: "",
     pocketOptionSsid: "",
     tradeMode: "DEMO",
+    demoTradeAmount: "1",
+    liveTradeAmount: "1",
+    profitTarget: "",
+    lossLimit: "",
   });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
   const [showSsid, setShowSsid] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  // Password change state
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [passwordError, setPasswordError] = useState("");
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -76,6 +89,10 @@ export default function ProfilePage() {
             username: data.user.username || "",
             pocketOptionSsid: "",
             tradeMode: data.user.tradeMode || "DEMO",
+            demoTradeAmount: data.user.demoTradeAmount || "1",
+            liveTradeAmount: data.user.liveTradeAmount || "1",
+            profitTarget: data.user.profitTarget || "",
+            lossLimit: data.user.lossLimit || "",
           });
         }
       })
@@ -90,10 +107,30 @@ export default function ProfilePage() {
     setError("");
     setSuccess("");
     try {
+      const payload: Record<string, unknown> = {
+        username: form.username,
+        tradeMode: form.tradeMode,
+        demoTradeAmount: form.demoTradeAmount,
+        liveTradeAmount: form.liveTradeAmount,
+      };
+      if (form.pocketOptionSsid) {
+        payload.pocketOptionSsid = form.pocketOptionSsid;
+      }
+      if (form.profitTarget) {
+        payload.profitTarget = parseFloat(form.profitTarget);
+      } else {
+        payload.profitTarget = null;
+      }
+      if (form.lossLimit) {
+        payload.lossLimit = parseFloat(form.lossLimit);
+      } else {
+        payload.lossLimit = null;
+      }
+
       const res = await fetch("/api/user/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -106,6 +143,43 @@ export default function ProfilePage() {
       setError("Erreur de connexion");
     }
     setLoading(false);
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError("");
+    setPasswordSuccess("");
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError("Les mots de passe ne correspondent pas");
+      return;
+    }
+    if (passwordForm.newPassword.length < 6) {
+      setPasswordError("Le nouveau mot de passe doit contenir au moins 6 caractères");
+      return;
+    }
+
+    setPasswordLoading(true);
+    try {
+      const res = await fetch("/api/user/password", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setPasswordError(data.error || "Erreur");
+      } else {
+        setPasswordSuccess("Mot de passe modifié avec succès!");
+        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      }
+    } catch {
+      setPasswordError("Erreur de connexion");
+    }
+    setPasswordLoading(false);
   };
 
   const ssidStatus = (user?.ssidStatus as string) || "NOT_SET";
@@ -155,6 +229,68 @@ export default function ProfilePage() {
                   <div className="text-xs text-slate-400 mt-1">{m === "DEMO" ? "Capital fictif $10,000" : "Capital reel PocketOption"}</div>
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* TRADE AMOUNTS */}
+          <div className="glass-card rounded-xl p-5">
+            <div className="text-slate-400 text-xs font-medium mb-4">MONTANTS DE TRADE</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">Montant Demo ($)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.demoTradeAmount}
+                  onChange={(e) => setForm({ ...form, demoTradeAmount: e.target.value })}
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">Montant Live ($)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.liveTradeAmount}
+                  onChange={(e) => setForm({ ...form, liveTradeAmount: e.target.value })}
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* PROFIT / LOSS LIMITS */}
+          <div className="glass-card rounded-xl p-5">
+            <div className="text-slate-400 text-xs font-medium mb-4">LIMITES QUOTIDIENNES</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">Objectif Profit ($)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.profitTarget}
+                  onChange={(e) => setForm({ ...form, profitTarget: e.target.value })}
+                  placeholder="Ex: 50"
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-600 text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+                <p className="text-xs text-slate-500 mt-1">Le bot s&apos;arrête quand le profit atteint ce montant</p>
+              </div>
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">Limite de Perte ($)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.lossLimit}
+                  onChange={(e) => setForm({ ...form, lossLimit: e.target.value })}
+                  placeholder="Ex: 25"
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-600 text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+                <p className="text-xs text-slate-500 mt-1">Le bot s&apos;arrête quand la perte atteint ce montant</p>
+              </div>
             </div>
           </div>
 
@@ -414,11 +550,12 @@ export default function ProfilePage() {
 
           <div className="glass-card rounded-xl p-5">
             <div className="text-slate-400 text-xs font-medium mb-4">INFORMATIONS COMPTE</div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
                 { label: "Role", value: user?.role as string },
                 { label: "Abonnement", value: user?.subscriptionStatus as string },
                 { label: "Solde Demo", value: user?.demoBalance ? `$${parseFloat(user.demoBalance as string).toFixed(2)}` : "$10,000.00" },
+                { label: "Verifié", value: (user as Record<string, unknown>)?.isVerified ? "Oui" : "Non" },
               ].map((info) => (
                 <div key={info.label} className="bg-white/5 rounded-xl p-3">
                   <div className="text-xs text-slate-400">{info.label}</div>
@@ -426,6 +563,54 @@ export default function ProfilePage() {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* PASSWORD CHANGE */}
+          <div className="glass-card rounded-xl p-5">
+            <div className="text-slate-400 text-xs font-medium mb-4">CHANGER LE MOT DE PASSE</div>
+            {passwordSuccess && (
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 text-sm mb-4">{passwordSuccess}</div>
+            )}
+            {passwordError && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-sm mb-4">{passwordError}</div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">Mot de passe actuel</label>
+                <input
+                  type="password"
+                  value={passwordForm.currentPassword}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">Nouveau mot de passe</label>
+                <input
+                  type="password"
+                  value={passwordForm.newPassword}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">Confirmer le mot de passe</label>
+                <input
+                  type="password"
+                  value={passwordForm.confirmPassword}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handlePasswordChange}
+              disabled={passwordLoading || !passwordForm.currentPassword || !passwordForm.newPassword}
+              className="mt-4 px-6 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-400 font-bold text-sm transition-all disabled:opacity-50"
+            >
+              {passwordLoading ? "Modification..." : "Changer le mot de passe"}
+            </button>
           </div>
 
           <button

@@ -1,7 +1,7 @@
 // BotRunner - Background trading loop per user
 // Signal mode: generates signals from real candle data
 // Auto mode: generates signals + executes trades when confidence >= threshold
-// Risk management: daily stop-loss and take-profit
+// Risk management: user-defined dollar profit target and loss limit
 
 import { db } from "@/db";
 import { botSessions, signals, trades, users } from "@/db/schema";
@@ -22,8 +22,8 @@ import { hasActiveSubscription } from "@/services/payment.service";
 const AUTO_TRADE_CONFIDENCE_THRESHOLD = 70; // Minimum confidence % to auto-trade (standard mode)
 const HIGH_CONFIDENCE_THRESHOLD = 80; // Minimum confidence % for high confidence mode
 const MAX_CONSECUTIVE_ERRORS = 10;
-const DEFAULT_DAILY_STOP_LOSS = 5; // Max consecutive losses before pause
-const DEFAULT_DAILY_TAKE_PROFIT = 10; // Max consecutive wins before pause
+const DEFAULT_PROFIT_TARGET = 50; // Default $50 profit target
+const DEFAULT_LOSS_LIMIT = 25; // Default $25 loss limit
 
 function getLoopIntervalMs(timeframe: string): number {
   if (timeframe.endsWith("s")) return parseInt(timeframe) * 1000;
@@ -43,8 +43,8 @@ export class BotRunner {
   readonly mode: "DEMO" | "LIVE";
   readonly tradeAmount: number;
   readonly confidenceMode: "standard" | "high";
-  readonly maxDailyLosses: number;
-  readonly maxDailyWins: number;
+  readonly profitTarget: number; // Dollar amount - bot stops when daily profit >= this
+  readonly lossLimit: number; // Dollar amount - bot stops when daily loss <= -this
 
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private consecutiveErrors = 0;
@@ -67,8 +67,8 @@ export class BotRunner {
     mode: "DEMO" | "LIVE";
     tradeAmount?: number;
     confidenceMode?: "standard" | "high";
-    maxDailyLosses?: number;
-    maxDailyWins?: number;
+    profitTarget?: number;
+    lossLimit?: number;
   }) {
     this.userId = opts.userId;
     this.botType = opts.botType;
@@ -77,8 +77,8 @@ export class BotRunner {
     this.mode = opts.mode;
     this.tradeAmount = opts.tradeAmount || 1;
     this.confidenceMode = opts.confidenceMode || "standard";
-    this.maxDailyLosses = opts.maxDailyLosses || DEFAULT_DAILY_STOP_LOSS;
-    this.maxDailyWins = opts.maxDailyWins || DEFAULT_DAILY_TAKE_PROFIT;
+    this.profitTarget = opts.profitTarget || DEFAULT_PROFIT_TARGET;
+    this.lossLimit = opts.lossLimit || DEFAULT_LOSS_LIMIT;
     this.startedAt = new Date();
   }
 
@@ -98,6 +98,8 @@ export class BotRunner {
     mode: "DEMO" | "LIVE";
     tradeAmount: number;
     confidenceMode: "standard" | "high";
+    profitTarget: number;
+    lossLimit: number;
     running: boolean;
     paused: boolean;
     pauseReason: string | null;
@@ -118,6 +120,8 @@ export class BotRunner {
       mode: this.mode,
       tradeAmount: this.tradeAmount,
       confidenceMode: this.confidenceMode,
+      profitTarget: this.profitTarget,
+      lossLimit: this.lossLimit,
       running: this.running,
       paused: this.isPaused,
       pauseReason: this.pauseReason,
@@ -253,13 +257,13 @@ export class BotRunner {
       return;
     }
 
-    // Risk management: check daily limits
-    if (this.dailyLosses >= this.maxDailyLosses) {
-      this.pause(`Stop-loss atteint: ${this.dailyLosses} pertes aujourd'hui`);
+    // Risk management: check dollar-based daily limits
+    if (this.dailyProfit <= -this.lossLimit) {
+      this.pause(`Limite de perte atteinte: -$${Math.abs(this.dailyProfit).toFixed(2)} (limite: $${this.lossLimit})`);
       return;
     }
-    if (this.dailyWins >= this.maxDailyWins) {
-      this.pause(`Take-profit atteint: ${this.dailyWins} gains aujourd'hui`);
+    if (this.dailyProfit >= this.profitTarget) {
+      this.pause(`Objectif de profit atteint: +$${this.dailyProfit.toFixed(2)} (objectif: $${this.profitTarget})`);
       return;
     }
 
@@ -332,6 +336,7 @@ export class BotRunner {
         direction: signal.direction,
         timeframe: signal.timeframe,
         confidence: signal.confidence.toFixed(2),
+        // Legacy indicators
         rsi: signal.indicators.rsi.toFixed(4),
         macd: signal.indicators.macd.toFixed(8),
         ema: signal.indicators.ema9.toFixed(8),
@@ -341,6 +346,14 @@ export class BotRunner {
           lower: signal.indicators.bollingerLower,
         },
         stochastic: signal.indicators.stochastic.toFixed(4),
+        // New strategy indicators
+        ema20: signal.indicators.ema20.toFixed(8),
+        ema50: signal.indicators.ema50.toFixed(8),
+        stochK: signal.indicators.stochK.toFixed(4),
+        stochD: signal.indicators.stochD.toFixed(4),
+        lowFractal: signal.indicators.lowFractal,
+        highFractal: signal.indicators.highFractal,
+        dojiFiltered: signal.indicators.dojiRejected,
         multiTimeframeConfirmation: signal.multiTimeframeConfirmation,
         isActive: true,
       });
@@ -355,13 +368,13 @@ export class BotRunner {
   ): Promise<void> {
     const currentPrice = candles[candles.length - 1]?.close;
 
-    // Double-check daily limits before executing
-    if (this.dailyLosses >= this.maxDailyLosses) {
-      this.pause(`Stop-loss atteint: ${this.dailyLosses} pertes aujourd'hui`);
+    // Double-check dollar-based daily limits before executing
+    if (this.dailyProfit <= -this.lossLimit) {
+      this.pause(`Limite de perte atteinte: -$${Math.abs(this.dailyProfit).toFixed(2)} (limite: $${this.lossLimit})`);
       return;
     }
-    if (this.dailyWins >= this.maxDailyWins) {
-      this.pause(`Take-profit atteint: ${this.dailyWins} gains aujourd'hui`);
+    if (this.dailyProfit >= this.profitTarget) {
+      this.pause(`Objectif de profit atteint: +$${this.dailyProfit.toFixed(2)} (objectif: $${this.profitTarget})`);
       return;
     }
 
@@ -385,7 +398,15 @@ export class BotRunner {
           this.dailyLosses++;
         }
         this.dailyProfit += result.profit;
-        console.log(`[BotRunner] Trade executed: ${signal.direction} ${signal.asset} profit=${result.profit.toFixed(2)} (W:${this.dailyWins}/L:${this.dailyLosses})`);
+
+        // Check limits after trade
+        if (this.dailyProfit <= -this.lossLimit) {
+          this.pause(`Limite de perte atteinte: -$${Math.abs(this.dailyProfit).toFixed(2)}`);
+        } else if (this.dailyProfit >= this.profitTarget) {
+          this.pause(`Objectif de profit atteint: +$${this.dailyProfit.toFixed(2)}`);
+        }
+
+        console.log(`[BotRunner] Trade executed: ${signal.direction} ${signal.asset} profit=${result.profit.toFixed(2)} dailyP/L=$${this.dailyProfit.toFixed(2)} (W:${this.dailyWins}/L:${this.dailyLosses})`);
       }
     } catch (err) {
       console.error(`[BotRunner] Trade execution failed:`, err);
@@ -443,8 +464,8 @@ export function startBotRunner(opts: {
   mode: "DEMO" | "LIVE";
   tradeAmount?: number;
   confidenceMode?: "standard" | "high";
-  maxDailyLosses?: number;
-  maxDailyWins?: number;
+  profitTarget?: number;
+  lossLimit?: number;
 }): BotRunner {
   // Stop existing runner if any
   const existing = activeRunners.get(opts.userId);

@@ -11,6 +11,7 @@ export interface JWTPayload {
   email: string;
   role: string;
   subscriptionStatus: string;
+  sessionVersion: number;
 }
 
 function getSecretKey(): Uint8Array {
@@ -31,6 +32,7 @@ export async function verifyTokenAsync(token: string): Promise<JWTPayload | null
       email: payload.email as string,
       role: payload.role as string,
       subscriptionStatus: payload.subscriptionStatus as string,
+      sessionVersion: (payload.sessionVersion as number) || 0,
     };
   } catch {
     return null;

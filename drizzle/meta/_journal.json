@@ -15,6 +15,13 @@
       "when": 1777315617224,
       "tag": "0001_sour_invisible_woman",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777438823845,
+      "tag": "0002_mysterious_cyclops",
+      "breakpoints": true
     }
   ]
 }

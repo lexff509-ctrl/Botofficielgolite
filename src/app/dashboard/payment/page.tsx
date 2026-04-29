@@ -8,11 +8,14 @@ interface Plan {
   price: number;
   label: string;
   savings?: string;
+  priceHTG?: number;
 }
 
 interface PaymentInfo {
   plans: Plan[];
   currency: string;
+  moncashPlans?: Record<string, { months: number; priceHTG: number; label: string; savings?: string }>;
+  moncashInfo?: { phone: string; validationName: string; htgRate: number };
 }
 
 interface Payment {
@@ -23,6 +26,8 @@ interface Payment {
   proofFilePath: string | null;
   status: string;
   planMonths: number;
+  moncashSenderPhone?: string;
+  moncashValidationName?: string;
   createdAt: string;
 }
 
@@ -31,12 +36,17 @@ interface UserProfile {
   subscriptionExpiresAt?: string;
 }
 
+const HTG_RATE = 137.5;
+
 export default function PaymentPage() {
   const [paymentInfo, setPaymentInfo] = useState<PaymentInfo | null>(null);
   const [walletAddress, setWalletAddress] = useState("");
   const [payments, setPayments] = useState<Payment[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"USDT" | "MONCASH">("USDT");
   const [txHash, setTxHash] = useState("");
+  const [moncashSenderPhone, setMoncashSenderPhone] = useState("");
+  const [moncashValidationName, setMoncashValidationName] = useState("");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -61,7 +71,18 @@ export default function PaymentPage() {
         setUserProfile(profileData.user);
       }
       if (paymentsData.plans) {
-        setPaymentInfo({ plans: plansToArray(paymentsData.plans), currency: paymentsData.currency });
+        const plans = plansToArray(paymentsData.plans);
+        // Enrich plans with HTG prices
+        const enrichedPlans = plans.map((p) => ({
+          ...p,
+          priceHTG: Math.round(p.price * HTG_RATE),
+        }));
+        setPaymentInfo({
+          plans: enrichedPlans,
+          currency: paymentsData.currency,
+          moncashPlans: paymentsData.moncashPlans,
+          moncashInfo: paymentsData.moncashInfo,
+        });
       }
       if (walletData.wallet) {
         setWalletAddress(walletData.wallet);
@@ -86,6 +107,12 @@ export default function PaymentPage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
+  };
+
+  const copyMoncashPhone = () => {
+    navigator.clipboard.writeText("+50931959375");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -114,23 +141,36 @@ export default function PaymentPage() {
         proofFilePath = uploadData.proofFilePath;
       }
 
+      const body: Record<string, unknown> = {
+        amount: selectedPlan.price,
+        planMonths: selectedPlan.months,
+        currency: paymentMethod,
+      };
+
+      if (paymentMethod === "USDT") {
+        body.txHash = txHash;
+        body.proofFilePath = proofFilePath;
+      } else {
+        body.moncashSenderPhone = moncashSenderPhone;
+        body.moncashValidationName = moncashValidationName || undefined;
+        body.txHash = "";
+        if (proofFilePath) body.proofFilePath = proofFilePath;
+      }
+
       const res = await fetch("/api/payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: selectedPlan.price,
-          planMonths: selectedPlan.months,
-          txHash,
-          proofFilePath,
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Erreur lors de la soumission");
       } else {
-        setSuccess("Votre demande de paiement a été soumise! L'admin va vérifier sous 24h.");
+        setSuccess("Votre demande de paiement a ete soumise! L'admin va verifier sous 24h.");
         setTxHash("");
+        setMoncashSenderPhone("");
+        setMoncashValidationName("");
         setProofFile(null);
         setProofPreview(null);
         setSelectedPlan(null);
@@ -155,10 +195,10 @@ export default function PaymentPage() {
       <div className="max-w-5xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-black text-white">
-            Gestion de l'<span className="gradient-text">Abonnement</span>
+            Gestion de l&apos;<span className="gradient-text">Abonnement</span>
           </h1>
           <p className="text-slate-400 text-sm mt-1">
-            Paiement sécurisé via USDT TRC20
+            Paiement via USDT TRC20 ou MonCash
           </p>
         </div>
 
@@ -179,29 +219,23 @@ export default function PaymentPage() {
                       : "bg-red-500/20 text-red-400"
                   }`}
                 >
-                  {subscriptionStatus === "ACTIVE" ? "✓ ACTIF" :
-                   subscriptionStatus === "TRIAL" ? "⏳ ESSAI GRATUIT (3 jours)" :
-                   subscriptionStatus === "PENDING_PAYMENT" ? "⏳ PAIEMENT EN ATTENTE" :
-                   "✗ EXPIRÉ"}
+                  {subscriptionStatus === "ACTIVE" ? "ACTIF" :
+                   subscriptionStatus === "TRIAL" ? "ESSAI GRATUIT (3 jours)" :
+                   subscriptionStatus === "PENDING_PAYMENT" ? "PAIEMENT EN ATTENTE" :
+                   "EXPIRE"}
                 </span>
-                {subscriptionStatus === "TRIAL" && (
-                  <span className="text-sm text-slate-400">Essai gratuit de 3 jours</span>
-                )}
               </div>
             </div>
-            {subscriptionStatus === "ACTIVE" && (
-              <div className="text-emerald-400 text-sm">🎉 Accès complet activé</div>
-            )}
           </div>
         </div>
 
         {subscriptionStatus === "PENDING_PAYMENT" && (
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4">
             <div className="font-semibold text-yellow-400 mb-1">
-              ⏳ Paiement en cours de vérification
+              Paiement en cours de verification
             </div>
             <p className="text-slate-400 text-sm">
-              Votre paiement est en cours de vérification par l'administrateur. Vous recevrez votre accès sous 24 heures.
+              Votre paiement est en cours de verification par l&apos;administrateur. Vous recevrez votre acces sous 24 heures.
             </p>
           </div>
         )}
@@ -218,6 +252,35 @@ export default function PaymentPage() {
           </div>
         )}
 
+        {/* Payment Method Selection */}
+        <div className="glass-card rounded-xl p-5">
+          <div className="text-slate-400 text-xs font-medium mb-4">METHODE DE PAIEMENT</div>
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              onClick={() => { setPaymentMethod("USDT"); setSelectedPlan(null); }}
+              className={`p-4 rounded-xl border-2 text-left transition-all ${
+                paymentMethod === "USDT"
+                  ? "border-cyan-500/70 bg-cyan-500/10"
+                  : "border-slate-700 hover:border-slate-600"
+              }`}
+            >
+              <div className="font-bold text-white">USDT TRC20</div>
+              <div className="text-xs text-slate-400 mt-1">Crypto - USDT sur reseau TRC20</div>
+            </button>
+            <button
+              onClick={() => { setPaymentMethod("MONCASH"); setSelectedPlan(null); }}
+              className={`p-4 rounded-xl border-2 text-left transition-all ${
+                paymentMethod === "MONCASH"
+                  ? "border-amber-500/70 bg-amber-500/10"
+                  : "border-slate-700 hover:border-slate-600"
+              }`}
+            >
+              <div className="font-bold text-white">MonCash</div>
+              <div className="text-xs text-slate-400 mt-1">Haiti - paiement en Gourdes (HTG)</div>
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Plans */}
           <div className="space-y-4">
@@ -228,7 +291,9 @@ export default function PaymentPage() {
                 onClick={() => setSelectedPlan(plan)}
                 className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
                   selectedPlan?.months === plan.months
-                    ? "border-cyan-500/70 bg-cyan-500/10"
+                    ? paymentMethod === "MONCASH"
+                      ? "border-amber-500/70 bg-amber-500/10"
+                      : "border-cyan-500/70 bg-cyan-500/10"
                     : "border-slate-700 hover:border-slate-600"
                 }`}
               >
@@ -239,14 +304,21 @@ export default function PaymentPage() {
                       <div className="text-xs text-emerald-400 mt-0.5">{plan.savings}</div>
                     )}
                     <div className="text-xs text-slate-400 mt-0.5">
-                      Accès complet · Bot Signal + Auto · Backtesting
+                      Acces complet · Bot Signal + Auto
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-xl font-black text-cyan-400">
-                      ${plan.price}
-                    </div>
-                    <div className="text-xs text-slate-400">USDT TRC20</div>
+                    {paymentMethod === "USDT" ? (
+                      <>
+                        <div className="text-xl font-black text-cyan-400">${plan.price}</div>
+                        <div className="text-xs text-slate-400">USDT TRC20</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-xl font-black text-amber-400">{(plan.priceHTG || Math.round(plan.price * HTG_RATE)).toLocaleString()} G</div>
+                        <div className="text-xs text-slate-400">MonCash HTG</div>
+                      </>
+                    )}
                   </div>
                 </div>
               </button>
@@ -256,7 +328,8 @@ export default function PaymentPage() {
           {/* Payment Form */}
           <div>
             <div className="font-semibold text-white mb-4">Effectuer le paiement</div>
-            {walletAddress && (
+
+            {paymentMethod === "USDT" && walletAddress && (
               <div className="glass-card rounded-xl p-4 mb-4">
                 <div className="text-xs text-slate-400 mb-1">WALLET USDT TRC20</div>
                 <div className="font-mono text-xs text-cyan-400 break-all bg-white/5 rounded-lg p-3 border border-slate-700">
@@ -266,31 +339,92 @@ export default function PaymentPage() {
                   onClick={copyWallet}
                   className="mt-2 w-full py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium transition-colors border border-slate-700"
                 >
-                  {copied ? "✓ Copié!" : "📋 Copier l'adresse"}
+                  {copied ? "Copie!" : "Copier l&apos;adresse"}
                 </button>
                 <p className="text-xs text-slate-500 mt-2 text-center">
-                  ⚠️ Envoyez uniquement du USDT sur le réseau TRC20
+                  Envoyez uniquement du USDT sur le reseau TRC20
                 </p>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-slate-400 text-xs mb-1.5">
-                  Hash de Transaction (TX Hash)
-                </label>
-                <input
-                  type="text"
-                  value={txHash}
-                  onChange={(e) => setTxHash(e.target.value)}
-                  placeholder="ex: 0x1a2b3c4d5e6f..."
-                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 text-sm font-mono"
-                />
+            {paymentMethod === "MONCASH" && (
+              <div className="glass-card rounded-xl p-4 mb-4">
+                <div className="text-xs text-slate-400 mb-1">INFO MONCASH</div>
+                <div className="space-y-2">
+                  <div className="bg-white/5 rounded-lg p-3 border border-slate-700">
+                    <div className="text-xs text-slate-400">Numero MonCash</div>
+                    <div className="text-sm text-amber-400 font-bold font-mono">+509 31959375</div>
+                    <button
+                      onClick={copyMoncashPhone}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 mt-1"
+                    >
+                      Copier le numero
+                    </button>
+                  </div>
+                  <div className="bg-white/5 rounded-lg p-3 border border-slate-700">
+                    <div className="text-xs text-slate-400">Nom de validation</div>
+                    <div className="text-sm text-white font-bold">renato joseph</div>
+                  </div>
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                    <div className="text-xs text-amber-400">
+                      Envoyez le montant en Gourdes (HTG) au numero ci-dessus via MonCash, puis remplissez le formulaire.
+                    </div>
+                  </div>
+                </div>
               </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {paymentMethod === "USDT" && (
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1.5">
+                    Hash de Transaction (TX Hash)
+                  </label>
+                  <input
+                    type="text"
+                    value={txHash}
+                    onChange={(e) => setTxHash(e.target.value)}
+                    placeholder="ex: 0x1a2b3c4d5e6f..."
+                    className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 text-sm font-mono"
+                  />
+                </div>
+              )}
+
+              {paymentMethod === "MONCASH" && (
+                <>
+                  <div>
+                    <label className="block text-slate-400 text-xs mb-1.5">
+                      Votre numero de telephone MonCash
+                    </label>
+                    <input
+                      type="tel"
+                      value={moncashSenderPhone}
+                      onChange={(e) => setMoncashSenderPhone(e.target.value)}
+                      placeholder="+509 3XXX XXXX"
+                      className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 text-sm font-mono"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Le numero depuis lequel vous avez envoye le MonCash
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 text-xs mb-1.5">
+                      Nom sur le compte MonCash (optionnel)
+                    </label>
+                    <input
+                      type="text"
+                      value={moncashValidationName}
+                      onChange={(e) => setMoncashValidationName(e.target.value)}
+                      placeholder="Votre nom complet"
+                      className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 text-sm"
+                    />
+                  </div>
+                </>
+              )}
 
               <div>
                 <label className="block text-slate-400 text-xs mb-1.5">
-                  Preuve de paiement (image)
+                  Preuve de paiement (image, optionnel)
                 </label>
                 <input
                   type="file"
@@ -314,27 +448,31 @@ export default function PaymentPage() {
                       onClick={() => { setProofFile(null); setProofPreview(null); }}
                       className="absolute top-1 right-1 bg-red-500/80 hover:bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center"
                     >
-                      ×
+                      x
                     </button>
                   </div>
                 )}
-                <p className="text-xs text-slate-500 mt-1">
-                  JPG, PNG ou WebP · Max 5MB
-                </p>
+                <p className="text-xs text-slate-500 mt-1">JPG, PNG ou WebP - Max 5MB</p>
               </div>
 
               <button
                 type="submit"
-                disabled={loading || !selectedPlan}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold transition-all text-sm"
+                disabled={loading || !selectedPlan || (paymentMethod === "MONCASH" && !moncashSenderPhone)}
+                className={`w-full py-3 rounded-xl font-bold transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed text-white ${
+                  paymentMethod === "MONCASH"
+                    ? "bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500"
+                    : "bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500"
+                }`}
               >
                 {loading ? "Envoi en cours..." :
-                 !selectedPlan ? "Sélectionnez un plan" :
-                 `Soumettre le paiement · $${selectedPlan.price} USDT`}
+                 !selectedPlan ? "Selectionnez un plan" :
+                 paymentMethod === "USDT"
+                   ? `Soumettre · $${selectedPlan.price} USDT`
+                   : `Soumettre · ${(selectedPlan.priceHTG || Math.round(selectedPlan.price * HTG_RATE)).toLocaleString()} G HTG`}
               </button>
 
               <p className="text-xs text-slate-500 text-center">
-                Activation sous 24h après vérification admin
+                Activation sous 24h apres verification admin
               </p>
             </form>
           </div>
@@ -351,14 +489,22 @@ export default function PaymentPage() {
                 <div key={payment.id} className="p-4 flex items-center justify-between">
                   <div>
                     <div className="text-sm font-semibold text-white">
-                      ${parseFloat(payment.amount).toFixed(2)} USDT · {payment.planMonths} mois
+                      {payment.currency === "MONCASH"
+                        ? `${parseFloat(payment.amount).toLocaleString()} G HTG`
+                        : `$${parseFloat(payment.amount).toFixed(2)} USDT`}
+                      {" "}&middot; {payment.planMonths} mois
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">
-                      {new Date(payment.createdAt).toLocaleString("fr-FR")}
+                      {payment.currency === "MONCASH" ? "MonCash" : "USDT TRC20"} &middot; {new Date(payment.createdAt).toLocaleString("fr-FR")}
                     </div>
-                    {payment.txHash && (
+                    {payment.txHash && payment.currency !== "MONCASH" && (
                       <div className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-xs">
                         TX: {payment.txHash}
+                      </div>
+                    )}
+                    {payment.moncashSenderPhone && (
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        MonCash: {payment.moncashSenderPhone}
                       </div>
                     )}
                     {payment.proofFilePath && (
@@ -368,14 +514,14 @@ export default function PaymentPage() {
                         rel="noopener noreferrer"
                         className="text-xs text-cyan-400 hover:text-cyan-300 mt-0.5 inline-block"
                       >
-                        📷 Voir la preuve
+                        Voir la preuve
                       </a>
                     )}
                   </div>
                   <span className={`px-3 py-1 rounded-full text-xs font-bold ${statusColors[payment.status]}`}>
-                    {payment.status === "PENDING" ? "⏳ EN ATTENTE" :
-                     payment.status === "APPROVED" ? "✓ APPROUVÉ" :
-                     "✗ REJETÉ"}
+                    {payment.status === "PENDING" ? "EN ATTENTE" :
+                     payment.status === "APPROVED" ? "APPROUVE" :
+                     "REJETE"}
                   </span>
                 </div>
               ))}

@@ -27,10 +27,16 @@ interface RunnerStatus {
   mode: "DEMO" | "LIVE";
   tradeAmount: number;
   confidenceMode: "standard" | "high";
+  profitTarget: number;
+  lossLimit: number;
   running: boolean;
   paused: boolean;
+  pauseReason: string | null;
   signalsGenerated: number;
   tradesExecuted: number;
+  dailyWins: number;
+  dailyLosses: number;
+  dailyProfit: number;
   consecutiveErrors: number;
   lastSignalAt: number | null;
   startedAt: string;
@@ -69,6 +75,8 @@ export default function BotPage() {
   const [timeframe, setTimeframe] = useState("1m");
   const [tradeAmount, setTradeAmount] = useState(1);
   const [confidenceMode, setConfidenceMode] = useState<"standard" | "high">("standard");
+  const [profitTarget, setProfitTarget] = useState(50);
+  const [lossLimit, setLossLimit] = useState(25);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -86,6 +94,9 @@ export default function BotPage() {
           ? parseFloat(String(u.demoTradeAmount || "1"))
           : parseFloat(String(u.liveTradeAmount || "1"));
         setTradeAmount(defaultAmount);
+        // Pre-fill profit/loss limits from profile
+        if (u.profitTarget) setProfitTarget(parseFloat(String(u.profitTarget)));
+        if (u.lossLimit) setLossLimit(parseFloat(String(u.lossLimit)));
       }
     } catch {}
   }, []);
@@ -142,6 +153,8 @@ export default function BotPage() {
           timeframe,
           tradeAmount,
           confidenceMode,
+          profitTarget,
+          lossLimit,
           ssid: ssid || undefined,
         }),
       });
@@ -367,6 +380,44 @@ export default function BotPage() {
                 🔒 Chiffré AES-256 et isolé par session utilisateur
               </p>
             </div>
+
+            {/* Profit Target */}
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">
+                Objectif Profit ($)
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={profitTarget}
+                onChange={(e) => setProfitTarget(parseFloat(e.target.value) || 1)}
+                disabled={isRunning}
+                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Le bot s&apos;arrête quand le profit journalier atteint ce montant
+              </p>
+            </div>
+
+            {/* Loss Limit */}
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">
+                Limite de Perte ($)
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={lossLimit}
+                onChange={(e) => setLossLimit(parseFloat(e.target.value) || 1)}
+                disabled={isRunning}
+                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Le bot s&apos;arrête quand la perte journalière atteint ce montant
+              </p>
+            </div>
           </div>
 
           {mode === "LIVE" && (
@@ -412,18 +463,20 @@ export default function BotPage() {
           </div>
 
           {isRunning && (
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-8 gap-4">
               {[
-                { label: "Signaux", value: runnerStatus?.signalsGenerated ?? activeSession?.totalTrades ?? 0, color: "text-cyan-400" },
-                { label: "Trades", value: runnerStatus?.tradesExecuted ?? activeSession?.totalTrades ?? 0, color: "text-white" },
-                { label: "Montant", value: `$${runnerStatus?.tradeAmount ?? parseFloat(activeSession?.tradeAmount as string || "1")}`, color: "text-violet-400" },
-                { label: "Victoires", value: activeSession?.wins || 0, color: "text-emerald-400" },
-                { label: "Défaites", value: activeSession?.losses || 0, color: "text-red-400" },
+                { label: "Signaux", value: runnerStatus?.signalsGenerated ?? 0, color: "text-cyan-400" },
+                { label: "Trades", value: runnerStatus?.tradesExecuted ?? 0, color: "text-white" },
+                { label: "Montant", value: `$${runnerStatus?.tradeAmount ?? 1}`, color: "text-violet-400" },
+                { label: "Victoires", value: runnerStatus?.dailyWins ?? 0, color: "text-emerald-400" },
+                { label: "Défaites", value: runnerStatus?.dailyLosses ?? 0, color: "text-red-400" },
                 {
-                  label: "Profit",
-                  value: `$${parseFloat(activeSession?.totalProfit || "0").toFixed(2)}`,
-                  color: parseFloat(activeSession?.totalProfit || "0") >= 0 ? "text-emerald-400" : "text-red-400",
+                  label: "Profit/Jour",
+                  value: `$${(runnerStatus?.dailyProfit ?? 0).toFixed(2)}`,
+                  color: (runnerStatus?.dailyProfit ?? 0) >= 0 ? "text-emerald-400" : "text-red-400",
                 },
+                { label: "Objectif", value: `$${runnerStatus?.profitTarget ?? 50}`, color: "text-amber-400" },
+                { label: "Limite Perte", value: `$${runnerStatus?.lossLimit ?? 25}`, color: "text-orange-400" },
               ].map((stat) => (
                 <div key={stat.label} className="bg-white/5 rounded-xl p-3 text-center">
                   <div className={`text-xl font-black ${stat.color}`}>{stat.value}</div>
@@ -436,7 +489,7 @@ export default function BotPage() {
           {isRunning && runnerStatus?.paused && (
             <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-center">
               <div className="text-yellow-400 text-sm font-medium">
-                ⚠️ Bot en pause - {runnerStatus.consecutiveErrors} erreurs consécutives
+                ⚠️ Bot en pause - {runnerStatus.pauseReason || `${runnerStatus.consecutiveErrors} erreurs consécutives`}
               </div>
             </div>
           )}

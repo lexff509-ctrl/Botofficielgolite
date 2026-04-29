@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest, handleApiError } from "@/lib/auth";
-import { hasActiveSubscription } from "@/services/payment.service";
-import { createPaymentRequest, getPayments, getWalletAddress } from "@/services/payment.service";
+import { hasActiveSubscription, createPaymentRequest, getPayments, getWalletAddress, MONCASH_PLANS, MONCASH_INFO } from "@/services/payment.service";
 
 // Never expose wallet to frontend - only get payment info
 export async function GET(req: NextRequest) {
@@ -20,6 +19,8 @@ export async function GET(req: NextRequest) {
         QUARTERLY: { months: 3, price: 280, label: "3 Mois", savings: "Économisez 20$" },
         ANNUAL: { months: 12, price: 1250, label: "12 Mois", savings: "Économisez 350$" },
       },
+      moncashPlans: MONCASH_PLANS,
+      moncashInfo: MONCASH_INFO,
       currency: "USDT TRC20",
     });
   } catch (error) {
@@ -35,13 +36,20 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { amount, planMonths, txHash, proofFilePath } = body;
+    const { amount, planMonths, txHash, proofFilePath, currency, moncashSenderPhone, moncashValidationName } = body;
 
     if (!amount || parseFloat(amount) <= 0) {
       return NextResponse.json({ error: "Montant invalide" }, { status: 400 });
     }
-    if (!txHash && !proofFilePath) {
+
+    // For USDT: require txHash or proof
+    // For MonCash: require sender phone
+    const isMoncash = currency === "MONCASH";
+    if (!isMoncash && !txHash && !proofFilePath) {
       return NextResponse.json({ error: "Hash de transaction ou preuve image requis" }, { status: 400 });
+    }
+    if (isMoncash && !moncashSenderPhone) {
+      return NextResponse.json({ error: "Numéro de téléphone MonCash requis" }, { status: 400 });
     }
 
     const payment = await createPaymentRequest(
@@ -49,7 +57,10 @@ export async function POST(req: NextRequest) {
       parseFloat(amount),
       planMonths || 1,
       txHash || "",
-      proofFilePath
+      proofFilePath,
+      currency || "USDT",
+      isMoncash ? moncashSenderPhone : undefined,
+      isMoncash ? moncashValidationName : undefined,
     );
 
     return NextResponse.json({ success: true, payment });

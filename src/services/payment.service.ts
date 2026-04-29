@@ -10,6 +10,21 @@ export const SUBSCRIPTION_PLANS = {
   ANNUAL: { months: 12, price: 1250, label: "12 Mois", savings: "Économisez 350$" },
 };
 
+// MonCash plans - same prices in HTG (1 USD = 137.5 HTG)
+const HTG_RATE = 137.5;
+
+export const MONCASH_PLANS = {
+  MONTHLY: { months: 1, priceHTG: Math.round(50 * HTG_RATE), label: "1 Mois", savings: "" },
+  QUARTERLY: { months: 3, priceHTG: Math.round(280 * HTG_RATE), label: "3 Mois", savings: "Économisez 2,750 G" },
+  ANNUAL: { months: 12, priceHTG: Math.round(1250 * HTG_RATE), label: "12 Mois", savings: "Économisez 48,125 G" },
+};
+
+export const MONCASH_INFO = {
+  phone: "+509 31959375",
+  validationName: "renato joseph",
+  htgRate: HTG_RATE,
+};
+
 export type PlanKey = keyof typeof SUBSCRIPTION_PLANS;
 
 // ============ PAYMENT MANAGEMENT ============
@@ -37,7 +52,9 @@ export async function createPaymentRequest(
   planMonths: number,
   txHash: string,
   proofFilePath?: string,
-  currency = "USDT"
+  currency = "USDT",
+  moncashSenderPhone?: string,
+  moncashValidationName?: string,
 ) {
   const [payment] = await db
     .insert(paymentRequests)
@@ -49,6 +66,8 @@ export async function createPaymentRequest(
       proofFilePath: proofFilePath || null,
       planMonths,
       status: "PENDING",
+      moncashSenderPhone: moncashSenderPhone || null,
+      moncashValidationName: moncashValidationName || null,
     })
     .returning();
   return payment;

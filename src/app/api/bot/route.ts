@@ -10,12 +10,19 @@ import { connectPocketOption, disconnectPocketOption } from "@/services/trading.
 import { startBotRunner, stopBotRunner, getBotRunner, isBotRunning, getAllRunnersStatus } from "@/services/bot-runner";
 import { hasActiveSubscription } from "@/services/payment.service";
 import { TIMEFRAMES, type Timeframe } from "@/lib/trading";
+import { validateSessionVersion } from "@/services/auth.service";
 
 export async function GET(req: NextRequest) {
   try {
     const payload = getUserFromRequest(req);
     if (!payload) {
       return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+    }
+
+    // Single-device session check
+    const validSession = await validateSessionVersion(payload.userId, payload.sessionVersion ?? 0);
+    if (!validSession) {
+      return NextResponse.json({ error: "Session expirée", sessionExpired: true }, { status: 401 });
     }
 
     const sessions = await db
@@ -47,6 +54,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
     }
 
+    // Single-device session check
+    const validSession = await validateSessionVersion(payload.userId, payload.sessionVersion ?? 0);
+    if (!validSession) {
+      return NextResponse.json({ error: "Session expirée", sessionExpired: true }, { status: 401 });
+    }
+
     const body = await req.json();
     const parsed = botActionSchema.safeParse(body);
     if (!parsed.success) {
@@ -56,7 +69,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { action, mode, botType, ssid, asset, timeframe, tradeAmount, confidenceMode } = parsed.data;
+    const { action, mode, botType, ssid, asset, timeframe, tradeAmount, confidenceMode, profitTarget, lossLimit } = parsed.data;
 
     // Check subscription
     const hasAccess = await hasActiveSubscription(payload.userId);
@@ -165,6 +178,10 @@ export async function POST(req: NextRequest) {
           .where(eq(users.id, payload.userId));
       }
 
+      // Resolve profit/loss limits: provided > user profile > defaults
+      const userProfitTarget = profitTarget || (user.profitTarget ? parseFloat(user.profitTarget) : undefined);
+      const userLossLimit = lossLimit || (user.lossLimit ? parseFloat(user.lossLimit) : undefined);
+
       // Start the BotRunner background loop
       const runner = startBotRunner({
         userId: payload.userId,
@@ -174,6 +191,8 @@ export async function POST(req: NextRequest) {
         mode: selectedMode as "DEMO" | "LIVE",
         tradeAmount: selectedTradeAmount,
         confidenceMode: confidenceMode || "standard",
+        profitTarget: userProfitTarget,
+        lossLimit: userLossLimit,
       });
 
       return NextResponse.json({

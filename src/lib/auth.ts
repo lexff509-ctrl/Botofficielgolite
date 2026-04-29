@@ -23,6 +23,7 @@ export interface JWTPayload {
   email: string;
   role: string;
   subscriptionStatus: string;
+  sessionVersion: number;
 }
 
 // ============ JWT TOKEN ============

@@ -25,6 +25,8 @@ export const botActionSchema = z.object({
   asset: z.string().optional(),
   tradeAmount: z.number().positive("Le montant doit être positif").optional(),
   confidenceMode: z.enum(["standard", "high"]).optional(),
+  profitTarget: z.number().min(1, "Minimum $1").optional(),
+  lossLimit: z.number().min(1, "Minimum $1").optional(),
 });
 
 // Signals
@@ -53,9 +55,11 @@ export const tradeCreateSchema = z.object({
 // Payment
 export const paymentCreateSchema = z.object({
   amount: z.number().positive(),
-  currency: z.enum(["USDT"]).default("USDT"),
-  txHash: z.string().min(1, "Hash de transaction requis"),
+  currency: z.enum(["USDT", "MONCASH"]).default("USDT"),
+  txHash: z.string().optional(),
   planMonths: z.number().int().min(1).max(12).default(1),
+  moncashSenderPhone: z.string().optional(),
+  moncashValidationName: z.string().optional(),
 });
 
 export const paymentReviewSchema = z.object({
@@ -67,6 +71,7 @@ export const paymentReviewSchema = z.object({
 // Admin
 export const adminUserUpdateSchema = z.object({
   isActive: z.boolean().optional(),
+  isVerified: z.boolean().optional(),
   subscriptionStatus: z
     .enum(["FREE", "TRIAL", "ACTIVE", "EXPIRED", "PENDING_PAYMENT"])
     .optional(),
@@ -74,6 +79,7 @@ export const adminUserUpdateSchema = z.object({
   backtestingDaysGranted: z.number().int().optional(),
   tradeMode: z.enum(["DEMO", "LIVE"]).optional(),
   demoBalance: z.string().optional(),
+  resetPassword: z.string().min(6, "Minimum 6 caractères").optional(),
 });
 
 // Profile
@@ -83,6 +89,8 @@ export const profileUpdateSchema = z.object({
   pocketOptionSsid: z.string().optional(),
   demoTradeAmount: z.string().optional(),
   liveTradeAmount: z.string().optional(),
+  profitTarget: z.number().min(1, "Minimum $1").nullable().optional(),
+  lossLimit: z.number().min(1, "Minimum $1").nullable().optional(),
 });
 
 // Pagination
