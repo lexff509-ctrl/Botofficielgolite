@@ -196,35 +196,75 @@ export function calculateBollinger(
 // ============ CUSTOM INDICATORS (not in technicalindicators) ============
 
 // Bill Williams Fractals - detect reversal points
-// High fractal at index i: high[i] > high[i-1..i-2] AND high[i] > high[i+1..i+2]
-// Low fractal at index i: low[i] < low[i-1..i-2] AND low[i] < low[i+1..i+2]
+// Scans the last few candles for any confirmed fractal (not just the most recent)
 export function calculateFractals(candles: Candle[]): {
   lowFractal: boolean;
   highFractal: boolean;
 } {
-  // We check if the candle at index (n-2) is a fractal
   if (candles.length < 5) return { lowFractal: false, highFractal: false };
 
   const n = candles.length;
-  // Check the candle at index n-3 (two candles back from current)
-  // This gives the most recent confirmed fractal with 2 bars on each side
-  const i = n - 3;
-  if (i < 2 || i >= n - 2) return { lowFractal: false, highFractal: false };
+  let lowFractal = false;
+  let highFractal = false;
 
-  const high = candles[i].high;
-  const low = candles[i].low;
+  // Scan the last 5 possible fractal positions (from n-3 down to n-7)
+  // This increases the chance of finding a recent fractal
+  for (let i = Math.max(2, n - 7); i <= n - 3; i++) {
+    if (i < 2 || i >= n - 2) continue;
 
-  let highFractal = true;
-  let lowFractal = true;
+    const high = candles[i].high;
+    const low = candles[i].low;
 
-  // Check both sides: 2 bars left and 2 bars right
-  for (let j = i - 2; j <= i + 2; j++) {
-    if (j === i) continue;
-    if (candles[j].high >= high) highFractal = false;
-    if (candles[j].low <= low) lowFractal = false;
+    let isHigh = true;
+    let isLow = true;
+
+    // Check both sides: 2 bars left and 2 bars right
+    for (let j = i - 2; j <= i + 2; j++) {
+      if (j === i) continue;
+      if (candles[j].high >= high) isHigh = false;
+      if (candles[j].low <= low) isLow = false;
+    }
+
+    if (isHigh) highFractal = true;
+    if (isLow) lowFractal = true;
   }
 
   return { lowFractal, highFractal };
+}
+
+// Detect bullish/bearish reversal candle patterns
+// A bullish reversal: recent candle has a long lower wick (hammer-like)
+// A bearish reversal: recent candle has a long upper wick (shooting star-like)
+function detectReversalCandle(candles: Candle[]): {
+  bullishReversal: boolean;
+  bearishReversal: boolean;
+} {
+  if (candles.length < 2) return { bullishReversal: false, bearishReversal: false };
+
+  // Check the previous candle (n-2) for reversal patterns
+  const prev = candles[candles.length - 2];
+  const body = Math.abs(prev.close - prev.open);
+  const range = prev.high - prev.low;
+  if (range === 0) return { bullishReversal: false, bearishReversal: false };
+
+  const bodyRatio = body / range;
+  const isBullish = prev.close > prev.open;
+
+  // Lower wick ratio (bullish signal)
+  const lowerWick = Math.min(prev.open, prev.close) - prev.low;
+  const lowerWickRatio = lowerWick / range;
+
+  // Upper wick ratio (bearish signal)
+  const upperWick = prev.high - Math.max(prev.open, prev.close);
+  const upperWickRatio = upperWick / range;
+
+  // Bullish reversal: long lower wick (>50% of range), small body (<40% of range)
+  const bullishReversal = lowerWickRatio > 0.5 && bodyRatio < 0.4;
+
+  // Bearish reversal: long upper wick (>50% of range), small body (<40% of range)
+  const bearishReversal = upperWickRatio > 0.5 && bodyRatio < 0.4;
+
+  return { bullishReversal, bearishReversal };
 }
 
 // Doji detection: body size relative to candle range
@@ -275,11 +315,13 @@ function evaluateImpulsion(
   const { k: stochK, d: stochD } = calculateStochastic(candles, 14, 3, 3);
   const { lowFractal, highFractal } = calculateFractals(candles);
   const atr = calculateATR(candles, 14);
+  const { bullishReversal, bearishReversal } = detectReversalCandle(candles);
 
   // Doji filter on the previous candle (candle at n-2, since n-1 is current)
   const prevCandle = candles[candles.length - 2];
   const pipValue = getPipValue(asset);
-  const dojiThreshold = Math.max(2, atr * 0.1 / pipValue); // Adaptive: 2 pips or 10% of ATR
+  // Only reject if body is extremely small relative to ATR (classic doji)
+  const dojiThreshold = Math.max(3, atr * 0.15 / pipValue); // 3 pips or 15% of ATR
   const dojiRejected = prevCandle ? isDojiCandle(prevCandle, dojiThreshold, pipValue) : false;
 
   // If previous candle is a doji, reject signal
@@ -290,8 +332,8 @@ function evaluateImpulsion(
     };
   }
 
-  // Proximity zone: price must be within 0.5 * ATR of EMA20 (retest zone)
-  const proximityThreshold = atr * 0.5;
+  // Proximity zone: price must be within 1.0 * ATR of EMA20 (retest zone)
+  const proximityThreshold = atr * 1.0;
   const nearEma20 = Math.abs(currentPrice - ema20) <= proximityThreshold;
 
   // ============ CALL CONDITIONS ============
@@ -299,10 +341,10 @@ function evaluateImpulsion(
   const callTrend = currentPrice > ema20 && ema20 > ema50;
   // 2. Price near EMA20 (pullback/retest)
   const callProximity = nearEma20;
-  // 3. Stochastic oversold + bullish cross: %K < 20 AND %K > %D
-  const callMomentum = stochK < 20 && stochK > stochD;
-  // 4. Low fractal on previous candle
-  const callReversal = lowFractal;
+  // 3. Stochastic oversold + bullish cross: %K < 30 AND %K > %D
+  const callMomentum = stochK < 30 && stochK > stochD;
+  // 4. Reversal signal: low fractal OR bullish reversal candle (hammer-like)
+  const callReversal = lowFractal || bullishReversal;
 
   if (callTrend && callProximity && callMomentum && callReversal) {
     return {
@@ -316,10 +358,10 @@ function evaluateImpulsion(
   const putTrend = currentPrice < ema20 && ema20 < ema50;
   // 2. Price near EMA20 (pullback/retest)
   const putProximity = nearEma20;
-  // 3. Stochastic overbought + bearish cross: %K > 80 AND %K < %D
-  const putMomentum = stochK > 80 && stochK < stochD;
-  // 4. High fractal on previous candle
-  const putReversal = highFractal;
+  // 3. Stochastic overbought + bearish cross: %K > 70 AND %K < %D
+  const putMomentum = stochK > 70 && stochK < stochD;
+  // 4. Reversal signal: high fractal OR bearish reversal candle (shooting star-like)
+  const putReversal = highFractal || bearishReversal;
 
   if (putTrend && putProximity && putMomentum && putReversal) {
     return {
@@ -379,9 +421,9 @@ function calculateConfidence(
     }
   }
 
-  // -10% Barely in zone: Stochastic %K between 15-20 for CALL or 80-85 for PUT
-  if (direction === "CALL" && stochK >= 15 && stochK < 20) confidence -= 10;
-  if (direction === "PUT" && stochK > 80 && stochK <= 85) confidence -= 10;
+  // -10% Barely in zone: Stochastic %K between 25-30 for CALL or 70-75 for PUT
+  if (direction === "CALL" && stochK >= 25 && stochK < 30) confidence -= 10;
+  if (direction === "PUT" && stochK > 70 && stochK <= 75) confidence -= 10;
 
   // Clamp between 0 and 95
   return Math.min(95, Math.max(0, confidence));
