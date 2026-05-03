@@ -54,11 +54,12 @@ export async function GET(req: NextRequest) {
     let realBalance: { demo: number; live: number } | null = null;
     const client = getPocketOptionClient(payload.userId);
     if (client && client.isConnected && client.balance) {
-      // The client balance object has { balance: number, isDemo: number }
-      const isDemoAccount = client.balance.isDemo === 1;
+      // @ts-ignore - Handle potential discrepancy between local types and actual PO client implementation
+      const bal = client.balance;
+      const isDemoAccount = bal.isDemo === 1;
       realBalance = {
-        demo: isDemoAccount ? client.balance.balance : 0,
-        live: !isDemoAccount ? client.balance.balance : 0,
+        demo: isDemoAccount ? bal.balance : 0,
+        live: !isDemoAccount ? bal.balance : 0,
       };
     } else {
       realBalance = null;
