@@ -59,8 +59,13 @@ export async function GET(req: NextRequest) {
     let initialEquity = 10000;
 
     if (poClient && poClient.isConnected && poClient.balance) {
-      const currentRealBalance = mode === "LIVE" ? poClient.balance.live : poClient.balance.demo;
-      if (currentRealBalance !== undefined) {
+      // The client balance object has { balance: number, isDemo: number }
+      // where isDemo is 1 for demo account and 0 for live account
+      const isBalanceDemo = poClient.balance.isDemo === 1;
+      const isRequestDemo = mode === "DEMO";
+
+      if (isBalanceDemo === isRequestDemo) {
+        const currentRealBalance = poClient.balance.balance;
         // Calculate initial equity based on current balance minus cumulative profits of trades shown
         const totalProfitShown = filteredTrades.reduce((acc, t) => acc + parseFloat(t.profit || "0"), 0);
         initialEquity = currentRealBalance - totalProfitShown;

@@ -14,6 +14,7 @@ import {
   getGlobalSsidStatus,
   isUserOnSharedClient,
   getDefaultPayoutRate,
+  getPocketOptionClient,
 } from "@/services/trading.service";
 import { startBotRunner, stopBotRunner, getBotRunner, isBotRunning, getAllRunnersStatus } from "@/services/bot-runner";
 import { hasActiveSubscription } from "@/services/payment.service";
@@ -53,10 +54,14 @@ export async function GET(req: NextRequest) {
     let realBalance: { demo: number; live: number } | null = null;
     const client = getPocketOptionClient(payload.userId);
     if (client && client.isConnected && client.balance) {
+      // The client balance object has { balance: number, isDemo: number }
+      const isDemo = client.balance.isDemo === 1;
       realBalance = {
-        demo: client.balance.demo || 0,
-        live: client.balance.live || 0,
+        demo: isDemo ? client.balance.balance : 0,
+        live: !isDemo ? client.balance.balance : 0,
       };
+    } else {
+      realBalance = null;
     }
 
     return NextResponse.json({
