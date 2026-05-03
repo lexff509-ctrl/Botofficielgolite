@@ -399,23 +399,24 @@ function scoreRSI(rsi: number, tf: Timeframe): number {
   const isScalping = sec <= 15;
 
   if (isScalping) {
-    // Tighter zones for scalping: mean reversion focus
-    if (rsi < 20) return 1.0;
-    if (rsi < 30) return 0.7;
-    if (rsi < 45) return 0.3;
-    if (rsi >= 45 && rsi <= 55) return 0;
-    if (rsi > 55 && rsi < 70) return -0.3;
-    if (rsi < 80) return -0.7;
-    return -1.0; // RSI > 80
+    // Scalping: aggressive mean reversion
+    if (rsi < 25) return 1.0;
+    if (rsi < 40) return 0.5;
+    if (rsi >= 40 && rsi <= 60) return 0;
+    if (rsi > 60 && rsi < 75) return -0.5;
+    return -1.0; // RSI > 75
   } else {
-    // Balanced: trend-following above 50, reversal at extremes
-    if (rsi < 20) return 0.9;      // Deeply oversold = reversal UP
-    if (rsi < 30) return 0.6;      // Oversold
-    if (rsi < 45) return 0.2;      // Slightly bearish momentum
-    if (rsi >= 45 && rsi <= 55) return 0; // Neutral
-    if (rsi > 55 && rsi < 70) return -0.2;    // Slightly bullish momentum
-    if (rsi < 80) return -0.6;     // Getting overbought
-    return -0.9;                    // Deeply overbought = reversal DOWN
+    // Trend alignment + reversal at extremes
+    if (rsi < 20) return 1.0;      // Oversold reversal
+    if (rsi < 35) return 0.6;      // Oversold zone
+    if (rsi > 65) return -0.6;     // Overbought zone
+    if (rsi > 80) return -1.0;     // Overbought reversal
+    
+    // Trend following: RSI > 50 is bullish, RSI < 50 is bearish
+    if (rsi > 55) return 0.3;
+    if (rsi < 45) return -0.3;
+    
+    return 0;
   }
 }
 
@@ -812,7 +813,18 @@ function evaluateSignal(
   rawScore += scores.marketStructure * weights.marketStructure;
 
   // Determine direction based on technical confluence
-  const direction = rawScore >= 0 ? "CALL" : "PUT";
+  // rawScore is the weighted sum of indicators (-1.0 to 1.0)
+  // Use a smaller deadzone to be more sensitive but stable
+  let direction: "CALL" | "PUT";
+  if (rawScore > 0.02) {
+    direction = "CALL";
+  } else if (rawScore < -0.02) {
+    direction = "PUT";
+  } else {
+    // If score is exactly neutral, fall back to trend confirmation
+    // EMA20 vs EMA50 is a very reliable trend indicator
+    direction = ema20 >= ema50 ? "CALL" : "PUT";
+  }
   
   // Final Adjusted Score
   const adjustedScore = rawScore;
