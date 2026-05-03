@@ -122,6 +122,7 @@ export class PocketOptionClient {
   private historyNewData: Record<string, unknown> | null = null;
   private closedDealsData: unknown[] = [];
   private lastBalance: { balance: number; isDemo: number } | null = null;
+  private assetData: Record<string, { payout: number }> = {};
 
   // Heartbeat
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
@@ -153,6 +154,10 @@ export class PocketOptionClient {
 
   get balance(): { balance: number; isDemo: number } | null {
     return this.lastBalance;
+  }
+
+  get assets(): Record<string, { payout: number }> {
+    return this.assetData;
   }
 
   // ============ Asset Format Conversion ============
@@ -858,6 +863,13 @@ export class PocketOptionClient {
 
           case "updateAssets":
             console.log("[PO] Assets data received (binary)");
+            if (Array.isArray(message)) {
+              for (const asset of message) {
+                if (asset && typeof asset === "object" && asset.symbol && asset.payout) {
+                  this.assetData[asset.symbol] = { payout: Number(asset.payout) / 100 };
+                }
+              }
+            }
             return;
 
           case "updateCharts":

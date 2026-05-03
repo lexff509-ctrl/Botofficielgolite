@@ -401,11 +401,12 @@ export class BotRunner {
         // Anti-ban & Payout check: Get current asset payout before trading
         const client = getPocketOptionClient(this.userId);
         if (client && client.isConnected) {
-          const assets = client.assets;
-          const assetInfo = assets[this.asset.replace("/","").replace(" (OTC)", "_otc")];
+          const assets = (client as any).assets || {};
+          const assetSymbol = this.asset.replace("/","").replace(" (OTC)", "_otc");
+          const assetInfo = assets[assetSymbol];
           const payout = assetInfo?.payout || 0;
           
-          if (payout < 0.80) {
+          if (payout > 0 && payout < 0.80) {
              console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 80%). Skipping trade for user ${this.userId}.`);
              return;
           }
