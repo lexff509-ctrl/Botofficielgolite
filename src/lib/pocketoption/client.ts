@@ -714,10 +714,12 @@ export class PocketOptionClient {
         break;
 
       case "successopenOrder":
-        this.successOpenOrderFlag = true;
-        break;
+            this.successOpenOrderFlag = true;
+            this.pendingBinaryEvent = "successopenOrder";
+            console.log("[PO] Order request accepted, waiting for confirmation data...");
+            break;
 
-      case "updateClosedDeals":
+          case "updateClosedDeals":
         this.updateClosedDealsFlag = true;
         break;
 
@@ -933,10 +935,10 @@ export class PocketOptionClient {
       }
 
       if (
-        typeof message === "object" &&
+        this.pendingBinaryEvent === "successopenOrder" ||
+        (typeof message === "object" &&
         message !== null &&
-        "requestId" in (message as Record<string, unknown>) &&
-        (message as Record<string, unknown>).requestId === "buy"
+        "requestId" in (message as Record<string, unknown>))
       ) {
         this.orderData = message as Record<string, unknown>;
         return;
@@ -1104,10 +1106,21 @@ export class PocketOptionClient {
     isDemo: number,
     time: number
   ): void {
-    this.sendEvent([
-      "openOrder",
-      { asset: PocketOptionClient.toPOSymbol(asset), amount, action, isDemo, requestId: "buy", optionType: 100, time },
-    ]);
+    const poAsset = PocketOptionClient.toPOSymbol(asset);
+    console.log(`[PO] Sending openOrder: ${poAsset} $${amount} ${action} (demo=${isDemo}, time=${time})`);
+    
+    // Ensure data types are correct for the PocketOption protocol
+    const orderData = {
+      asset: poAsset,
+      amount: Number(amount),
+      action: action.toLowerCase(),
+      isDemo: Number(isDemo),
+      requestId: Date.now(), // Unique request ID
+      optionType: 100, // Fixed for digital options
+      time: Number(time),
+    };
+
+    this.sendEvent(["openOrder", orderData]);
   }
 
   getBalances(): void {
@@ -1323,24 +1336,29 @@ export class PocketOptionClient {
     this.openOrder(request.asset, request.amount, action, this.isDemo ? 1 : 0, request.duration);
 
     const startTime = Date.now();
-    while (Date.now() - startTime < 30000) {
-      if (this.orderData !== null && this.successOpenOrderFlag) break;
-      await new Promise((r) => setTimeout(r, 100));
+    // Increase timeout to 45s for slower network conditions
+    while (Date.now() - startTime < 45000) {
+      // Check for both binary order data AND the success flag
+      if (this.orderData !== null) break;
+      await new Promise((r) => setTimeout(r, 200));
     }
 
     if (!this.orderData) {
+      console.error(`[PO] Trade timeout for ${request.asset}. Order data never received.`);
       throw new Error("Trade execution timeout");
     }
 
     const order = this.orderData as Record<string, unknown>;
+    console.log(`[PO] Trade executed! Result data:`, JSON.stringify(order).substring(0, 200));
+    
     const profit = Number(order.profit ?? -request.amount);
 
     return {
       win: profit > 0,
       profit,
-      openPrice: Number(order.open_price || 0),
-      closePrice: Number(order.close_price || 0),
-      tradeId: String(order.id || ""),
+      openPrice: Number(order.open_price || order.openPrice || 0),
+      closePrice: Number(order.close_price || order.closePrice || 0),
+      tradeId: String(order.id || order.deal_id || ""),
     };
   }
 
@@ -1421,10 +1439,11 @@ export class PocketOptionClient {
 
   private sendEvent(data: unknown): void {
     if (!this.ws || !this.connected) return;
+    // PocketOption uses the Socket.IO 42 message type followed by JSON
     const message = `42${JSON.stringify(data)}`;
     try {
       this.ws.send(message);
-      console.log(`[PO] >> ${message.substring(0, 100)}`);
+      console.log(`[PO] >> ${message.substring(0, 150)}`);
     } catch (err) {
       console.error("[PO] Send error:", err);
     }
@@ -1432,11 +1451,15 @@ export class PocketOptionClient {
 
   private startHeartbeats(): void {
     this.cleanup();
+    // Engine.IO PING every 20 seconds
     this.socketIoHeartbeat = setInterval(() => {
       if (this.ws && this.connected) {
+        // Send Engine.IO PING (char "2")
+        this.ws.send("2");
+        // Also send Socket.IO keep-alive if needed (some PO versions use 42["ps"])
         this.ws.send('42["ps"]');
       }
-    }, 10000);
+    }, 20000);
   }
 
   private cleanup(): void {

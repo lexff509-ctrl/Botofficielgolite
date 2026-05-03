@@ -62,11 +62,17 @@ interface SsidInfo {
 const REGULAR_ASSETS = [
   "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
   "USD/CAD", "EUR/GBP", "BTC/USD", "ETH/USD",
+  "USD/CHF", "EUR/JPY", "GBP/JPY", "NZD/USD",
+  "EUR/CHF", "AUD/JPY", "CAD/JPY", "EUR/CAD",
 ];
 
 const OTC_ASSETS = [
   "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)",
   "AUD/USD (OTC)", "BTC/USD (OTC)", "ETH/USD (OTC)",
+  "USD/CHF (OTC)", "EUR/JPY (OTC)", "GBP/JPY (OTC)",
+  "NZD/USD (OTC)", "EUR/CHF (OTC)", "AUD/JPY (OTC)",
+  "CAD/JPY (OTC)", "EUR/CAD (OTC)", "USD/CAD (OTC)",
+  "EUR/GBP (OTC)", "AUD/CAD (OTC)", "GBP/CHF (OTC)",
 ];
 
 const TIMEFRAMES = [
