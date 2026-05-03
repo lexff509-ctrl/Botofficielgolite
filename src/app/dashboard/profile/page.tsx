@@ -57,6 +57,7 @@ export default function ProfilePage() {
   const [user, setUser] = useState<Record<string, unknown> | null>(null);
   const [form, setForm] = useState({
     username: "",
+    pocketOptionUid: "",
     pocketOptionSsid: "",
     tradeMode: "DEMO",
     demoTradeAmount: "1",
@@ -87,6 +88,7 @@ export default function ProfilePage() {
           setUser(data.user);
           setForm({
             username: data.user.username || "",
+            pocketOptionUid: data.user.pocketOptionUid || "",
             pocketOptionSsid: "",
             tradeMode: data.user.tradeMode || "DEMO",
             demoTradeAmount: data.user.demoTradeAmount || "1",
@@ -109,6 +111,7 @@ export default function ProfilePage() {
     try {
       const payload: Record<string, unknown> = {
         username: form.username,
+        pocketOptionUid: form.pocketOptionUid,
         tradeMode: form.tradeMode,
         demoTradeAmount: form.demoTradeAmount,
         liveTradeAmount: form.liveTradeAmount,
@@ -216,6 +219,23 @@ export default function ProfilePage() {
               <div>
                 <label className="block text-slate-400 text-xs mb-1.5">Nom d&apos;utilisateur</label>
                 <input type="text" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors" />
+              </div>
+            </div>
+          </div>
+
+          <div className="glass-card rounded-xl p-5">
+            <div className="text-slate-400 text-xs font-medium mb-4">IDENTIFIANTS POCKETOPTION</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-slate-400 text-xs mb-1.5">UID PocketOption</label>
+                <input
+                  type="text"
+                  value={form.pocketOptionUid}
+                  onChange={(e) => setForm({ ...form, pocketOptionUid: e.target.value })}
+                  placeholder="Ex: 12345678"
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-colors"
+                />
+                <p className="text-xs text-slate-500 mt-1">Votre ID utilisateur Pocket Option</p>
               </div>
             </div>
           </div>

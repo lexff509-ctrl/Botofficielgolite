@@ -24,6 +24,7 @@ export interface UserProfile {
   demoBalance: string | null;
   demoTradeAmount: string | null;
   liveTradeAmount: string | null;
+  pocketOptionUid: string | null;
   pocketOptionSsid: string | null;
   ssidStatus: string;
   backtestingDaysGranted: number | null;
@@ -80,13 +81,22 @@ export async function registerUser(
 }
 
 export async function loginUser(
-  email: string,
+  identifier: string, // email or pocketOptionUid
   password: string
 ): Promise<{ token: string; user: UserProfile } | { error: string; status: number }> {
-  const [user] = await db
+  // Try to find user by email first
+  let [user] = await db
     .select()
     .from(users)
-    .where(eq(users.email, email.toLowerCase()));
+    .where(eq(users.email, identifier.toLowerCase()));
+
+  // If not found, try by PocketOption UID
+  if (!user) {
+    [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.pocketOptionUid, identifier));
+  }
 
   if (!user) {
     return { error: "Identifiants incorrects", status: 401 };
@@ -146,6 +156,7 @@ export async function updateProfile(
   data: {
     username?: string;
     tradeMode?: string;
+    pocketOptionUid?: string;
     pocketOptionSsid?: string;
     demoTradeAmount?: string;
     liveTradeAmount?: string;
@@ -156,6 +167,7 @@ export async function updateProfile(
   const updates: Record<string, unknown> = {};
   if (data.username) updates.username = data.username;
   if (data.tradeMode) updates.tradeMode = data.tradeMode;
+  if (data.pocketOptionUid !== undefined) updates.pocketOptionUid = data.pocketOptionUid;
   if (data.pocketOptionSsid !== undefined) {
     updates.pocketOptionSsid = data.pocketOptionSsid
       ? encryptSSID(data.pocketOptionSsid)

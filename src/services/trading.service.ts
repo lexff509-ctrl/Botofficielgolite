@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { signals, trades, users } from "@/db/schema";
+import { signals, trades, users, platformSettings } from "@/db/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import {
   generateSignal,
@@ -9,10 +9,18 @@ import {
 } from "@/lib/trading";
 import { candleCache } from "@/lib/candle-cache";
 import { getDecryptedSSID } from "@/services/auth.service";
+import { encryptSSID, decryptSSID } from "@/lib/auth";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
+import { preFetchCookies, getBestHost } from "@/lib/pocketoption/connection";
 
-// Active PocketOption connections per user
+// Active PocketOption connections per user (personal SSID)
 const activeConnections = new Map<number, PocketOptionClient>();
+
+// Shared PocketOption client for global SSID (admin-provided)
+let sharedClient: PocketOptionClient | null = null;
+let sharedSsid: string | null = null;
+const sharedClientUsers = new Set<number>();
+let tradeMutex: Promise<void> = Promise.resolve();
 
 // ============ SIGNALS ============
 
@@ -102,7 +110,7 @@ export async function generateAndSaveSignal(
   );
 
   if (!signal) {
-    return { signal: null, saved: null, error: "Pas de signal détecté avec les données actuelles" };
+    return { signal: null, saved: null, error: "Pas assez de données pour générer un signal" };
   }
 
   const [savedSignal] = await db
@@ -123,7 +131,7 @@ export async function generateAndSaveSignal(
         lower: signal.indicators.bollingerLower,
       },
       stochastic: signal.indicators.stochastic.toFixed(4),
-      // New strategy indicators
+      // Strategy indicators
       ema20: signal.indicators.ema20.toFixed(8),
       ema50: signal.indicators.ema50.toFixed(8),
       stochK: signal.indicators.stochK.toFixed(4),
@@ -132,6 +140,18 @@ export async function generateAndSaveSignal(
       highFractal: signal.indicators.highFractal,
       dojiFiltered: signal.indicators.dojiRejected,
       multiTimeframeConfirmation: signal.multiTimeframeConfirmation,
+      // Scoring system indicators
+      supportLevel: signal.indicators.supportLevel?.toFixed(8) || null,
+      resistanceLevel: signal.indicators.resistanceLevel?.toFixed(8) || null,
+      nearSupport: signal.indicators.nearSupport,
+      nearResistance: signal.indicators.nearResistance,
+      marketStructure: signal.indicators.marketStructure,
+      structureBreak: signal.indicators.structureBreak,
+      signalScore: signal.indicators.signalScore?.toFixed(4) || null,
+      bollingerPercentB: signal.indicators.bollingerPercentB?.toFixed(4) || null,
+      bollingerWidth: signal.indicators.bollingerWidth?.toFixed(6) || null,
+      indicatorScores: signal.indicators.indicatorScores || null,
+      diagnostic: signal.diagnostic,
       isActive: true,
     })
     .returning();
@@ -202,18 +222,29 @@ export async function executeTrade(
   let tradeId = "";
 
   // Try to execute via PocketOption WebSocket (both DEMO and LIVE)
-  const client = activeConnections.get(userId);
+  const client = getPocketOptionClient(userId);
   if (client && client.isConnected) {
     try {
-      const tradeResult = await client.placeTrade({
-        asset: params.asset,
-        direction: params.direction,
-        amount: params.amount,
-        duration: parseTimeframe(params.timeframe),
-      });
-      result = tradeResult.win ? "WIN" : "LOSS";
-      profit = tradeResult.profit;
-      tradeId = tradeResult.tradeId;
+      // Use mutex for shared client to prevent race conditions
+      let releaseMutex: () => void;
+      const mutexPromise = new Promise<void>((resolve) => { releaseMutex = resolve; });
+      const prevMutex = tradeMutex;
+      tradeMutex = tradeMutex.then(() => mutexPromise);
+
+      await prevMutex;
+      try {
+        const tradeResult = await client.placeTrade({
+          asset: params.asset,
+          direction: params.direction,
+          amount: params.amount,
+          duration: parseTimeframe(params.timeframe),
+        });
+        result = tradeResult.win ? "WIN" : "LOSS";
+        profit = tradeResult.profit;
+        tradeId = tradeResult.tradeId;
+      } finally {
+        releaseMutex!();
+      }
     } catch (err) {
       console.error("[Trade] PO execution failed:", err);
       // Fallback to simulation only for DEMO mode
@@ -295,7 +326,12 @@ export async function getTradeStats(userId: number) {
 // ============ POCKETOPTION CONNECTION ============
 
 export function getPocketOptionClient(userId: number): PocketOptionClient | undefined {
-  return activeConnections.get(userId);
+  // Check personal connection first
+  const personal = activeConnections.get(userId);
+  if (personal) return personal;
+  // Fall back to shared client if user is in the shared set
+  if (sharedClientUsers.has(userId) && sharedClient) return sharedClient;
+  return undefined;
 }
 
 export async function updateSsidStatus(
@@ -327,7 +363,12 @@ export async function connectPocketOption(
     try { existing.disconnect(); } catch {}
   }
 
-  const client = new PocketOptionClient(ssid);
+  // Pre-fetch cookies from PocketOption site for anti-detection
+  const host = isDemo ? "demo-api-eu.po.market" : "api-eu.po.market";
+  console.log(`[Trading] Pre-fetching cookies from ${host}...`);
+  const { cookies } = await preFetchCookies(host);
+
+  const client = new PocketOptionClient(ssid, cookies);
 
   // Register SSID expiration callback BEFORE connecting
   client.onSsidExpired(() => {
@@ -370,11 +411,190 @@ export function disconnectPocketOption(userId: number): void {
   if (client) {
     try { client.disconnect(); } catch {}
     activeConnections.delete(userId);
-    // Clear candle cache if no more active connections
-    if (activeConnections.size === 0) {
-      candleCache.clear();
-    }
   }
+  // Also check shared client
+  disconnectSharedPocketOption(userId);
+  // Clear candle cache if no more active connections
+  if (activeConnections.size === 0 && !sharedClient) {
+    candleCache.clear();
+  }
+}
+
+// ============ SHARED (GLOBAL) POCKETOPTION CLIENT ============
+
+export async function connectSharedPocketOption(
+  userId: number,
+  ssid: string,
+  isDemo: boolean = true
+): Promise<{ success: boolean; error?: string; ssidExpired?: boolean }> {
+  // If shared client exists with the same SSID and is connected, reuse it
+  if (sharedClient && sharedSsid === ssid && sharedClient.isConnected) {
+    sharedClientUsers.add(userId);
+    console.log(`[Trading] User ${userId} joined shared PO connection (${sharedClientUsers.size} users)`);
+    await updateSsidStatus(userId, "VALID");
+    return { success: true };
+  }
+
+  // If shared client exists but with different SSID or disconnected, disconnect it
+  if (sharedClient) {
+    try { sharedClient.disconnect(); } catch {}
+    sharedClient = null;
+    sharedSsid = null;
+  }
+
+  // Auto-discover best reachable host and pre-fetch cookies for shared client
+  const host = await getBestHost(isDemo);
+  console.log(`[Trading] Using host for shared client: ${host} (demo=${isDemo})`);
+  const { cookies } = await preFetchCookies(host);
+
+  const client = new PocketOptionClient(ssid, cookies);
+
+  // Register SSID expiration callback
+  client.onSsidExpired(() => {
+    console.log(`[Trading] Shared SSID expired, pausing all ${sharedClientUsers.size} users`);
+    const { getBotRunner } = require("@/services/bot-runner");
+    for (const uid of sharedClientUsers) {
+      updateSsidStatus(uid, "EXPIRED").catch(() => {});
+      const runner = getBotRunner(uid);
+      if (runner) runner.pause("SSID_EXPIRED");
+    }
+    db.update(platformSettings)
+      .set({ value: "EXPIRED", updatedAt: new Date() })
+      .where(eq(platformSettings.key, "global_ssid_status"))
+      .catch(() => {});
+    sharedClient = null;
+    sharedSsid = null;
+    sharedClientUsers.clear();
+  });
+
+  try {
+    await client.connect(isDemo);
+    sharedClient = client;
+    sharedSsid = ssid;
+    sharedClientUsers.add(userId);
+    candleCache.setClient(client);
+    await updateSsidStatus(userId, "VALID");
+    // Update global status
+    await db.update(platformSettings)
+      .set({ value: "VALID", updatedAt: new Date() })
+      .where(eq(platformSettings.key, "global_ssid_status"));
+    console.log(`[Trading] Shared PO connection established by user ${userId}`);
+    return { success: true };
+  } catch (err) {
+    if (client.isSsidExpired) {
+      await updateSsidStatus(userId, "EXPIRED");
+      await db.update(platformSettings)
+        .set({ value: "EXPIRED", updatedAt: new Date() })
+        .where(eq(platformSettings.key, "global_ssid_status"));
+      return {
+        success: false,
+        error: "SSID global expiré. L'admin doit mettre à jour le SSID.",
+        ssidExpired: true,
+      };
+    }
+    await updateSsidStatus(userId, "UNKNOWN");
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Échec de connexion partagée à PocketOption",
+    };
+  }
+}
+
+export function disconnectSharedPocketOption(userId: number): void {
+  if (!sharedClientUsers.has(userId)) return;
+  sharedClientUsers.delete(userId);
+  console.log(`[Trading] User ${userId} left shared PO connection (${sharedClientUsers.size} users remaining)`);
+
+  // If no more users on shared client, disconnect it
+  if (sharedClientUsers.size === 0 && sharedClient) {
+    try { sharedClient.disconnect(); } catch {}
+    sharedClient = null;
+    sharedSsid = null;
+  }
+}
+
+export function isSharedClientConnected(): boolean {
+  return sharedClient !== null && sharedClient.isConnected;
+}
+
+export function getSharedClientUserCount(): number {
+  return sharedClientUsers.size;
+}
+
+export function isUserOnSharedClient(userId: number): boolean {
+  return sharedClientUsers.has(userId);
+}
+
+// Get the decrypted global SSID from platform_settings
+export async function getGlobalSsid(): Promise<string> {
+  const [row] = await db
+    .select({ value: platformSettings.value })
+    .from(platformSettings)
+    .where(eq(platformSettings.key, "global_ssid"));
+  if (!row) return "";
+  return decryptSSID(row.value);
+}
+
+// Get the global SSID status from platform_settings
+export async function getGlobalSsidStatus(): Promise<string> {
+  const [row] = await db
+    .select({ value: platformSettings.value })
+    .from(platformSettings)
+    .where(eq(platformSettings.key, "global_ssid_status"));
+  return row?.value || "NOT_SET";
+}
+
+// Set the global SSID in platform_settings (encrypted)
+export async function setGlobalSsid(ssid: string): Promise<void> {
+  const encrypted = encryptSSID(ssid);
+  const existing = await db
+    .select()
+    .from(platformSettings)
+    .where(eq(platformSettings.key, "global_ssid"));
+  if (existing.length > 0) {
+    await db
+      .update(platformSettings)
+      .set({ value: encrypted, updatedAt: new Date() })
+      .where(eq(platformSettings.key, "global_ssid"));
+  } else {
+    await db.insert(platformSettings).values({ key: "global_ssid", value: encrypted });
+  }
+  // Upsert status
+  const statusExisting = await db
+    .select()
+    .from(platformSettings)
+    .where(eq(platformSettings.key, "global_ssid_status"));
+  if (statusExisting.length > 0) {
+    await db
+      .update(platformSettings)
+      .set({ value: "UNKNOWN", updatedAt: new Date() })
+      .where(eq(platformSettings.key, "global_ssid_status"));
+  } else {
+    await db.insert(platformSettings).values({ key: "global_ssid_status", value: "UNKNOWN" });
+  }
+}
+
+// Clear the global SSID
+export async function clearGlobalSsid(): Promise<void> {
+  await db.delete(platformSettings).where(eq(platformSettings.key, "global_ssid"));
+  await db.delete(platformSettings).where(eq(platformSettings.key, "global_ssid_status"));
+  if (sharedClient) {
+    try { sharedClient.disconnect(); } catch {}
+    sharedClient = null;
+    sharedSsid = null;
+    sharedClientUsers.clear();
+  }
+}
+
+// Get default payout rate from platform_settings
+export async function getDefaultPayoutRate(): Promise<number> {
+  const [row] = await db
+    .select({ value: platformSettings.value })
+    .from(platformSettings)
+    .where(eq(platformSettings.key, "default_payout_rate"));
+  if (!row) return 0.92;
+  const rate = parseFloat(row.value);
+  return isNaN(rate) ? 0.92 : rate;
 }
 
 // ============ HELPERS ============

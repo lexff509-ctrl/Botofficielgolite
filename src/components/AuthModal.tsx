@@ -15,6 +15,7 @@ export default function AuthModal({ defaultTab, onClose }: Props) {
   const router = useRouter();
 
   const [form, setForm] = useState({
+    identifier: "", // can be email or UID
     email: "",
     password: "",
     username: "",
@@ -29,8 +30,8 @@ export default function AuthModal({ defaultTab, onClose }: Props) {
       const url = tab === "login" ? "/api/auth/login" : "/api/auth/register";
       const body =
         tab === "login"
-          ? { email: form.email, password: form.password }
-          : form;
+          ? { identifier: form.identifier, password: form.password }
+          : { email: form.email, password: form.password, username: form.username };
 
       const res = await fetch(url, {
         method: "POST",
@@ -133,19 +134,35 @@ export default function AuthModal({ defaultTab, onClose }: Props) {
             </div>
           )}
 
-          <div>
-            <label className="block text-slate-400 text-xs mb-1.5 font-medium">
-              Email
-            </label>
-            <input
-              type="email"
-              required
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm"
-              placeholder="votre@email.com"
-            />
-          </div>
+          {tab === "login" ? (
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5 font-medium uppercase tracking-widest">
+                Identifiant (Email ou UID PO)
+              </label>
+              <input
+                type="text"
+                required
+                value={form.identifier}
+                onChange={(e) => setForm({ ...form, identifier: e.target.value })}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-all text-sm"
+                placeholder="votre@email.com ou 1234567"
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5 font-medium uppercase tracking-widest">
+                Email
+              </label>
+              <input
+                type="email"
+                required
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition-all text-sm"
+                placeholder="votre@email.com"
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-slate-400 text-xs mb-1.5 font-medium">

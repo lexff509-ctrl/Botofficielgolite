@@ -25,6 +25,7 @@ interface Signal {
   macd: string;
   stochastic: string;
   multiTimeframeConfirmation: Record<string, string>;
+  diagnostic: string;
   createdAt: string;
 }
 
@@ -35,8 +36,8 @@ export default function SignalsPage() {
   const [asset, setAsset] = useState("EUR/USD");
   const [timeframe, setTimeframe] = useState("1m");
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high">("all");
-  const [lastSignal, setLastSignal] = useState<{direction: string; asset: string; confidence: string} | null>(null);
+  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high" | "elite">("all");
+  const [lastSignal, setLastSignal] = useState<{direction: string; asset: string; confidence: string; diagnostic: string} | null>(null);
   const [signalError, setSignalError] = useState("");
 
   const fetchSignals = useCallback(async () => {
@@ -64,6 +65,7 @@ export default function SignalsPage() {
           direction: data.signal.direction,
           asset: data.signal.asset,
           confidence: data.signal.confidence,
+          diagnostic: data.signal.diagnostic,
         });
         fetchSignals();
       } else if (data.error) {
@@ -86,40 +88,46 @@ export default function SignalsPage() {
   }, [autoRefresh, asset, timeframe]);
 
   const filteredSignals =
-    confidenceFilter === "high"
+    confidenceFilter === "elite"
+      ? signals.filter((s) => parseFloat(s.confidence) >= 89)
+      : confidenceFilter === "high"
       ? signals.filter((s) => parseFloat(s.confidence) >= 80)
       : signals;
 
   return (
     <DashboardLayout>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-8">
         {signalError && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-amber-400 text-sm">
-            {signalError}
-            {signalError.includes("connect") && (
-              <span className="block mt-1 text-amber-400/70 text-xs">Lancez le bot d'abord pour etablir la connexion PocketOption, ou attendez que les donnees s'accumulent.</span>
-            )}
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 text-amber-400 text-sm flex items-center gap-3">
+            <span className="text-xl">⚠️</span>
+            <div>
+              <div className="font-bold">{signalError}</div>
+              {signalError.includes("connect") && (
+                <div className="text-amber-400/70 text-xs mt-0.5">Lancez le bot d'abord pour établir la connexion PocketOption, ou attendez que les données s'accumulent.</div>
+              )}
+            </div>
           </div>
         )}
-        <div className="flex items-center justify-between">
+
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black text-white">
-              Signaux <span className="gradient-text">Trading</span>
+            <h1 className="text-3xl font-black text-white tracking-tighter">
+              Système de <span className="gradient-text">Signaux Élite</span>
             </h1>
-            <p className="text-slate-400 text-sm mt-1">
-              Signaux CALL/PUT generes par analyse technique multi-timeframe
+            <p className="text-slate-500 text-sm mt-1 font-medium uppercase tracking-wider">
+              Analyse Multi-Timeframe • Confiance 89-200%
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-400">Auto</span>
+          <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-2xl p-2 px-4">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Auto-Refresh</span>
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`relative w-12 h-6 rounded-full transition-colors ${
-                autoRefresh ? "bg-cyan-500" : "bg-slate-700"
+              className={`relative w-12 h-6 rounded-full transition-all duration-300 ${
+                autoRefresh ? "bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]" : "bg-slate-700"
               }`}
             >
               <span
-                className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 ${
                   autoRefresh ? "translate-x-7" : "translate-x-1"
                 }`}
               />
@@ -127,33 +135,33 @@ export default function SignalsPage() {
           </div>
         </div>
 
-        <div className="glass-card rounded-xl p-5">
-          <div className="flex flex-wrap items-end gap-4">
-            <div>
-              <label className="block text-slate-400 text-xs mb-1.5">Paire</label>
+        <div className="glass-card rounded-2xl p-6 border-white/5">
+          <div className="flex flex-wrap items-end gap-6">
+            <div className="flex-1 min-w-[200px]">
+              <label className="block text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2">Actif Financier</label>
               <select
                 value={asset}
                 onChange={(e) => setAsset(e.target.value)}
-                className="bg-[#0a0f1e] border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-cyan-500"
+                className="w-full bg-[#0a0f1e] border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-all font-bold"
               >
-                <optgroup label="Marche Regulier" className="bg-slate-900">
+                <optgroup label="Marché Régulier" className="bg-slate-900">
                   {REGULAR_ASSETS.map((a) => (
-                    <option key={a} value={a} className="bg-slate-900">{a}</option>
+                    <option key={a} value={a}>{a}</option>
                   ))}
                 </optgroup>
-                <optgroup label="Marche OTC" className="bg-slate-900">
+                <optgroup label="Marché OTC" className="bg-slate-900">
                   {OTC_ASSETS.map((a) => (
-                    <option key={a} value={a} className="bg-slate-900">{a}</option>
+                    <option key={a} value={a}>{a}</option>
                   ))}
                 </optgroup>
               </select>
             </div>
-            <div>
-              <label className="block text-slate-400 text-xs mb-1.5">Timeframe</label>
+            <div className="w-32">
+              <label className="block text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2">Timeframe</label>
               <select
                 value={timeframe}
                 onChange={(e) => setTimeframe(e.target.value)}
-                className="bg-[#0a0f1e] border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-cyan-500"
+                className="w-full bg-[#0a0f1e] border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-500 transition-all font-bold"
               >
                 {TIMEFRAMES.map((tf) => (
                   <option key={tf} value={tf}>{tf}</option>
@@ -161,172 +169,178 @@ export default function SignalsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-slate-400 text-xs mb-1.5">Confiance</label>
-              <div className="flex gap-1">
-                <button
-                  onClick={() => setConfidenceFilter("all")}
-                  className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all border ${
-                    confidenceFilter === "all"
-                      ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
-                      : "border-slate-700 text-slate-400 hover:border-slate-600"
-                  }`}
-                >
-                  Tous
-                </button>
-                <button
-                  onClick={() => setConfidenceFilter("high")}
-                  className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all border ${
-                    confidenceFilter === "high"
-                      ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
-                      : "border-slate-700 text-slate-400 hover:border-slate-600"
-                  }`}
-                >
-                  80%+
-                </button>
+              <label className="block text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2">Filtre Confiance</label>
+              <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+                {[
+                  { id: "all", label: "Tous", color: "text-slate-400" },
+                  { id: "high", label: "80%+", color: "text-amber-400" },
+                  { id: "elite", label: "Élite", color: "text-cyan-400" },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setConfidenceFilter(f.id as any)}
+                    className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-tighter transition-all ${
+                      confidenceFilter === f.id
+                        ? "bg-white/10 text-white shadow-lg"
+                        : f.color + " hover:text-white"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
               </div>
             </div>
             <button
               onClick={generateSignal}
               disabled={generating}
-              className="bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 disabled:opacity-50 text-white font-bold px-6 py-2.5 rounded-xl transition-all text-sm"
+              className="bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 disabled:opacity-50 text-white font-black px-8 py-3 rounded-xl transition-all shadow-lg shadow-cyan-500/20 active:scale-95"
             >
-              {generating ? "Analyse en cours..." : "Analyser"}
+              {generating ? "ANALYSE..." : "GÉNÉRER SIGNAL"}
             </button>
           </div>
         </div>
 
         {lastSignal && (
           <div
-            className={`rounded-xl p-5 border-2 text-center animate-slide-up ${
+            className={`glass-card rounded-2xl p-8 border-2 text-center relative overflow-hidden group transition-all duration-500 ${
               lastSignal.direction === "CALL"
-                ? "bg-emerald-500/10 border-emerald-500/50"
-                : "bg-red-500/10 border-red-500/50"
+                ? "border-emerald-500/30 bg-emerald-500/5"
+                : "border-red-500/30 bg-red-500/5"
             }`}
           >
-            <div className="text-4xl font-black mb-2">
-              {lastSignal.direction === "CALL" ? "CALL" : "PUT"}
+            <div className="relative z-10">
+              <div className={`text-6xl font-black mb-4 tracking-tighter ${
+                lastSignal.direction === "CALL" ? "text-emerald-400" : "text-red-400"
+              }`}>
+                {lastSignal.direction === "CALL" ? "CALL ↑" : "PUT ↓"}
+              </div>
+              <div className="text-2xl font-black text-white mb-2">{lastSignal.asset}</div>
+              <div className="flex items-center justify-center gap-4">
+                <div className="bg-white/5 px-4 py-2 rounded-xl border border-white/10">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Confiance</span>
+                  <span className="text-xl font-black text-cyan-400">{parseFloat(lastSignal.confidence).toFixed(1)}%</span>
+                </div>
+                <div className="bg-white/5 px-4 py-2 rounded-xl border border-white/10">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Diagnostic</span>
+                  <span className="text-sm font-black text-white">{lastSignal.diagnostic || "Analyse Standard"}</span>
+                </div>
+              </div>
             </div>
-            <div className="text-xl font-bold text-white">{lastSignal.asset}</div>
-            <div className="text-slate-400 mt-1">
-              Confiance: <span className="text-cyan-400 font-bold">{parseFloat(lastSignal.confidence).toFixed(1)}%</span>
+            <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[120px] font-black opacity-[0.03] pointer-events-none select-none ${
+               lastSignal.direction === "CALL" ? "text-emerald-500" : "text-red-500"
+            }`}>
+              {lastSignal.direction}
             </div>
           </div>
         )}
 
-        <div className="glass-card rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="glass-card rounded-2xl overflow-hidden border-white/5">
+          <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/5">
             <div className="flex items-center gap-3">
-              <div className="font-semibold text-white">Historique des Signaux</div>
-              {confidenceFilter === "high" && (
-                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                  80%+ seulement
-                </span>
-              )}
+              <div className="font-black text-white tracking-tight">HISTORIQUE DES SIGNAUX</div>
+              <div className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-pulse" />
             </div>
             <button
               onClick={fetchSignals}
               disabled={loading}
-              className="text-cyan-400 hover:text-cyan-300 text-sm transition-colors"
+              className="text-[10px] font-black text-cyan-400 uppercase tracking-widest hover:text-cyan-300 transition-colors bg-cyan-500/10 px-4 py-2 rounded-lg border border-cyan-500/20"
             >
-              {loading ? "Chargement..." : "Actualiser"}
+              {loading ? "CHARGEMENT..." : "ACTUALISER"}
             </button>
           </div>
 
           {filteredSignals.length === 0 ? (
-            <div className="p-12 text-center text-slate-500">
-              <div className="text-4xl mb-3">📡</div>
-              <div>
-                {confidenceFilter === "high"
-                  ? "Aucun signal avec 80%+ de confiance"
-                  : "Aucun signal pour le moment"}
-              </div>
-              <div className="text-sm mt-1">Cliquez sur "Analyser" pour generer votre premier signal</div>
+            <div className="p-20 text-center text-slate-600">
+              <div className="text-6xl mb-4 opacity-20">📡</div>
+              <div className="text-sm font-black uppercase tracking-widest">Aucun signal détecté</div>
+              <p className="text-xs text-slate-500 mt-2">Affinez vos filtres ou lancez une nouvelle analyse.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-slate-800">
-                    <th className="text-left text-xs text-slate-400 px-4 py-3 font-medium">Paire</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3 font-medium">Signal</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3 font-medium">TF</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3 font-medium">Confiance</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3 font-medium">RSI</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3 font-medium">Multi-TF</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3 font-medium">Heure</th>
+                  <tr className="bg-white/5 border-b border-white/5">
+                    <th className="text-left text-[10px] text-slate-500 px-6 py-4 font-black uppercase tracking-widest">Actif</th>
+                    <th className="text-left text-[10px] text-slate-500 px-6 py-4 font-black uppercase tracking-widest">Direction</th>
+                    <th className="text-left text-[10px] text-slate-500 px-6 py-4 font-black uppercase tracking-widest">TF</th>
+                    <th className="text-left text-[10px] text-slate-500 px-6 py-4 font-black uppercase tracking-widest">Confiance</th>
+                    <th className="text-left text-[10px] text-slate-500 px-6 py-4 font-black uppercase tracking-widest">Diagnostic</th>
+                    <th className="text-left text-[10px] text-slate-500 px-6 py-4 font-black uppercase tracking-widest">Multi-TF</th>
+                    <th className="text-left text-[10px] text-slate-500 px-6 py-4 font-black uppercase tracking-widest">Temps</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-white/5">
                   {filteredSignals.map((sig) => {
                     const mtf = sig.multiTimeframeConfirmation || {};
                     const tfs = Object.keys(mtf);
-                    const confirms = tfs.filter((tf) => mtf[tf] === sig.direction).length;
                     const confValue = parseFloat(sig.confidence);
-                    const isHighConf = confValue >= 80;
+                    const isElite = confValue >= 89;
+                    const isHigh = confValue >= 80;
                     return (
-                      <tr key={sig.id} className="border-b border-slate-800/50 hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-3 text-sm font-semibold text-white">
-                          {sig.asset}
-                          {sig.asset.includes("(OTC)") && (
-                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/30">
-                              OTC
-                            </span>
-                          )}
+                      <tr key={sig.id} className="hover:bg-white/5 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="font-black text-white text-sm flex items-center gap-2">
+                            {sig.asset}
+                            {sig.asset.includes("(OTC)") && (
+                              <span className="text-[9px] font-black bg-orange-500/10 text-orange-400 border border-orange-500/20 px-1.5 py-0.5 rounded uppercase">OTC</span>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-6 py-4">
                           <span
-                            className={`px-3 py-1 rounded-full text-xs font-bold ${
+                            className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
                               sig.direction === "CALL"
-                                ? "badge-call"
-                                : "badge-put"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                : "bg-red-500/10 text-red-400 border-red-500/20"
                             }`}
                           >
-                            {sig.direction === "CALL" ? "CALL" : "PUT"}
+                            {sig.direction}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-sm text-slate-300 font-mono">{sig.timeframe}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-16 bg-slate-700 rounded-full overflow-hidden">
+                        <td className="px-6 py-4 text-xs text-slate-400 font-black">{sig.timeframe}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="h-1.5 w-16 bg-white/5 rounded-full overflow-hidden border border-white/5">
                               <div
-                                className={`h-full rounded-full ${
-                                  isHighConf
-                                    ? "bg-gradient-to-r from-amber-500 to-orange-500"
-                                    : "bg-gradient-to-r from-cyan-500 to-violet-600"
+                                className={`h-full rounded-full transition-all duration-1000 ${
+                                  isElite ? "bg-gradient-to-r from-cyan-400 to-blue-600 shadow-[0_0_10px_rgba(6,182,212,0.5)]" :
+                                  isHigh ? "bg-gradient-to-r from-amber-400 to-orange-600" :
+                                  "bg-slate-500"
                                 }`}
-                                style={{ width: `${confValue}%` }}
+                                style={{ width: `${Math.min(100, confValue)}%` }}
                               />
                             </div>
-                            <span className={`text-xs font-bold ${
-                              isHighConf ? "text-amber-400" : "text-cyan-400"
+                            <span className={`text-xs font-black ${
+                              isElite ? "text-cyan-400" : isHigh ? "text-amber-400" : "text-slate-400"
                             }`}>
                               {confValue.toFixed(1)}%
                             </span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-sm text-slate-300 font-mono">
-                          {sig.rsi ? parseFloat(sig.rsi).toFixed(2) : "—"}
+                        <td className="px-6 py-4">
+                           <div className="text-[10px] font-bold text-slate-300 max-w-[150px] truncate" title={sig.diagnostic}>
+                             {sig.diagnostic || "Standard"}
+                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex gap-0.5">
+                        <td className="px-6 py-4">
+                          <div className="flex gap-1">
                             {TIMEFRAMES.map((tf) => (
                               <div
                                 key={tf}
-                                className={`w-2 h-2 rounded-sm ${
+                                className={`w-1.5 h-3 rounded-full transition-all ${
                                   mtf[tf] === sig.direction
-                                    ? "bg-emerald-500"
+                                    ? "bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.5)]"
                                     : mtf[tf] === "NEUTRAL"
-                                    ? "bg-slate-600"
+                                    ? "bg-white/10"
                                     : "bg-red-500"
                                 }`}
                                 title={`${tf}: ${mtf[tf] || "?"}`}
                               />
                             ))}
                           </div>
-                          <div className="text-xs text-slate-500 mt-0.5">{confirms}/{tfs.length}</div>
                         </td>
-                        <td className="px-4 py-3 text-xs text-slate-400">
-                          {new Date(sig.createdAt).toLocaleTimeString("fr-FR")}
+                        <td className="px-6 py-4 text-[10px] text-slate-500 font-bold uppercase">
+                          {new Date(sig.createdAt).toLocaleTimeString("fr-FR", { hour: '2-digit', minute: '2-digit' })}
                         </td>
                       </tr>
                     );

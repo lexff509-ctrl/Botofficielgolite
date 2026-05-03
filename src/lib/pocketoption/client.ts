@@ -18,6 +18,16 @@
 
 import WebSocket from "ws";
 import https from "https";
+import {
+  WS_HEADERS as CONN_WS_HEADERS,
+  HTTP_HEADERS as CONN_HTTP_HEADERS,
+  preFetchCookies,
+  getReconnectDelay,
+  getTradeJitter,
+  getBestHost,
+  discoverReachableHosts,
+  PO_REGIONS,
+} from "./connection";
 
 // ============ Types ============
 
@@ -54,16 +64,10 @@ interface TradeResult {
 
 // ============ Constants ============
 
-const HOSTS = {
+// Legacy - kept for reference, but actual hosts are now auto-discovered
+const LEGACY_HOSTS = {
   demo: "demo-api-eu.po.market",
   real: "api-eu.po.market",
-};
-
-const WS_HEADERS = {
-  Origin: "https://pocketoption.com",
-  "Cache-Control": "no-cache",
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 };
 
 // ============ Client ============
@@ -129,9 +133,14 @@ export class PocketOptionClient {
 
   // SSID expiration tracking
   private ssidExpired = false;
+  // Pre-fetched cookies for anti-detection
+  private prefetchedCookies: string[] = [];
+  // Tick counter for throttled logging
+  private tickCount = 0;
 
-  constructor(ssid: string) {
+  constructor(ssid: string, cookies?: string[]) {
     this.ssid = ssid;
+    if (cookies) this.prefetchedCookies = cookies;
   }
 
   get isConnected(): boolean {
@@ -173,26 +182,75 @@ export class PocketOptionClient {
     this.ssidExpired = false;
     this.isUpgradeConnection = false;
 
-    const host = this.isDemo ? HOSTS.demo : HOSTS.real;
+    // Auto-discover reachable hosts
+    let reachableHosts = await discoverReachableHosts(this.isDemo);
 
-    // Strategy 1: Direct WebSocket (like the Python reference client)
-    try {
-      await this.connectDirect(host);
-      return;
-    } catch (directErr) {
-      const errMsg = directErr instanceof Error ? directErr.message : String(directErr);
-      console.log(`[PO] Direct WebSocket failed: ${errMsg}`);
-      console.log("[PO] Trying Engine.IO v4 HTTP polling upgrade...");
+    if (reachableHosts.length === 0) {
+      // Fallback to legacy host if discovery fails
+      const fallback = this.isDemo ? LEGACY_HOSTS.demo : LEGACY_HOSTS.real;
+      console.log(`[PO] No reachable hosts discovered, trying fallback: ${fallback}`);
+      reachableHosts = [fallback];
     }
 
-    // Strategy 2: Full Engine.IO v4 polling → WebSocket upgrade
-    try {
-      await this.connectWithUpgrade(host);
-      return;
-    } catch (upgradeErr) {
-      const errMsg = upgradeErr instanceof Error ? upgradeErr.message : String(upgradeErr);
-      throw new Error(`Failed to connect: direct WS and upgrade both failed. Last: ${errMsg}`);
+    // Try each reachable host with both strategies
+    // NotAuthorized from a non-matching host (e.g., live host for demo SSID) is NOT
+    // a true expiration - it just means wrong server. Only treat as expired if
+    // we get NotAuthorized from a host that matches the SSID type.
+    let gotNotAuthorizedOnMatchingHost = false;
+
+    for (const host of reachableHosts) {
+      console.log(`[PO] Trying host: ${host}`);
+      // Reset ssidExpired for each host attempt - it may have been set
+      // by a non-matching host (e.g., live server rejecting demo SSID)
+      this.ssidExpired = false;
+
+      // Strategy 1: Direct WebSocket (like the Python reference client)
+      try {
+        await this.connectDirect(host);
+        return; // Success!
+      } catch (directErr) {
+        const errMsg = directErr instanceof Error ? directErr.message : String(directErr);
+        console.log(`[PO] Direct WebSocket failed on ${host}: ${errMsg}`);
+
+        if (this.ssidExpired) {
+          // Check if this host matches the SSID type (demo/demo or live/live)
+          const isDemoHost = host.includes("demo") || host.includes("try-demo");
+          if (isDemoHost === this.isDemo) {
+            // NotAuthorized on matching host = truly expired
+            gotNotAuthorizedOnMatchingHost = true;
+            break;
+          }
+          // NotAuthorized on non-matching host = wrong server, skip it
+          console.log(`[PO] NotAuthorized on non-matching host ${host} (demo=${isDemoHost}, ssid demo=${this.isDemo}), trying next host...`);
+          this.ssidExpired = false;
+        }
+      }
+
+      // Strategy 2: Full Engine.IO v4 polling → WebSocket upgrade
+      try {
+        await this.connectWithUpgrade(host);
+        return; // Success!
+      } catch (upgradeErr) {
+        const errMsg = upgradeErr instanceof Error ? upgradeErr.message : String(upgradeErr);
+        console.log(`[PO] Upgrade failed on ${host}: ${errMsg}`);
+
+        if (this.ssidExpired) {
+          const isDemoHost = host.includes("demo") || host.includes("try-demo");
+          if (isDemoHost === this.isDemo) {
+            gotNotAuthorizedOnMatchingHost = true;
+            break;
+          }
+          console.log(`[PO] NotAuthorized on non-matching host ${host}, trying next host...`);
+          this.ssidExpired = false;
+        }
+      }
     }
+
+    if (gotNotAuthorizedOnMatchingHost) {
+      throw new Error("SSID expiré ou invalide (NotAuthorized)");
+    }
+
+    throw new Error(`Failed to connect: all ${reachableHosts.length} hosts failed. Check network or SSID.`);
   }
 
   /** Strategy 1: Direct WebSocket connection (Python reference client approach) */
@@ -202,21 +260,26 @@ export class PocketOptionClient {
       console.log(`[PO] Direct WebSocket to ${host}...`);
 
       try {
+        const wsHeaders: Record<string, string> = {
+          ...CONN_WS_HEADERS,
+          Host: host,
+        };
+        if (this.prefetchedCookies.length > 0) {
+          wsHeaders["Cookie"] = this.prefetchedCookies.join("; ");
+        }
+
         this.ws = new WebSocket(wsUrl, {
-          headers: {
-            ...WS_HEADERS,
-            Host: host,
-          },
-          handshakeTimeout: 15000,
+          headers: wsHeaders,
+          handshakeTimeout: 10000,
         } as WebSocket.ClientOptions);
 
         this.upgradeResolve = resolve;
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          reject(new Error("Connection timeout (15s)"));
+          reject(new Error("Connection timeout (10s) - possible firewall/anti-bot block"));
           this.ws?.close();
-        }, 15000);
+        }, 10000);
 
         this.ws.on("open", () => {
           console.log("[PO] WebSocket connected, waiting for Engine.IO OPEN...");
@@ -265,13 +328,15 @@ export class PocketOptionClient {
       console.log(`[PO] WebSocket upgrade to ${host}...`);
 
       try {
+        // Merge pre-fetched cookies with polling cookies for best detection avoidance
+        const allCookies = [...this.prefetchedCookies, ...cookies];
         const wsOptions: WebSocket.ClientOptions = {
           headers: {
-            ...WS_HEADERS,
+            ...CONN_WS_HEADERS,
             Host: host,
-            ...(cookies.length > 0 ? { Cookie: cookies.join("; ") } : {}),
+            ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
           },
-          handshakeTimeout: 15000,
+          handshakeTimeout: 10000,
         };
 
         this.ws = new WebSocket(wsUrl, wsOptions);
@@ -279,9 +344,9 @@ export class PocketOptionClient {
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          reject(new Error("Upgrade timeout (15s)"));
+          reject(new Error("Upgrade timeout (10s) - server may be blocking this IP"));
           this.ws?.close();
-        }, 15000);
+        }, 10000);
 
         this.ws.on("open", () => {
           // Engine.IO v4 upgrade probe sequence
@@ -322,9 +387,10 @@ export class PocketOptionClient {
         path: "/socket.io/?EIO=4&transport=polling",
         method: "GET",
         headers: {
-          ...WS_HEADERS,
+          ...CONN_HTTP_HEADERS,
           Host: host,
           Accept: "*/*",
+          ...(this.prefetchedCookies.length > 0 ? { Cookie: this.prefetchedCookies.join("; ") } : {}),
         },
       }, (res) => {
         const cookies = (res.headers["set-cookie"] || []).map(
@@ -381,11 +447,12 @@ export class PocketOptionClient {
         path,
         method: "POST",
         headers: {
-          ...WS_HEADERS,
+          ...CONN_HTTP_HEADERS,
           Host: host,
           "Content-Type": "text/plain; charset=UTF-8",
           "Content-Length": bodyBuf.length,
           ...(cookies.length > 0 ? { Cookie: cookies.join("; ") } : {}),
+          ...(this.prefetchedCookies.length > 0 ? { Cookie: [...this.prefetchedCookies, ...cookies].join("; ") } : {}),
         },
       };
 
@@ -430,10 +497,10 @@ export class PocketOptionClient {
         path,
         method: "GET",
         headers: {
-          ...WS_HEADERS,
+          ...CONN_HTTP_HEADERS,
           Host: host,
           Accept: "*/*",
-          ...(cookies.length > 0 ? { Cookie: cookies.join("; ") } : {}),
+          ...(this.prefetchedCookies.length > 0 ? { Cookie: [...this.prefetchedCookies, ...cookies].join("; ") } : (cookies.length > 0 ? { Cookie: cookies.join("; ") } : {})),
         },
       };
 
@@ -692,12 +759,9 @@ export class PocketOptionClient {
     this.cleanup();
 
     if (!this.intentionallyClosed) {
-      const delay = Math.min(
-        5000 * Math.pow(2, this.reconnectAttempts),
-        this.maxReconnectDelay
-      );
+      const delay = getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);
       this.reconnectAttempts++;
-      console.log(`[PO] Disconnected. Reconnecting in ${delay}ms...`);
+      console.log(`[PO] Disconnected. Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts})...`);
       setTimeout(() => {
         if (!this.connected && !this.intentionallyClosed) {
           this.connect(this.isDemo).catch((err) => {
@@ -771,6 +835,12 @@ export class PocketOptionClient {
             if (Array.isArray(message)) {
               this.updateClosedDealsFlag = true;
               this.closedDealsData = message;
+            }
+            return;
+
+          case "updateStream":
+            if (Array.isArray(message)) {
+              this.processStreamTick(message);
             }
             return;
 
@@ -853,9 +923,7 @@ export class PocketOptionClient {
 
       if (this.updateStreamFlag && Array.isArray(message)) {
         this.updateStreamFlag = false;
-        if (message.length > 0 && Array.isArray(message[0]) && message[0].length >= 3) {
-          console.log("[PO] Received tick data");
-        }
+        this.processStreamTick(message);
         return;
       }
 
@@ -925,6 +993,54 @@ export class PocketOptionClient {
     const historyRaw = data.history;
     if (Array.isArray(historyRaw) && historyRaw.length > 0) {
       console.log(`[PO] Received ${historyRaw.length} ticks for ${asset}`);
+    }
+  }
+
+  // ============ Stream Tick Processing ============
+
+  /** Process real-time tick data from updateStream to update the current candle */
+  private processStreamTick(message: unknown[]): void {
+    const asset = this.currentSymbol?.asset;
+    if (!asset || !this.authenticated) return;
+
+    this.tickCount++;
+    if (this.tickCount % 100 === 0) {
+      console.log(`[PO] Stream: ${this.tickCount} ticks processed for ${asset}`);
+    }
+
+    // updateStream data format: array of [timestamp, quote_id, price] or [timestamp, price]
+    for (const entry of message) {
+      if (!Array.isArray(entry)) continue;
+
+      let timestamp: number;
+      let price: number;
+
+      if (entry.length >= 3) {
+        // Format: [timestamp, quote_id, price]
+        timestamp = Number(entry[0]);
+        price = Number(entry[2]);
+      } else if (entry.length >= 2) {
+        // Format: [timestamp, price]
+        timestamp = Number(entry[0]);
+        price = Number(entry[1]);
+      } else {
+        continue;
+      }
+
+      if (price <= 0 || timestamp <= 0) continue;
+
+      // Emit a real-time candle update for the current forming candle
+      // The cache will merge this with the existing last candle
+      const candle: CandleData = {
+        asset,
+        open: price,   // Will be overridden by cache merge if candle exists
+        high: price,
+        low: price,
+        close: price,
+        volume: 0,
+        timestamp,
+      };
+      this.emitCandle(asset, candle);
     }
   }
 
@@ -1166,6 +1282,10 @@ export class PocketOptionClient {
 
     this.orderData = null;
     this.successOpenOrderFlag = false;
+
+    // Add human-like jitter before placing trade
+    const jitter = getTradeJitter();
+    await new Promise((r) => setTimeout(r, jitter));
 
     const action = request.direction === "CALL" ? "call" : "put";
     this.openOrder(request.asset, request.amount, action, this.isDemo ? 1 : 0, request.duration);

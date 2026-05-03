@@ -127,13 +127,35 @@ class CandleCache {
       volume: candle.volume,
       timestamp: candle.timestamp,
     };
-    if (arr.length > 0 && arr[arr.length - 1].timestamp === candle.timestamp) {
-      arr[arr.length - 1] = newCandle;
+
+    if (arr.length > 0) {
+      const last = arr[arr.length - 1];
+      // Extract period (in seconds) from key format "asset:period"
+      const periodSec = parseInt(key.split(":").pop() || "60");
+
+      if (candle.timestamp === last.timestamp) {
+        // Same candle period - replace with new data (historical update)
+        arr[arr.length - 1] = newCandle;
+      } else if (candle.timestamp >= last.timestamp + periodSec) {
+        // New candle period - append as a new candle
+        arr.push(newCandle);
+        if (arr.length > MAX_CANDLES_PER_KEY) {
+          arr.splice(0, arr.length - MAX_CANDLES_PER_KEY);
+        }
+      } else if (candle.timestamp > last.timestamp) {
+        // Tick within current candle period - merge into last candle
+        arr[arr.length - 1] = {
+          open: last.open,
+          high: Math.max(last.high, newCandle.high),
+          low: Math.min(last.low, newCandle.low),
+          close: newCandle.close,
+          volume: last.volume,
+          timestamp: last.timestamp,
+        };
+      }
+      // If tick is older than last candle, ignore it
     } else {
       arr.push(newCandle);
-      if (arr.length > MAX_CANDLES_PER_KEY) {
-        arr.splice(0, arr.length - MAX_CANDLES_PER_KEY);
-      }
     }
   }
 

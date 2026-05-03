@@ -11,6 +11,7 @@ const adminNavItems = [
   { href: "/admin", label: "Dashboard", icon: "📊" },
   { href: "/admin/users", label: "Utilisateurs", icon: "👥" },
   { href: "/admin/payments", label: "Paiements", icon: "💳" },
+  { href: "/admin/settings", label: "Parametres", icon: "⚙️" },
   { href: "/admin/stats", label: "Statistiques", icon: "📈" },
 ];
 

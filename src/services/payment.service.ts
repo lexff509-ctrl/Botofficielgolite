@@ -99,8 +99,20 @@ export async function reviewPayment(
 
   // If approved, activate subscription
   if (status === "APPROVED") {
-    const now = new Date();
-    const expiresAt = new Date(now);
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, payment.userId));
+
+    if (!user) return { success: false, error: "Utilisateur introuvable" };
+
+    let baseDate = new Date();
+    // If user has an active subscription that hasn't expired yet, append to it
+    if (user.subscriptionExpiresAt && user.subscriptionExpiresAt > baseDate && user.subscriptionStatus === "ACTIVE") {
+      baseDate = new Date(user.subscriptionExpiresAt);
+    }
+
+    const expiresAt = new Date(baseDate);
     expiresAt.setMonth(expiresAt.getMonth() + payment.planMonths);
 
     await db

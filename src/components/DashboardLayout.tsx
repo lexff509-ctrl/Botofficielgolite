@@ -77,40 +77,40 @@ export default function DashboardLayout({ children }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-[#020617] flex">
+    <div className="min-h-screen bg-[#020617] flex relative">
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+          className="fixed inset-0 bg-black/60 z-20 lg:hidden backdrop-blur-sm"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
       <aside
-        className={`fixed lg:static inset-y-0 left-0 z-30 w-64 bg-[#0a0f1e] border-r border-[#1e293b] flex flex-col transform transition-transform duration-300 ${
+        className={`fixed lg:static inset-y-0 left-0 z-30 w-72 bg-[#050b1a]/95 backdrop-blur-2xl border-r border-white/5 flex flex-col transform transition-transform duration-300 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
-        <div className="h-16 flex items-center px-6 border-b border-[#1e293b]">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-400 to-violet-600 flex items-center justify-center font-bold text-sm mr-3">
+        <div className="h-20 flex items-center px-8 border-b border-white/5">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-violet-600 flex items-center justify-center font-black text-lg mr-3 shadow-lg shadow-cyan-500/20">
             G
           </div>
-          <span className="font-black text-white">GoliteCommunity</span>
+          <span className="font-black text-xl tracking-tighter text-white">Golite<span className="gradient-text">Elite</span></span>
         </div>
 
-        <div className="p-4 border-b border-[#1e293b]">
-          <div className="glass-card rounded-xl p-3">
-            <div className="font-semibold text-white text-sm truncate">{user.username}</div>
-            <div className="text-xs text-slate-400 truncate">{user.email}</div>
-            <div className="flex items-center gap-2 mt-2">
+        <div className="p-6 border-b border-white/5">
+          <div className="glass-morphism rounded-2xl p-4 border-white/5">
+            <div className="font-bold text-white text-base truncate">{user.username}</div>
+            <div className="text-xs text-slate-500 truncate font-medium">{user.email}</div>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
               <span
-                className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                className={`text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${
                   statusColors[user.subscriptionStatus] || "bg-slate-500/20 text-slate-400"
                 }`}
               >
                 {user.subscriptionStatus}
               </span>
               <span
-                className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                className={`text-[10px] px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${
                   user.tradeMode === "LIVE"
                     ? "bg-green-500/20 text-green-400"
                     : "bg-blue-500/20 text-blue-400"
@@ -120,14 +120,14 @@ export default function DashboardLayout({ children }: Props) {
               </span>
             </div>
             {user.tradeMode === "DEMO" && user.demoBalance && (
-              <div className="text-xs text-cyan-400 mt-1 font-mono">
-                💰 ${parseFloat(user.demoBalance).toFixed(2)}
+              <div className="text-xs text-cyan-400 mt-2 font-black">
+                SOLDE: ${parseFloat(user.demoBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </div>
             )}
           </div>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -135,24 +135,24 @@ export default function DashboardLayout({ children }: Props) {
                 key={item.href}
                 href={item.href}
                 onClick={() => setSidebarOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                className={`flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold transition-all duration-300 ${
                   isActive
-                    ? "bg-gradient-to-r from-cyan-500/20 to-violet-600/20 text-cyan-400 border border-cyan-500/20"
-                    : "text-slate-400 hover:text-white hover:bg-white/5"
+                    ? "bg-gradient-to-r from-cyan-500 to-violet-600 text-white shadow-lg shadow-cyan-500/20"
+                    : "text-slate-500 hover:text-white hover:bg-white/5"
                 }`}
               >
-                <span>{item.icon}</span>
+                <span className="text-lg">{item.icon}</span>
                 {item.label}
               </a>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-[#1e293b] space-y-2">
+        <div className="p-6 border-t border-white/5 space-y-3">
           {user.role === "ADMIN" && (
             <a
               href="/admin"
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-violet-400 hover:bg-violet-500/10 transition-all"
+              className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold text-violet-400 hover:bg-violet-500/10 transition-all border border-violet-500/20"
             >
               <span>👨‍💼</span>
               Panel Admin
@@ -160,7 +160,7 @@ export default function DashboardLayout({ children }: Props) {
           )}
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-400 hover:bg-red-500/10 transition-all"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold text-red-400 hover:bg-red-500/10 transition-all border border-red-500/20"
           >
             <span>🚪</span>
             Déconnexion
@@ -169,22 +169,28 @@ export default function DashboardLayout({ children }: Props) {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-[#0a0f1e] border-b border-[#1e293b] flex items-center px-4 lg:px-6 gap-4">
+        <header className="h-20 bg-[#020617]/50 backdrop-blur-xl border-b border-white/5 flex items-center px-6 lg:px-10 gap-4 sticky top-0 z-10">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="lg:hidden text-slate-400 hover:text-white p-1"
+            className="lg:hidden text-slate-400 hover:text-white p-2 bg-white/5 rounded-xl transition-all"
           >
             ☰
           </button>
           <div className="flex-1" />
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-slate-400">
-              <span className="font-mono text-cyan-400">{user.tradeMode}</span>
-              {user.tradeMode === "DEMO" && (
-                <span className="ml-2 text-slate-300">
-                  ${parseFloat(user.demoBalance || "0").toFixed(2)}
-                </span>
-              )}
+          <div className="flex items-center gap-6">
+            <div className="flex flex-col items-end">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Compte Actuel</span>
+              <div className="text-sm font-black text-white flex items-center gap-2">
+                <span className={user.tradeMode === "LIVE" ? "text-green-400" : "text-blue-400"}>{user.tradeMode}</span>
+                {user.tradeMode === "DEMO" && (
+                  <span className="text-slate-300 border-l border-white/10 pl-2">
+                    ${parseFloat(user.demoBalance || "0").toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-xl shadow-inner">
+              👤
             </div>
           </div>
         </header>

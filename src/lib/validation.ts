@@ -17,7 +17,7 @@ export const registerSchema = z.object({
 
 // Bot
 export const botActionSchema = z.object({
-  action: z.enum(["START", "STOP"]),
+  action: z.enum(["START", "STOP", "RESET_COMPOUND"]),
   mode: z.enum(["DEMO", "LIVE"]).optional(),
   botType: z.enum(["signal", "auto"]).optional(),
   ssid: z.string().optional(),
@@ -27,6 +27,12 @@ export const botActionSchema = z.object({
   confidenceMode: z.enum(["standard", "high"]).optional(),
   profitTarget: z.number().min(1, "Minimum $1").optional(),
   lossLimit: z.number().min(1, "Minimum $1").optional(),
+  // Martingale
+  martingaleEnabled: z.boolean().optional(),
+  // Compound interest
+  compoundEnabled: z.boolean().optional(),
+  compoundTradesTarget: z.number().int().min(1, "Minimum 1 trade").max(20, "Maximum 20 trades").optional(),
+  compoundPayoutRate: z.number().min(0.5).max(1.0).optional(),
 });
 
 // Signals
@@ -82,10 +88,17 @@ export const adminUserUpdateSchema = z.object({
   resetPassword: z.string().min(6, "Minimum 6 caractères").optional(),
 });
 
+export const adminSettingsSchema = z.object({
+  action: z.enum(["SET", "CLEAR", "SET_PAYOUT_RATE"]),
+  globalSsid: z.string().optional(),
+  payoutRate: z.number().min(0.5).max(1.0).optional(),
+});
+
 // Profile
 export const profileUpdateSchema = z.object({
   username: z.string().min(2).max(50).optional(),
   tradeMode: z.enum(["DEMO", "LIVE"]).optional(),
+  pocketOptionUid: z.string().max(50).optional(),
   pocketOptionSsid: z.string().optional(),
   demoTradeAmount: z.string().optional(),
   liveTradeAmount: z.string().optional(),
@@ -107,4 +120,5 @@ export type TradeCreateInput = z.infer<typeof tradeCreateSchema>;
 export type PaymentCreateInput = z.infer<typeof paymentCreateSchema>;
 export type PaymentReviewInput = z.infer<typeof paymentReviewSchema>;
 export type AdminUserUpdateInput = z.infer<typeof adminUserUpdateSchema>;
+export type AdminSettingsInput = z.infer<typeof adminSettingsSchema>;
 export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;

@@ -33,6 +33,7 @@ export async function PUT(req: NextRequest) {
         role: updated.role,
         subscriptionStatus: updated.subscriptionStatus,
         tradeMode: updated.tradeMode,
+        pocketOptionUid: updated.pocketOptionUid,
         demoBalance: updated.demoBalance,
         profitTarget: updated.profitTarget,
         lossLimit: updated.lossLimit,

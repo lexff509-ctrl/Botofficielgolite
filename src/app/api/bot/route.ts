@@ -6,7 +6,15 @@ import { db } from "@/db";
 import { botSessions, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { encryptSSID, decryptSSID } from "@/lib/auth";
-import { connectPocketOption, disconnectPocketOption } from "@/services/trading.service";
+import {
+  connectPocketOption,
+  disconnectPocketOption,
+  connectSharedPocketOption,
+  getGlobalSsid,
+  getGlobalSsidStatus,
+  isUserOnSharedClient,
+  getDefaultPayoutRate,
+} from "@/services/trading.service";
 import { startBotRunner, stopBotRunner, getBotRunner, isBotRunning, getAllRunnersStatus } from "@/services/bot-runner";
 import { hasActiveSubscription } from "@/services/payment.service";
 import { TIMEFRAMES, type Timeframe } from "@/lib/trading";
@@ -16,13 +24,13 @@ export async function GET(req: NextRequest) {
   try {
     const payload = getUserFromRequest(req);
     if (!payload) {
-      return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+      return NextResponse.json({ error: "Non authentifie" }, { status: 401 });
     }
 
     // Single-device session check
     const validSession = await validateSessionVersion(payload.userId, payload.sessionVersion ?? 0);
     if (!validSession) {
-      return NextResponse.json({ error: "Session expirée", sessionExpired: true }, { status: 401 });
+      return NextResponse.json({ error: "Session expiree", sessionExpired: true }, { status: 401 });
     }
 
     const sessions = await db
@@ -37,10 +45,20 @@ export async function GET(req: NextRequest) {
     // Include BotRunner status if running
     const runnerStatus = getBotRunner(payload.userId)?.getStatus() || null;
 
+    // Include SSID availability info for the UI
+    const globalSsidStatus = await getGlobalSsidStatus();
+    const onSharedClient = isUserOnSharedClient(payload.userId);
+
     return NextResponse.json({
       sessions,
       activeSession: activeSession || null,
       runnerStatus,
+      ssidInfo: {
+        hasPersonalSsid: !!activeSession?.useGlobalSsid ? false : true,
+        globalSsidAvailable: globalSsidStatus === "VALID",
+        globalSsidStatus,
+        onSharedClient,
+      },
     });
   } catch (error) {
     return handleApiError(error, "Bot GET");
@@ -51,13 +69,13 @@ export async function POST(req: NextRequest) {
   try {
     const payload = getUserFromRequest(req);
     if (!payload) {
-      return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+      return NextResponse.json({ error: "Non authentifie" }, { status: 401 });
     }
 
     // Single-device session check
     const validSession = await validateSessionVersion(payload.userId, payload.sessionVersion ?? 0);
     if (!validSession) {
-      return NextResponse.json({ error: "Session expirée", sessionExpired: true }, { status: 401 });
+      return NextResponse.json({ error: "Session expiree", sessionExpired: true }, { status: 401 });
     }
 
     const body = await req.json();
@@ -69,7 +87,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { action, mode, botType, ssid, asset, timeframe, tradeAmount, confidenceMode, profitTarget, lossLimit } = parsed.data;
+    const {
+      action, mode, botType, ssid, asset, timeframe, tradeAmount,
+      confidenceMode, profitTarget, lossLimit,
+      martingaleEnabled, compoundEnabled, compoundTradesTarget, compoundPayoutRate,
+    } = parsed.data;
 
     // Check subscription
     const hasAccess = await hasActiveSubscription(payload.userId);
@@ -85,6 +107,21 @@ export async function POST(req: NextRequest) {
       .from(users)
       .where(eq(users.id, payload.userId));
 
+    // ============ RESET_COMPOUND ACTION ============
+    if (action === "RESET_COMPOUND") {
+      const runner = getBotRunner(payload.userId);
+      if (!runner) {
+        return NextResponse.json({ error: "Aucun bot actif" }, { status: 400 });
+      }
+      runner.resetCompound();
+      return NextResponse.json({
+        success: true,
+        action: "COMPOUND_RESET",
+        runnerStatus: runner.getStatus(),
+      });
+    }
+
+    // ============ START ACTION ============
     if (action === "START") {
       // Validate timeframe
       const selectedTimeframe = timeframe || "1m";
@@ -117,40 +154,76 @@ export async function POST(req: NextRequest) {
       // Disconnect existing PocketOption session
       disconnectPocketOption(payload.userId);
 
-      // Get SSID: provided > saved > env > empty
-      const rawSsid =
+      // Resolve SSID: provided > saved > global SSID > env > empty
+      let rawSsid =
         ssid ||
         decryptSSID(user.pocketOptionSsid) ||
-        process.env.POCKET_OPTION_SSID ||
         "";
+      let useGlobalSsid = false;
 
-      // SSID is REQUIRED for both signal and auto bot
+      // If no personal SSID, try global SSID from platform_settings
+      if (!rawSsid) {
+        const globalSsid = await getGlobalSsid();
+        if (globalSsid) {
+          rawSsid = globalSsid;
+          useGlobalSsid = true;
+        }
+      }
+
+      // Last resort: try env variable
+      if (!rawSsid) {
+        rawSsid = process.env.POCKET_OPTION_SSID || "";
+      }
+
+      // SSID is REQUIRED
       if (!rawSsid) {
         return NextResponse.json(
-          { error: "SSID PocketOption requis. Ajoutez votre SSID dans votre profil ou dans le champ ci-dessus.", ssidMissing: true },
+          { error: "Aucun SSID disponible. Ajoutez votre SSID dans votre profil ou demandez a l'admin de configurer le SSID global.", ssidMissing: true },
           { status: 400 }
         );
       }
 
       const encryptedSsid = encryptSSID(rawSsid);
 
-      // Pre-check: skip connection attempt if SSID is already known expired
-      if (user.ssidStatus === "EXPIRED" && !ssid) {
+      // Pre-check: skip connection attempt if personal SSID is already known expired
+      if (!useGlobalSsid && user.ssidStatus === "EXPIRED" && !ssid) {
         return NextResponse.json(
-          { error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.", ssidExpired: true },
+          { error: "SSID expire. Veuillez mettre a jour votre SSID dans votre profil.", ssidExpired: true },
           { status: 400 }
         );
       }
 
-      // Connect to PocketOption
+      // Connect to PocketOption (non-blocking: start in background, return immediately)
       const isDemoConnection = selectedMode === "DEMO";
-      const connectResult = await connectPocketOption(payload.userId, rawSsid, isDemoConnection);
-      if (!connectResult.success) {
-        return NextResponse.json(
-          { error: connectResult.error, ssidExpired: connectResult.ssidExpired },
-          { status: 400 }
-        );
-      }
+
+      // Start connection in background - don't await it here
+      const connectPromise = useGlobalSsid
+        ? connectSharedPocketOption(payload.userId, rawSsid, isDemoConnection)
+        : connectPocketOption(payload.userId, rawSsid, isDemoConnection);
+
+      // Connect in background and handle errors
+      connectPromise.then((connectResult) => {
+        if (!connectResult.success) {
+          console.error(`[Bot] Connection failed for user ${payload.userId}: ${connectResult.error}`);
+          // Stop the runner if connection failed
+          const runner = getBotRunner(payload.userId);
+          if (runner) {
+            runner.pause(connectResult.error || "Connection failed");
+          }
+        } else {
+          console.log(`[Bot] Connection established for user ${payload.userId}`);
+        }
+      }).catch((err) => {
+        console.error(`[Bot] Connection error for user ${payload.userId}:`, err);
+        const runner = getBotRunner(payload.userId);
+        if (runner) {
+          runner.pause("Connection error");
+        }
+      });
+
+      // Get payout rate: provided > platform default > 0.92
+      const platformPayoutRate = await getDefaultPayoutRate();
+      const selectedPayoutRate = compoundPayoutRate || platformPayoutRate;
 
       const [session] = await db
         .insert(botSessions)
@@ -167,10 +240,17 @@ export async function POST(req: NextRequest) {
           wins: 0,
           losses: 0,
           totalProfit: "0",
+          martingaleEnabled: martingaleEnabled || false,
+          compoundEnabled: compoundEnabled || false,
+          compoundTradesTarget: compoundTradesTarget || null,
+          compoundTradesTaken: 0,
+          compoundCurrentAmount: compoundEnabled ? String(selectedTradeAmount) : null,
+          compoundInitialAmount: compoundEnabled ? String(selectedTradeAmount) : null,
+          useGlobalSsid,
         })
         .returning();
 
-      // Save SSID if provided
+      // Save SSID if provided (personal only)
       if (ssid) {
         await db
           .update(users)
@@ -193,15 +273,23 @@ export async function POST(req: NextRequest) {
         confidenceMode: confidenceMode || "standard",
         profitTarget: userProfitTarget,
         lossLimit: userLossLimit,
+        martingaleEnabled: martingaleEnabled || false,
+        compoundEnabled: compoundEnabled || false,
+        compoundTradesTarget: compoundTradesTarget || 0,
+        compoundPayoutRate: selectedPayoutRate,
       });
 
       return NextResponse.json({
         success: true,
         session,
         action: "STARTED",
+        useGlobalSsid,
         runnerStatus: runner.getStatus(),
       });
-    } else if (action === "STOP") {
+    }
+
+    // ============ STOP ACTION ============
+    if (action === "STOP") {
       // Stop the BotRunner
       stopBotRunner(payload.userId);
 

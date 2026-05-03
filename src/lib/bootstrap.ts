@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { botSessions, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { decryptSSID } from "@/lib/auth";
-import { connectPocketOption } from "@/services/trading.service";
+import { connectPocketOption, connectSharedPocketOption, getGlobalSsid } from "@/services/trading.service";
 import { startBotRunner } from "@/services/bot-runner";
 import type { Timeframe } from "@/lib/trading";
 import { TIMEFRAMES } from "@/lib/trading";
@@ -43,31 +43,50 @@ export async function recoverActiveSessions(): Promise<{
           continue;
         }
 
-        // Skip reconnection if SSID is known expired
-        if (user.ssidStatus === "EXPIRED") {
+        // Skip reconnection if SSID is known expired (personal only)
+        if (!session.useGlobalSsid && user.ssidStatus === "EXPIRED") {
           errors.push(`User ${session.userId}: SSID expired, skipping reconnection`);
           await markSessionStopped(session.id);
           failed++;
           continue;
         }
 
-        const rawSsid =
-          decryptSSID(user.pocketOptionSsid) ||
-          process.env.POCKET_OPTION_SSID ||
-          "";
+        const isDemo = session.mode === "DEMO";
 
-        // Connect to PocketOption if SSID available
-        if (rawSsid) {
-          const isDemo = session.mode === "DEMO";
-          const connectResult = await connectPocketOption(session.userId, rawSsid, isDemo);
-          if (!connectResult.success) {
-            errors.push(`User ${session.userId}: PocketOption connection failed - ${connectResult.error}`);
-            if (connectResult.ssidExpired) {
-              // DB already updated by connectPocketOption
-            }
+        if (session.useGlobalSsid) {
+          // Use shared global SSID
+          const globalSsid = await getGlobalSsid();
+          if (!globalSsid) {
+            errors.push(`User ${session.userId}: Global SSID not available`);
             await markSessionStopped(session.id);
             failed++;
             continue;
+          }
+          const connectResult = await connectSharedPocketOption(session.userId, globalSsid, isDemo);
+          if (!connectResult.success) {
+            errors.push(`User ${session.userId}: Shared connection failed - ${connectResult.error}`);
+            await markSessionStopped(session.id);
+            failed++;
+            continue;
+          }
+        } else {
+          // Use personal SSID
+          const rawSsid =
+            decryptSSID(user.pocketOptionSsid) ||
+            process.env.POCKET_OPTION_SSID ||
+            "";
+
+          if (rawSsid) {
+            const connectResult = await connectPocketOption(session.userId, rawSsid, isDemo);
+            if (!connectResult.success) {
+              errors.push(`User ${session.userId}: PocketOption connection failed - ${connectResult.error}`);
+              if (connectResult.ssidExpired) {
+                // DB already updated by connectPocketOption
+              }
+              await markSessionStopped(session.id);
+              failed++;
+              continue;
+            }
           }
         }
 
@@ -82,6 +101,11 @@ export async function recoverActiveSessions(): Promise<{
           asset: session.asset || "EUR/USD",
           timeframe,
           mode: (session.mode as "DEMO" | "LIVE") || "DEMO",
+          tradeAmount: session.tradeAmount ? parseFloat(session.tradeAmount) : undefined,
+          martingaleEnabled: session.martingaleEnabled || false,
+          compoundEnabled: session.compoundEnabled || false,
+          compoundTradesTarget: session.compoundTradesTarget || undefined,
+          compoundPayoutRate: 0.92,
         });
 
         recovered++;

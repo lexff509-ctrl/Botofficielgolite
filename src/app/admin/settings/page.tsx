@@ -1,0 +1,248 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import AdminLayout from "@/components/AdminLayout";
+
+interface SettingsData {
+  globalSsidSet: boolean;
+  globalSsidStatus: string;
+  sharedClientConnected: boolean;
+  sharedClientUserCount: number;
+  payoutRate: number;
+}
+
+export default function AdminSettingsPage() {
+  const [settings, setSettings] = useState<SettingsData | null>(null);
+  const [ssidInput, setSsidInput] = useState("");
+  const [payoutRate, setPayoutRate] = useState(92);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch("/api/admin/settings");
+      const data = await res.json();
+      if (res.ok) {
+        setSettings(data);
+        setPayoutRate(Math.round((data.payoutRate || 0.92) * 100));
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const handleSetSsid = async () => {
+    if (!ssidInput.trim()) return;
+    setLoading(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "SET", globalSsid: ssidInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({ type: "success", text: data.message });
+        setSsidInput("");
+        fetchSettings();
+      } else {
+        setMessage({ type: "error", text: data.error || "Erreur" });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Erreur de connexion" });
+    }
+    setLoading(false);
+  };
+
+  const handleClearSsid = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "CLEAR" }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({ type: "success", text: data.message });
+        fetchSettings();
+      } else {
+        setMessage({ type: "error", text: data.error || "Erreur" });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Erreur de connexion" });
+    }
+    setLoading(false);
+  };
+
+  const handleSetPayoutRate = async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "SET_PAYOUT_RATE", payoutRate: payoutRate / 100 }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({ type: "success", text: data.message });
+      } else {
+        setMessage({ type: "error", text: data.error || "Erreur" });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Erreur de connexion" });
+    }
+    setLoading(false);
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "VALID": return "text-emerald-400";
+      case "EXPIRED": return "text-red-400";
+      case "UNKNOWN": return "text-yellow-400";
+      default: return "text-slate-400";
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case "VALID": return "Valide";
+      case "EXPIRED": return "Expire";
+      case "UNKNOWN": return "Inconnu";
+      default: return "Non configure";
+    }
+  };
+
+  return (
+    <AdminLayout>
+      <div className="max-w-3xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-2xl font-black text-white">
+            Parametres <span className="gradient-text">Plateforme</span>
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">
+            Configurez le SSID global et les parametres de trading
+          </p>
+        </div>
+
+        {message && (
+          <div className={`rounded-xl p-4 text-sm border ${
+            message.type === "success"
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+              : "bg-red-500/10 border-red-500/30 text-red-400"
+          }`}>
+            {message.text}
+          </div>
+        )}
+
+        {/* Global SSID Configuration */}
+        <div className="glass-card rounded-xl p-5">
+          <div className="text-slate-400 text-xs font-medium mb-4">SSID GLOBAL POCKETOPTION</div>
+
+          {/* Current Status */}
+          <div className="bg-white/5 rounded-xl p-4 mb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-slate-300">Statut du SSID</div>
+                <div className={`text-lg font-bold ${getStatusColor(settings?.globalSsidStatus || "NOT_SET")}`}>
+                  {getStatusLabel(settings?.globalSsidStatus || "NOT_SET")}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm text-slate-300">Connexion partagee</div>
+                <div className={`text-lg font-bold ${settings?.sharedClientConnected ? "text-emerald-400" : "text-slate-500"}`}>
+                  {settings?.sharedClientConnected ? "Active" : "Inactive"}
+                </div>
+              </div>
+            </div>
+            {settings?.sharedClientConnected && (
+              <div className="mt-2 text-xs text-slate-400">
+                {settings.sharedClientUserCount} utilisateur(s) connecte(s) via le SSID global
+              </div>
+            )}
+          </div>
+
+          {/* SSID Input */}
+          <div className="space-y-3">
+            <div>
+              <label className="block text-slate-400 text-xs mb-1.5">
+                Nouveau SSID PocketOption
+              </label>
+              <input
+                type="password"
+                value={ssidInput}
+                onChange={(e) => setSsidInput(e.target.value)}
+                placeholder="Collez votre SSID PocketOption ici..."
+                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm font-mono"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Le SSID sera teste avant d&apos;etre sauvegarde. Tous les utilisateurs sans SSID personnel l&apos;utiliseront.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handleSetSsid}
+                disabled={loading || !ssidInput.trim()}
+                className="flex-1 px-6 py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-cyan-500 to-violet-600 text-white hover:from-cyan-400 hover:to-violet-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? "Test en cours..." : "Sauvegarder et Tester"}
+              </button>
+              {settings?.globalSsidSet && (
+                <button
+                  onClick={handleClearSsid}
+                  disabled={loading}
+                  className="px-6 py-3 rounded-xl font-bold text-sm bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400 transition-all disabled:opacity-50"
+                >
+                  Supprimer
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Payout Rate */}
+        <div className="glass-card rounded-xl p-5">
+          <div className="text-slate-400 text-xs font-medium mb-4">TAUX DE PAIEMENT PAR DEFAUT</div>
+          <p className="text-sm text-slate-400 mb-3">
+            Utilise pour le calcul de l&apos;interet compose. Les utilisateurs peuvent le personnaliser.
+          </p>
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <input
+                type="number"
+                min="50"
+                max="100"
+                value={payoutRate}
+                onChange={(e) => setPayoutRate(parseInt(e.target.value) || 92)}
+                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm"
+              />
+            </div>
+            <span className="text-slate-400 text-sm">%</span>
+            <button
+              onClick={handleSetPayoutRate}
+              disabled={loading}
+              className="px-6 py-3 rounded-xl font-bold text-sm bg-white/10 hover:bg-white/20 border border-slate-600 text-white transition-all disabled:opacity-50"
+            >
+              Sauvegarder
+            </button>
+          </div>
+        </div>
+
+        {/* Info Box */}
+        <div className="glass-card rounded-xl p-5">
+          <div className="text-slate-400 text-xs font-medium mb-3">INFORMATIONS</div>
+          <div className="space-y-2 text-sm text-slate-300">
+            <p><span className="text-cyan-400 font-medium">SSID Global:</span> Quand vous configurez un SSID global, tous les utilisateurs qui n&apos;ont pas de SSID personnel peuvent trader via votre connexion PocketOption.</p>
+            <p><span className="text-yellow-400 font-medium">Attention:</span> Les trades passes via le SSID global utilisent le compte PocketOption de l&apos;admin. Le plateforme suit les profits/pertes de chaque utilisateur individuellement.</p>
+            <p><span className="text-violet-400 font-medium">Interet Compose:</span> Le taux de paiement par defaut est utilise pour calculer les gains composes. Les utilisateurs peuvent le modifier au demarrage du bot.</p>
+          </div>
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}

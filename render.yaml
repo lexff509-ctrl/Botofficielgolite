@@ -1,27 +1,26 @@
 services:
   - type: web
-    name: botofficiel
-    runtime: node
-    plan: starter
+    name: golite-elite-bot
+    env: node
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
-    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: golite-db
+          column: connectionString
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
       - key: SSID_ENCRYPTION_KEY
-        sync: false
-      - key: TRC20_WALLET
-        sync: false
+        generateValue: true
+      - key: NEXTAUTH_URL
+        value: https://golite-elite-bot.onrender.com
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
-        sync: false
-      - key: NEXTAUTH_URL
         sync: false
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
@@ -29,3 +28,10 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: POCKET_OPTION_SSID
+        sync: false
+        placeholder: "Optionnel: SSID de l'admin pour le bot partagé"
+
+databases:
+  - name: golite-db
+    plan: free

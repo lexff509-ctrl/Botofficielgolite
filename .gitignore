@@ -21,4 +21,11 @@ nul
 # debug
 npm-debug.log*
 
+# custom
+*.txt
+*.log
+.continue/
+scripts/test-*.ts
+!scripts/test-strategy.ts
+
 .vercel

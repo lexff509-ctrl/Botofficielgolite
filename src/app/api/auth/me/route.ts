@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
         isActive: user.isActive,
         isVerified: user.isVerified,
         tradeMode: user.tradeMode,
+        pocketOptionUid: user.pocketOptionUid,
         demoBalance: user.demoBalance,
         demoTradeAmount: user.demoTradeAmount,
         liveTradeAmount: user.liveTradeAmount,

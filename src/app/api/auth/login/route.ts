@@ -11,16 +11,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const parsed = loginSchema.safeParse(body);
-    if (!parsed.success) {
+    const { identifier, password } = body;
+    
+    if (!identifier || !password) {
       return NextResponse.json(
-        { error: parsed.error.issues[0].message },
+        { error: "Identifiant et mot de passe requis" },
         { status: 400 }
       );
     }
 
-    const { email, password } = parsed.data;
-    const result = await loginUser(email, password);
+    const result = await loginUser(identifier, password);
 
     if ("error" in result) {
       return NextResponse.json(

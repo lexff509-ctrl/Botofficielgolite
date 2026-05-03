@@ -63,6 +63,7 @@ export const users = pgTable("users", {
   isVerified: boolean("is_verified").default(false).notNull(),
   sessionVersion: integer("session_version").default(0).notNull(),
   // PocketOption config
+  pocketOptionUid: varchar("pocket_option_uid", { length: 50 }),
   pocketOptionSsid: text("pocket_option_ssid"),
   ssidStatus: ssidStatusEnum("ssid_status").default("NOT_SET").notNull(),
   // Trading config
@@ -151,6 +152,18 @@ export const signals = pgTable("signals", {
   highFractal: boolean("high_fractal").default(false),
   dojiFiltered: boolean("doji_filtered").default(false),
   multiTimeframeConfirmation: jsonb("multi_timeframe_confirmation"),
+  // Scoring system indicators
+  supportLevel: numeric("support_level", { precision: 15, scale: 8 }),
+  resistanceLevel: numeric("resistance_level", { precision: 15, scale: 8 }),
+  nearSupport: boolean("near_support").default(false),
+  nearResistance: boolean("near_resistance").default(false),
+  marketStructure: varchar("market_structure", { length: 20 }),
+  structureBreak: varchar("structure_break", { length: 20 }),
+  signalScore: numeric("signal_score", { precision: 8, scale: 4 }),
+  bollingerPercentB: numeric("bollinger_percent_b", { precision: 8, scale: 4 }),
+  bollingerWidth: numeric("bollinger_width", { precision: 8, scale: 6 }),
+  indicatorScores: jsonb("indicator_scores"),
+  diagnostic: text("diagnostic"),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -176,6 +189,17 @@ export const botSessions = pgTable("bot_sessions", {
   totalProfit: numeric("total_profit", { precision: 15, scale: 2 }).default(
     "0"
   ),
+  // Martingale
+  martingaleEnabled: boolean("martingale_enabled").default(false).notNull(),
+  martingaleLevel: integer("martingale_level").default(0).notNull(),
+  // Compound interest
+  compoundEnabled: boolean("compound_enabled").default(false).notNull(),
+  compoundTradesTarget: integer("compound_trades_target"),
+  compoundTradesTaken: integer("compound_trades_taken").default(0).notNull(),
+  compoundCurrentAmount: numeric("compound_current_amount", { precision: 15, scale: 2 }),
+  compoundInitialAmount: numeric("compound_initial_amount", { precision: 15, scale: 2 }),
+  // Global SSID tracking
+  useGlobalSsid: boolean("use_global_ssid").default(false).notNull(),
   startedAt: timestamp("started_at").defaultNow().notNull(),
   stoppedAt: timestamp("stopped_at"),
 });
@@ -188,4 +212,12 @@ export const auditLogs = pgTable("audit_logs", {
   action: varchar("action", { length: 100 }).notNull(),
   details: jsonb("details"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Platform settings (key-value store for global config)
+export const platformSettings = pgTable("platform_settings", {
+  id: serial("id").primaryKey(),
+  key: varchar("key", { length: 100 }).notNull().unique(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

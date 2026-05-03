@@ -84,49 +84,50 @@ export default function HomePage() {
             Bot Trading PocketOption • Version 2.0
           </div>
 
-          <h1 className="text-5xl md:text-7xl font-black mb-6 leading-tight">
-            <span className="text-white">Trading</span>{" "}
-            <span className="gradient-text">Algorithmique</span>
+          <h1 className="text-5xl md:text-8xl font-black mb-6 leading-tight tracking-tighter">
+            <span className="text-white">L'Élite du</span>{" "}
+            <span className="gradient-text">Trading</span>
             <br />
-            <span className="text-white">Pour Options Binaires</span>
+            <span className="text-white">Automatisé</span>
           </h1>
 
-          <p className="text-xl text-slate-400 max-w-3xl mx-auto mb-10 leading-relaxed">
-            Plateforme SaaS professionnelle avec bot signal + bot automatique pour PocketOption.
-            Analyse multi-timeframe, backtesting avancé, mode démo et live.
+          <p className="text-xl text-slate-400 max-w-3xl mx-auto mb-10 leading-relaxed font-medium">
+            Précision Algorithmique. Signaux Haute-Confiance (89%-200%). 
+            <br className="hidden md:block" />
+            La plateforme de trading ultime pour PocketOption.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-20">
             <button
               onClick={openRegister}
-              className="w-full sm:w-auto bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 text-white font-bold px-8 py-4 rounded-xl text-lg transition-all duration-200 shadow-2xl shadow-cyan-500/30 animate-pulse-glow"
+              className="w-full sm:w-auto bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 text-white font-bold px-10 py-5 rounded-2xl text-lg transition-all duration-300 shadow-[0_0_30px_rgba(6,182,212,0.3)] hover:shadow-[0_0_50px_rgba(6,182,212,0.5)] transform hover:-translate-y-1"
             >
-              🚀 Démarrer l'Essai Gratuit 3 Jours
+              🚀 Démarrer l'Essai Gratuit
             </button>
             <button
               onClick={openLogin}
-              className="w-full sm:w-auto bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-500/50 text-white font-bold px-8 py-4 rounded-xl text-lg transition-all duration-200"
+              className="w-full sm:w-auto bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-500/50 text-white font-bold px-10 py-5 rounded-2xl text-lg transition-all duration-300 backdrop-blur-xl"
             >
-              Se Connecter →
+              Accéder au Bot →
             </button>
           </div>
 
           {/* Stats bar */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-5xl mx-auto">
             {[
-              { value: "62-68%", label: "Taux de Réussite" },
-              { value: "7", label: "Timeframes Analysés" },
-              { value: "2", label: "Modes Bot" },
-              { value: "24/7", label: "Trading Automatique" },
+              { value: "89-200%", label: "Confiance Stratégie" },
+              { value: "100%", label: "Automatisé" },
+              { value: "Dual", label: "Système Trading" },
+              { value: "24/7", label: "Disponibilité" },
             ].map((stat) => (
               <div
                 key={stat.label}
-                className="glass-card rounded-xl p-4 text-center"
+                className="glass-card rounded-2xl p-6 text-center border-white/5 hover:border-cyan-500/30 transition-all duration-500 group"
               >
-                <div className="text-2xl font-black text-cyan-400">
+                <div className="text-3xl font-black text-white group-hover:scale-110 transition-transform duration-500">
                   {stat.value}
                 </div>
-                <div className="text-xs text-slate-400 mt-1">{stat.label}</div>
+                <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mt-2">{stat.label}</div>
               </div>
             ))}
           </div>

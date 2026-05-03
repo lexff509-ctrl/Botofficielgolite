@@ -43,14 +43,26 @@ export class BotRunner {
   readonly mode: "DEMO" | "LIVE";
   readonly tradeAmount: number;
   readonly confidenceMode: "standard" | "high";
-  readonly profitTarget: number; // Dollar amount - bot stops when daily profit >= this
-  readonly lossLimit: number; // Dollar amount - bot stops when daily loss <= -this
+  readonly profitTarget: number;
+  readonly lossLimit: number;
+  // Martingale
+  readonly martingaleEnabled: boolean;
+  private baseTradeAmount: number;
+  private martingaleLevel = 0; // 0 = base, 1 = doubled
+  // Compound interest
+  readonly compoundEnabled: boolean;
+  readonly compoundTradesTarget: number;
+  readonly compoundPayoutRate: number;
+  private compoundTradesTaken = 0;
+  private compoundCurrentAmount: number;
+  private compoundInitialAmount: number;
 
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private consecutiveErrors = 0;
   private isPaused = false;
   private pauseReason: string | null = null;
   private lastSignalAt: number | null = null;
+  private lastTradeDirection: "CALL" | "PUT" | null = null;
   private signalsGenerated = 0;
   private tradesExecuted = 0;
   private dailyWins = 0;
@@ -69,6 +81,10 @@ export class BotRunner {
     confidenceMode?: "standard" | "high";
     profitTarget?: number;
     lossLimit?: number;
+    martingaleEnabled?: boolean;
+    compoundEnabled?: boolean;
+    compoundTradesTarget?: number;
+    compoundPayoutRate?: number;
   }) {
     this.userId = opts.userId;
     this.botType = opts.botType;
@@ -76,9 +92,16 @@ export class BotRunner {
     this.timeframe = opts.timeframe;
     this.mode = opts.mode;
     this.tradeAmount = opts.tradeAmount || 1;
+    this.baseTradeAmount = this.tradeAmount;
     this.confidenceMode = opts.confidenceMode || "standard";
     this.profitTarget = opts.profitTarget || DEFAULT_PROFIT_TARGET;
     this.lossLimit = opts.lossLimit || DEFAULT_LOSS_LIMIT;
+    this.martingaleEnabled = opts.martingaleEnabled || false;
+    this.compoundEnabled = opts.compoundEnabled || false;
+    this.compoundTradesTarget = opts.compoundTradesTarget || 0;
+    this.compoundPayoutRate = opts.compoundPayoutRate || 0.92;
+    this.compoundCurrentAmount = this.tradeAmount;
+    this.compoundInitialAmount = this.tradeAmount;
     this.startedAt = new Date();
   }
 
@@ -111,6 +134,15 @@ export class BotRunner {
     consecutiveErrors: number;
     lastSignalAt: number | null;
     startedAt: Date;
+    martingaleEnabled: boolean;
+    martingaleLevel: number;
+    baseTradeAmount: number;
+    compoundEnabled: boolean;
+    compoundTradesTarget: number;
+    compoundTradesTaken: number;
+    compoundCurrentAmount: number;
+    compoundInitialAmount: number;
+    compoundPayoutRate: number;
   } {
     return {
       userId: this.userId,
@@ -133,6 +165,15 @@ export class BotRunner {
       consecutiveErrors: this.consecutiveErrors,
       lastSignalAt: this.lastSignalAt,
       startedAt: this.startedAt,
+      martingaleEnabled: this.martingaleEnabled,
+      martingaleLevel: this.martingaleLevel,
+      baseTradeAmount: this.baseTradeAmount,
+      compoundEnabled: this.compoundEnabled,
+      compoundTradesTarget: this.compoundTradesTarget,
+      compoundTradesTaken: this.compoundTradesTaken,
+      compoundCurrentAmount: this.compoundCurrentAmount,
+      compoundInitialAmount: this.compoundInitialAmount,
+      compoundPayoutRate: this.compoundPayoutRate,
     };
   }
 
@@ -187,6 +228,15 @@ export class BotRunner {
     this.consecutiveErrors = 0;
   }
 
+  resetCompound(): void {
+    this.compoundCurrentAmount = this.compoundInitialAmount;
+    this.compoundTradesTaken = 0;
+    this.martingaleLevel = 0;
+    this.isPaused = false;
+    this.pauseReason = null;
+    console.log(`[BotRunner] Compound reset for user ${this.userId}, amount=$${this.compoundInitialAmount}`);
+  }
+
   // ============ PRIVATE ============
 
   private async loadDailyStats(): Promise<void> {
@@ -218,6 +268,17 @@ export class BotRunner {
     if (tf.endsWith("s")) return parseInt(tf);
     if (tf.endsWith("m")) return parseInt(tf) * 60;
     return 60;
+  }
+
+  /** Cooldown period after a signal to prevent over-trading */
+  private getSignalCooldownMs(): number {
+    const sec = this.timeframeToSeconds();
+    // At least 1 candle duration, scaled by timeframe
+    if (sec <= 15) return 10_000;   // 10s for scalping
+    if (sec <= 30) return 20_000;   // 20s
+    if (sec <= 60) return 60_000;   // 60s for 1m
+    if (sec <= 180) return 180_000; // 3min for 3m
+    return 300_000;                 // 5min for 5m
   }
 
   private async bootstrapCandles(): Promise<void> {
@@ -296,22 +357,30 @@ export class BotRunner {
       }
     }
 
-    // Need at least 50 candles for signal generation
-    if (candles.length < 50) return;
+    // Minimum candles depends on timeframe (scoring engine needs less than old AND gate)
+    const sec = this.timeframeToSeconds();
+    const minCandles = sec <= 15 ? 20 : sec <= 60 ? 30 : 50;
+    if (candles.length < minCandles) return;
 
-    // Generate signal using real data
+    // Signal cooldown: prevent over-trading on same candle
+    if (this.lastSignalAt && Date.now() - this.lastSignalAt < this.getSignalCooldownMs()) {
+      return;
+    }
+
+    // Generate signal using scoring engine
     const signal = generateSignal(candles, this.asset, this.timeframe);
     if (!signal) {
-      // No signal detected this tick, not an error
+      // Insufficient data for signal generation
       this.consecutiveErrors = 0;
       return;
     }
 
     this.consecutiveErrors = 0;
     this.lastSignalAt = Date.now();
+    this.lastTradeDirection = signal.direction;
     this.signalsGenerated++;
 
-    console.log(`[BotRunner] Signal: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence`);
+    console.log(`[BotRunner] Signal: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
 
     // Save signal to DB
     await this.saveSignal(signal);
@@ -346,7 +415,7 @@ export class BotRunner {
           lower: signal.indicators.bollingerLower,
         },
         stochastic: signal.indicators.stochastic.toFixed(4),
-        // New strategy indicators
+        // Strategy indicators
         ema20: signal.indicators.ema20.toFixed(8),
         ema50: signal.indicators.ema50.toFixed(8),
         stochK: signal.indicators.stochK.toFixed(4),
@@ -355,6 +424,18 @@ export class BotRunner {
         highFractal: signal.indicators.highFractal,
         dojiFiltered: signal.indicators.dojiRejected,
         multiTimeframeConfirmation: signal.multiTimeframeConfirmation,
+        // Scoring system indicators
+        supportLevel: signal.indicators.supportLevel?.toFixed(8) || null,
+        resistanceLevel: signal.indicators.resistanceLevel?.toFixed(8) || null,
+        nearSupport: signal.indicators.nearSupport,
+        nearResistance: signal.indicators.nearResistance,
+        marketStructure: signal.indicators.marketStructure,
+        structureBreak: signal.indicators.structureBreak,
+        signalScore: signal.indicators.signalScore?.toFixed(4) || null,
+        bollingerPercentB: signal.indicators.bollingerPercentB?.toFixed(4) || null,
+        bollingerWidth: signal.indicators.bollingerWidth?.toFixed(6) || null,
+        indicatorScores: signal.indicators.indicatorScores || null,
+        diagnostic: signal.diagnostic,
         isActive: true,
       });
     } catch {
@@ -378,11 +459,19 @@ export class BotRunner {
       return;
     }
 
+    // Determine the effective trade amount
+    let effectiveAmount = this.tradeAmount;
+    if (this.compoundEnabled) {
+      effectiveAmount = this.compoundCurrentAmount;
+    } else if (this.martingaleEnabled && this.martingaleLevel === 1) {
+      effectiveAmount = this.baseTradeAmount * 2;
+    }
+
     try {
       const result = await executeTrade(this.userId, {
         asset: signal.asset,
         direction: signal.direction,
-        amount: this.tradeAmount,
+        amount: effectiveAmount,
         timeframe: signal.timeframe,
         openPrice: currentPrice,
         mode: this.mode,
@@ -390,14 +479,47 @@ export class BotRunner {
       });
 
       if (result.trade) {
+        const isWin = result.profit > 0;
         this.tradesExecuted++;
+
         // Update daily risk tracking
-        if (result.profit > 0) {
+        if (isWin) {
           this.dailyWins++;
         } else {
           this.dailyLosses++;
         }
         this.dailyProfit += result.profit;
+
+        // === Compound interest logic ===
+        if (this.compoundEnabled) {
+          if (isWin) {
+            // Compound: add profit to current amount
+            this.compoundCurrentAmount = this.compoundCurrentAmount + (this.compoundCurrentAmount * this.compoundPayoutRate);
+            this.compoundTradesTaken++;
+            console.log(`[BotRunner] Compound WIN #${this.compoundTradesTaken}/${this.compoundTradesTarget}: amount now $${this.compoundCurrentAmount.toFixed(2)}`);
+
+            if (this.compoundTradesTaken >= this.compoundTradesTarget) {
+              this.pause(`Compound: Objectif atteint! ${this.compoundTradesTaken} trades reussis. Montant final: $${this.compoundCurrentAmount.toFixed(2)}`);
+              return;
+            }
+          } else {
+            // LOSS in compound: STOP immediately
+            this.pause(`Compound: Perte au trade #${this.compoundTradesTaken + 1}. Montant perdu: $${effectiveAmount.toFixed(2)}`);
+            return;
+          }
+        }
+
+        // === Martingale logic (only if compound is not active) ===
+        if (this.martingaleEnabled && !this.compoundEnabled) {
+          if (!isWin && this.martingaleLevel === 0) {
+            // Loss on base amount: activate martingale (double next trade)
+            this.martingaleLevel = 1;
+            console.log(`[BotRunner] Martingale activated: next trade will be $${(this.baseTradeAmount * 2).toFixed(2)}`);
+          } else {
+            // Win OR loss on doubled trade: reset to base
+            this.martingaleLevel = 0;
+          }
+        }
 
         // Check limits after trade
         if (this.dailyProfit <= -this.lossLimit) {
@@ -406,7 +528,8 @@ export class BotRunner {
           this.pause(`Objectif de profit atteint: +$${this.dailyProfit.toFixed(2)}`);
         }
 
-        console.log(`[BotRunner] Trade executed: ${signal.direction} ${signal.asset} profit=${result.profit.toFixed(2)} dailyP/L=$${this.dailyProfit.toFixed(2)} (W:${this.dailyWins}/L:${this.dailyLosses})`);
+        const amountStr = effectiveAmount !== this.tradeAmount ? `$${effectiveAmount.toFixed(2)}` : `$${this.tradeAmount}`;
+        console.log(`[BotRunner] Trade executed: ${signal.direction} ${signal.asset} amount=${amountStr} profit=${result.profit.toFixed(2)} dailyP/L=$${this.dailyProfit.toFixed(2)} (W:${this.dailyWins}/L:${this.dailyLosses})`);
       }
     } catch (err) {
       console.error(`[BotRunner] Trade execution failed:`, err);
@@ -466,6 +589,10 @@ export function startBotRunner(opts: {
   confidenceMode?: "standard" | "high";
   profitTarget?: number;
   lossLimit?: number;
+  martingaleEnabled?: boolean;
+  compoundEnabled?: boolean;
+  compoundTradesTarget?: number;
+  compoundPayoutRate?: number;
 }): BotRunner {
   // Stop existing runner if any
   const existing = activeRunners.get(opts.userId);

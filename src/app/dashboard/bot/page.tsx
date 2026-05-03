@@ -17,6 +17,7 @@ interface BotSession {
   totalProfit: string;
   startedAt: string;
   stoppedAt: string | null;
+  useGlobalSsid: boolean;
 }
 
 interface RunnerStatus {
@@ -40,6 +41,22 @@ interface RunnerStatus {
   consecutiveErrors: number;
   lastSignalAt: number | null;
   startedAt: string;
+  martingaleEnabled: boolean;
+  martingaleLevel: number;
+  baseTradeAmount: number;
+  compoundEnabled: boolean;
+  compoundTradesTarget: number;
+  compoundTradesTaken: number;
+  compoundCurrentAmount: number;
+  compoundInitialAmount: number;
+  compoundPayoutRate: number;
+}
+
+interface SsidInfo {
+  hasPersonalSsid: boolean;
+  globalSsidAvailable: boolean;
+  globalSsidStatus: string;
+  onSharedClient: boolean;
 }
 
 const REGULAR_ASSETS = [
@@ -66,6 +83,7 @@ export default function BotPage() {
   const [sessions, setSessions] = useState<BotSession[]>([]);
   const [activeSession, setActiveSession] = useState<BotSession | null>(null);
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
+  const [ssidInfo, setSsidInfo] = useState<SsidInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("DEMO");
   const [ssid, setSsid] = useState("");
@@ -79,6 +97,12 @@ export default function BotPage() {
   const [lossLimit, setLossLimit] = useState(25);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  // Martingale
+  const [martingaleEnabled, setMartingaleEnabled] = useState(false);
+  // Compound interest
+  const [compoundEnabled, setCompoundEnabled] = useState(false);
+  const [compoundTradesTarget, setCompoundTradesTarget] = useState(3);
+  const [compoundPayoutRate, setCompoundPayoutRate] = useState(92);
 
   const fetchUser = useCallback(async () => {
     try {
@@ -88,13 +112,11 @@ export default function BotPage() {
         const u = data.user as Record<string, unknown>;
         setUser(u);
         setMode(u.tradeMode as string || "DEMO");
-        // Pre-fill trade amount from profile defaults
         const currentMode = (u.tradeMode as string) || "DEMO";
         const defaultAmount = currentMode === "DEMO"
           ? parseFloat(String(u.demoTradeAmount || "1"))
           : parseFloat(String(u.liveTradeAmount || "1"));
         setTradeAmount(defaultAmount);
-        // Pre-fill profit/loss limits from profile
         if (u.profitTarget) setProfitTarget(parseFloat(String(u.profitTarget)));
         if (u.lossLimit) setLossLimit(parseFloat(String(u.lossLimit)));
       }
@@ -108,7 +130,6 @@ export default function BotPage() {
       if (data.sessions) setSessions(data.sessions);
       if (data.activeSession) {
         setActiveSession(data.activeSession);
-        // Sync UI state from active session
         if (data.activeSession.botType) setBotType(data.activeSession.botType);
         if (data.activeSession.asset) setAsset(data.activeSession.asset);
         if (data.activeSession.timeframe) setTimeframe(data.activeSession.timeframe);
@@ -118,8 +139,10 @@ export default function BotPage() {
       if (data.runnerStatus) {
         setRunnerStatus(data.runnerStatus);
         if (data.runnerStatus.confidenceMode) setConfidenceMode(data.runnerStatus.confidenceMode);
+      } else {
+        setRunnerStatus(null);
       }
-      else setRunnerStatus(null);
+      if (data.ssidInfo) setSsidInfo(data.ssidInfo);
     } catch {}
   }, []);
 
@@ -137,26 +160,24 @@ export default function BotPage() {
     return () => clearInterval(interval);
   }, [activeSession, fetchSessions]);
 
-  const handleBotAction = async (action: "START" | "STOP") => {
+  const handleBotAction = async (action: "START" | "STOP" | "RESET_COMPOUND") => {
     setLoading(true);
     setError("");
     setSuccess("");
     try {
+      const body: Record<string, unknown> = { action, mode, botType, asset, timeframe, tradeAmount, confidenceMode, profitTarget, lossLimit, martingaleEnabled };
+
+      if (action === "START") {
+        body.ssid = ssid || undefined;
+        body.compoundEnabled = compoundEnabled;
+        body.compoundTradesTarget = compoundEnabled ? compoundTradesTarget : undefined;
+        body.compoundPayoutRate = compoundEnabled ? compoundPayoutRate / 100 : undefined;
+      }
+
       const res = await fetch("/api/bot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action,
-          mode,
-          botType,
-          asset,
-          timeframe,
-          tradeAmount,
-          confidenceMode,
-          profitTarget,
-          lossLimit,
-          ssid: ssid || undefined,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -166,9 +187,14 @@ export default function BotPage() {
         }
         setError(errorMsg);
       } else {
-        setSuccess(
-          action === "START" ? "Bot démarré avec succès!" : "Bot arrêté."
-        );
+        if (action === "START") {
+          const ssidSource = data.useGlobalSsid ? " (SSID Global Admin)" : "";
+          setSuccess(`Bot demarre avec succes!${ssidSource}`);
+        } else if (action === "RESET_COMPOUND") {
+          setSuccess("Interet compose reinitialise!");
+        } else {
+          setSuccess("Bot arrete.");
+        }
         if (data.runnerStatus) setRunnerStatus(data.runnerStatus);
         fetchSessions();
       }
@@ -179,6 +205,23 @@ export default function BotPage() {
   };
 
   const isRunning = !!activeSession?.isRunning;
+  const isCompoundPaused = runnerStatus?.paused && runnerStatus?.compoundEnabled &&
+    (runnerStatus.pauseReason?.includes("Compound") || runnerStatus.pauseReason?.includes("compound"));
+
+  // Determine SSID source display
+  const getSsidSource = () => {
+    if (ssid) return "Saisi manuellement";
+    if (user?.pocketOptionSsid) return "SSID Personnel (Profil)";
+    if (ssidInfo?.globalSsidAvailable) return "SSID Global (Admin)";
+    return "Aucun SSID";
+  };
+
+  const getEffectiveAmount = () => {
+    if (!runnerStatus) return tradeAmount;
+    if (runnerStatus.compoundEnabled) return runnerStatus.compoundCurrentAmount;
+    if (runnerStatus.martingaleEnabled && runnerStatus.martingaleLevel === 1) return runnerStatus.baseTradeAmount * 2;
+    return runnerStatus.tradeAmount;
+  };
 
   return (
     <DashboardLayout>
@@ -203,6 +246,51 @@ export default function BotPage() {
           </div>
         )}
 
+        {/* Connection Status Panel */}
+        <div className="glass-card rounded-xl p-5">
+          <div className="text-slate-400 text-xs font-medium mb-3">CONNEXION POCKETOPTION</div>
+          <div className="flex items-center gap-4">
+            <div className={`w-4 h-4 rounded-full ${
+              isRunning && runnerStatus && !runnerStatus.paused
+                ? "bg-emerald-400 animate-pulse"
+                : runnerStatus?.paused
+                  ? "bg-yellow-400"
+                  : "bg-slate-500"
+            }`} />
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-white">
+                  {isRunning && runnerStatus && !runnerStatus.paused
+                    ? "Connecte"
+                    : runnerStatus?.paused
+                      ? "En pause"
+                      : "Deconnecte"}
+                </span>
+                {isRunning && activeSession && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    activeSession.useGlobalSsid
+                      ? "bg-violet-500/20 text-violet-400 border border-violet-500/30"
+                      : "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
+                  }`}>
+                    {activeSession.useGlobalSsid ? "SSID Global (Admin)" : "SSID Personnel"}
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                Source: {getSsidSource()}
+              </div>
+            </div>
+            {!isRunning && !ssidInfo?.globalSsidAvailable && !user?.pocketOptionSsid && !ssid && (
+              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-1.5 text-yellow-400 text-xs">
+                Aucun SSID - Ajoutez-le ci-dessous ou demandez a l&apos;admin
+              </div>
+            )}
+          </div>
+          <div className="mt-2 text-xs text-slate-500">
+            Le bot ne demarre PAS automatiquement. Vous devez cliquer sur Demarrer.
+          </div>
+        </div>
+
         {/* Bot Type Selection */}
         <div className="glass-card rounded-xl p-5">
           <div className="text-slate-400 text-xs font-medium mb-4">TYPE DE BOT</div>
@@ -216,10 +304,9 @@ export default function BotPage() {
                   : "border-slate-700 hover:border-slate-600"
               } disabled:opacity-50`}
             >
-              <div className="text-2xl mb-2">📊</div>
-              <div className="font-bold text-white">Bot Signal</div>
+              <div className="font-bold text-white">Signal</div>
               <div className="text-xs text-slate-400 mt-1">
-                Génère des signaux CALL/PUT basés sur les données réelles. Vous tradez manuellement.
+                Genere des signaux CALL/PUT. Vous tradez manuellement.
               </div>
             </button>
             <button
@@ -231,10 +318,9 @@ export default function BotPage() {
                   : "border-slate-700 hover:border-slate-600"
               } disabled:opacity-50`}
             >
-              <div className="text-2xl mb-2">🤖</div>
-              <div className="font-bold text-white">Bot Automatique</div>
+              <div className="font-bold text-white">Automatique</div>
               <div className="text-xs text-slate-400 mt-1">
-                Trade automatiquement selon la strategie de confiance. Requiert SSID PocketOption.
+                Trade automatiquement selon la strategie. Requiert SSID.
               </div>
             </button>
           </div>
@@ -244,7 +330,7 @@ export default function BotPage() {
         <div className="glass-card rounded-xl p-5">
           <div className="text-slate-400 text-xs font-medium mb-4">CONFIGURATION</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Asset Selector */}
+            {/* Asset */}
             <div>
               <label className="block text-slate-400 text-xs mb-1.5">Actif</label>
               <select
@@ -253,12 +339,12 @@ export default function BotPage() {
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               >
-                <optgroup label="Marché Régulier" className="bg-slate-900">
+                <optgroup label="Marche Regulier" className="bg-slate-900">
                   {REGULAR_ASSETS.map((a) => (
                     <option key={a} value={a} className="bg-slate-900">{a}</option>
                   ))}
                 </optgroup>
-                <optgroup label="Marché OTC" className="bg-slate-900">
+                <optgroup label="Marche OTC" className="bg-slate-900">
                   {OTC_ASSETS.map((a) => (
                     <option key={a} value={a} className="bg-slate-900">{a}</option>
                   ))}
@@ -266,7 +352,7 @@ export default function BotPage() {
               </select>
             </div>
 
-            {/* Timeframe Selector */}
+            {/* Timeframe */}
             <div>
               <label className="block text-slate-400 text-xs mb-1.5">Timeframe</label>
               <select
@@ -283,9 +369,7 @@ export default function BotPage() {
 
             {/* Trade Amount */}
             <div>
-              <label className="block text-slate-400 text-xs mb-1.5">
-                Montant par Trade ($)
-              </label>
+              <label className="block text-slate-400 text-xs mb-1.5">Montant par Trade ($)</label>
               <input
                 type="number"
                 min="1"
@@ -327,11 +411,6 @@ export default function BotPage() {
                   Haute 80%+
                 </button>
               </div>
-              <p className="text-xs text-slate-500 mt-1">
-                {confidenceMode === "standard"
-                  ? "Trade des 70%+ de confiance - plus de signaux"
-                  : "Trade des 80%+ de confiance - signaux plus fiables"}
-              </p>
             </div>
 
             {/* Mode Selector */}
@@ -351,22 +430,17 @@ export default function BotPage() {
                         : "border-slate-700 text-slate-400 hover:border-slate-600"
                     } disabled:opacity-50`}
                   >
-                    {m === "DEMO" ? "🔵 DEMO" : "🔴 LIVE"}
+                    {m === "DEMO" ? "DEMO" : "LIVE"}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-slate-500 mt-1">
-                {mode === "DEMO"
-                  ? "Trading simulé avec capital fictif ($10,000)"
-                  : "Trading réel avec votre compte PocketOption"}
-              </p>
             </div>
 
             {/* SSID Input */}
             <div>
               <label className="block text-slate-400 text-xs mb-1.5">
                 SSID PocketOption{" "}
-                <span className="text-slate-600">(requis pour les données réelles)</span>
+                <span className="text-slate-600">(optionnel si SSID global disponible)</span>
               </label>
               <input
                 type="password"
@@ -377,15 +451,13 @@ export default function BotPage() {
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm font-mono disabled:opacity-50"
               />
               <p className="text-xs text-slate-500 mt-1">
-                🔒 Chiffré AES-256 et isolé par session utilisateur
+                Chiffre AES-256 et isole par session. Si vide, utilise le SSID global.
               </p>
             </div>
 
             {/* Profit Target */}
             <div>
-              <label className="block text-slate-400 text-xs mb-1.5">
-                Objectif Profit ($)
-              </label>
+              <label className="block text-slate-400 text-xs mb-1.5">Objectif Profit ($)</label>
               <input
                 type="number"
                 min="1"
@@ -395,16 +467,11 @@ export default function BotPage() {
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               />
-              <p className="text-xs text-slate-500 mt-1">
-                Le bot s&apos;arrête quand le profit journalier atteint ce montant
-              </p>
             </div>
 
             {/* Loss Limit */}
             <div>
-              <label className="block text-slate-400 text-xs mb-1.5">
-                Limite de Perte ($)
-              </label>
+              <label className="block text-slate-400 text-xs mb-1.5">Limite de Perte ($)</label>
               <input
                 type="number"
                 min="1"
@@ -414,15 +481,89 @@ export default function BotPage() {
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               />
-              <p className="text-xs text-slate-500 mt-1">
-                Le bot s&apos;arrête quand la perte journalière atteint ce montant
-              </p>
             </div>
+          </div>
+
+          {/* Martingale Toggle */}
+          <div className="mt-4 pt-4 border-t border-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium text-white">Martingale (1 niveau)</div>
+                <div className="text-xs text-slate-400 mt-0.5">
+                  Apres une perte, le prochain trade sera double. Retour au montant de base apres.
+                </div>
+              </div>
+              <button
+                onClick={() => setMartingaleEnabled(!martingaleEnabled)}
+                disabled={isRunning}
+                className={`relative w-12 h-6 rounded-full transition-all disabled:opacity-50 ${
+                  martingaleEnabled ? "bg-amber-500" : "bg-slate-700"
+                }`}
+              >
+                <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${
+                  martingaleEnabled ? "left-6" : "left-0.5"
+                }`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Compound Interest Toggle */}
+          <div className="mt-4 pt-4 border-t border-slate-800">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-sm font-medium text-white">Interet Compose</div>
+                <div className="text-xs text-slate-400 mt-0.5">
+                  Reinvestit le montant total + profit sur chaque trade successif. Arret immediat si perte.
+                </div>
+              </div>
+              <button
+                onClick={() => setCompoundEnabled(!compoundEnabled)}
+                disabled={isRunning}
+                className={`relative w-12 h-6 rounded-full transition-all disabled:opacity-50 ${
+                  compoundEnabled ? "bg-violet-500" : "bg-slate-700"
+                }`}
+              >
+                <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${
+                  compoundEnabled ? "left-6" : "left-0.5"
+                }`} />
+              </button>
+            </div>
+            {compoundEnabled && (
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1.5">Nombre de trades</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={compoundTradesTarget}
+                    onChange={(e) => setCompoundTradesTarget(parseInt(e.target.value) || 1)}
+                    disabled={isRunning}
+                    className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1.5">Taux de paiement (%)</label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="100"
+                    value={compoundPayoutRate}
+                    onChange={(e) => setCompoundPayoutRate(parseInt(e.target.value) || 92)}
+                    disabled={isRunning}
+                    className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
+                  />
+                </div>
+                <div className="col-span-2 bg-white/5 rounded-lg p-2.5 text-xs text-slate-400">
+                  Ex: ${tradeAmount} x {compoundPayoutRate}% = ${((tradeAmount * compoundPayoutRate / 100) + tradeAmount).toFixed(2)} puis ${((tradeAmount * compoundPayoutRate / 100 + tradeAmount) * compoundPayoutRate / 100 + (tradeAmount * compoundPayoutRate / 100 + tradeAmount)).toFixed(2)} etc.
+                </div>
+              </div>
+            )}
           </div>
 
           {mode === "LIVE" && (
             <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-yellow-400 text-sm">
-              ⚠️ Mode LIVE: Les trades seront exécutés avec votre capital réel PocketOption. Tradez responsablement.
+              Mode LIVE: Les trades seront executes avec votre capital reel PocketOption.
             </div>
           )}
         </div>
@@ -435,31 +576,42 @@ export default function BotPage() {
               <div className="flex items-center gap-3">
                 <div
                   className={`w-3 h-3 rounded-full ${
-                    isRunning ? "bg-emerald-400 animate-pulse" : runnerStatus?.paused ? "bg-yellow-400" : "bg-slate-500"
+                    isRunning && !runnerStatus?.paused ? "bg-emerald-400 animate-pulse" : runnerStatus?.paused ? "bg-yellow-400" : "bg-slate-500"
                   }`}
                 />
                 <span className="font-bold text-white text-lg">
-                  {runnerStatus?.paused ? "En pause" : isRunning ? "En cours d'exécution" : "Arrêté"}
+                  {runnerStatus?.paused ? "En pause" : isRunning ? "En cours d'execution" : "Arrete"}
                 </span>
                 {isRunning && activeSession && (
                   <span className="text-xs text-slate-400">
-                    {activeSession.botType === "signal" ? "Signal" : "Auto"} · {activeSession.asset} · {activeSession.timeframe} · {runnerStatus?.confidenceMode === "high" ? "80%+" : "70%+"}
+                    {activeSession.botType === "signal" ? "Signal" : "Auto"} · {activeSession.asset} · {activeSession.timeframe}
                   </span>
                 )}
               </div>
             </div>
 
-            <button
-              onClick={() => handleBotAction(isRunning ? "STOP" : "START")}
-              disabled={loading}
-              className={`px-8 py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-50 ${
-                isRunning
-                  ? "bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400"
-                  : "bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 text-white shadow-lg shadow-cyan-500/20"
-              }`}
-            >
-              {loading ? "..." : isRunning ? "⏹ Arrêter" : "▶ Démarrer"}
-            </button>
+            <div className="flex gap-2">
+              {isCompoundPaused && (
+                <button
+                  onClick={() => handleBotAction("RESET_COMPOUND")}
+                  disabled={loading}
+                  className="px-6 py-3 rounded-xl font-bold text-sm bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/50 text-violet-400 transition-all disabled:opacity-50"
+                >
+                  Recommencer
+                </button>
+              )}
+              <button
+                onClick={() => handleBotAction(isRunning ? "STOP" : "START")}
+                disabled={loading}
+                className={`px-8 py-3 rounded-xl font-bold text-sm transition-all disabled:opacity-50 ${
+                  isRunning
+                    ? "bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400"
+                    : "bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 text-white shadow-lg shadow-cyan-500/20"
+                }`}
+              >
+                {loading ? "..." : isRunning ? "Arreter" : "Demarrer"}
+              </button>
+            </div>
           </div>
 
           {isRunning && (
@@ -467,9 +619,9 @@ export default function BotPage() {
               {[
                 { label: "Signaux", value: runnerStatus?.signalsGenerated ?? 0, color: "text-cyan-400" },
                 { label: "Trades", value: runnerStatus?.tradesExecuted ?? 0, color: "text-white" },
-                { label: "Montant", value: `$${runnerStatus?.tradeAmount ?? 1}`, color: "text-violet-400" },
+                { label: "Montant", value: `$${getEffectiveAmount().toFixed(2)}`, color: "text-violet-400" },
                 { label: "Victoires", value: runnerStatus?.dailyWins ?? 0, color: "text-emerald-400" },
-                { label: "Défaites", value: runnerStatus?.dailyLosses ?? 0, color: "text-red-400" },
+                { label: "Defaites", value: runnerStatus?.dailyLosses ?? 0, color: "text-red-400" },
                 {
                   label: "Profit/Jour",
                   value: `$${(runnerStatus?.dailyProfit ?? 0).toFixed(2)}`,
@@ -486,10 +638,53 @@ export default function BotPage() {
             </div>
           )}
 
+          {/* Martingale/Compound Status */}
+          {isRunning && runnerStatus && (runnerStatus.martingaleEnabled || runnerStatus.compoundEnabled) && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+              {runnerStatus.martingaleEnabled && (
+                <div className={`rounded-xl p-3 border ${
+                  runnerStatus.martingaleLevel === 1
+                    ? "bg-amber-500/10 border-amber-500/30"
+                    : "bg-white/5 border-slate-700"
+                }`}>
+                  <div className="text-xs text-slate-400">Martingale</div>
+                  <div className={`font-bold ${runnerStatus.martingaleLevel === 1 ? "text-amber-400" : "text-white"}`}>
+                    {runnerStatus.martingaleLevel === 1 ? `2x en cours ($${(runnerStatus.baseTradeAmount * 2).toFixed(2)})` : "Base (en attente)"}
+                  </div>
+                </div>
+              )}
+              {runnerStatus.compoundEnabled && (
+                <div className={`rounded-xl p-3 border ${
+                  isCompoundPaused
+                    ? "bg-red-500/10 border-red-500/30"
+                    : "bg-violet-500/10 border-violet-500/30"
+                }`}>
+                  <div className="text-xs text-slate-400">Interet Compose</div>
+                  <div className={`font-bold ${isCompoundPaused ? "text-red-400" : "text-violet-400"}`}>
+                    Trade {runnerStatus.compoundTradesTaken}/{runnerStatus.compoundTradesTarget} · ${runnerStatus.compoundCurrentAmount.toFixed(2)}
+                  </div>
+                  {/* Progress bar */}
+                  <div className="mt-2 w-full bg-slate-700 rounded-full h-1.5">
+                    <div
+                      className={`h-1.5 rounded-full transition-all ${isCompoundPaused ? "bg-red-400" : "bg-violet-400"}`}
+                      style={{ width: `${Math.min(100, (runnerStatus.compoundTradesTaken / runnerStatus.compoundTradesTarget) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {isRunning && runnerStatus?.paused && (
-            <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-center">
-              <div className="text-yellow-400 text-sm font-medium">
-                ⚠️ Bot en pause - {runnerStatus.pauseReason || `${runnerStatus.consecutiveErrors} erreurs consécutives`}
+            <div className={`mt-4 rounded-xl p-3 text-center border ${
+              isCompoundPaused && runnerStatus.pauseReason?.includes("Objectif")
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                : isCompoundPaused
+                  ? "bg-red-500/10 border-red-500/30 text-red-400"
+                  : "bg-yellow-500/10 border-yellow-500/30 text-yellow-400"
+            }`}>
+              <div className="text-sm font-medium">
+                {runnerStatus.pauseReason || `${runnerStatus.consecutiveErrors} erreurs consecutives`}
               </div>
             </div>
           )}
@@ -497,7 +692,7 @@ export default function BotPage() {
           {isRunning && !runnerStatus?.paused && (
             <div className="mt-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl p-3 text-center">
               <div className="text-cyan-400 text-sm font-medium">
-                📡 {runnerStatus?.signalsGenerated ?? 0} signaux générés · {runnerStatus?.tradesExecuted ?? 0} trades exécutés · Analyse en temps réel...
+                {runnerStatus?.signalsGenerated ?? 0} signaux generes · {runnerStatus?.tradesExecuted ?? 0} trades executes · Analyse en temps reel...
               </div>
             </div>
           )}
@@ -510,7 +705,6 @@ export default function BotPage() {
           </div>
           {sessions.length === 0 ? (
             <div className="p-12 text-center text-slate-500">
-              <div className="text-4xl mb-3">🤖</div>
               Aucune session de bot pour le moment
             </div>
           ) : (
@@ -525,16 +719,21 @@ export default function BotPage() {
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Statut</th>
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Trades</th>
                     <th className="text-left text-xs text-slate-400 px-4 py-3">Profit</th>
-                    <th className="text-left text-xs text-slate-400 px-4 py-3">Démarré</th>
+                    <th className="text-left text-xs text-slate-400 px-4 py-3">Demarre</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sessions.map((session) => (
                     <tr key={session.id} className="border-b border-slate-800/50 hover:bg-white/5">
                       <td className="px-4 py-3">
-                        <span className="text-sm">
-                          {session.botType === "auto" ? "🤖" : "📊"}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm">
+                            {session.botType === "auto" ? "Auto" : "Signal"}
+                          </span>
+                          {session.useGlobalSsid && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-violet-500/20 text-violet-400">Global</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-white">{session.asset || "-"}</td>
                       <td className="px-4 py-3 text-sm text-slate-300">{session.timeframe || "-"}</td>
@@ -557,7 +756,7 @@ export default function BotPage() {
                             }`}
                           />
                           <span className="text-xs text-slate-300">
-                            {session.isRunning ? "Actif" : "Arrêté"}
+                            {session.isRunning ? "Actif" : "Arrete"}
                           </span>
                         </div>
                       </td>
