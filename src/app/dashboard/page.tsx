@@ -101,7 +101,7 @@ export default function DashboardPage() {
           {[
             { label: "Total Trades", value: loading ? "..." : stats?.totalTrades || 0, icon: "📊", color: "text-white", bg: "from-blue-500/10 to-transparent" },
             { label: "Win Rate Elite", value: loading ? "..." : `${stats?.winRate || 0}%`, icon: "🎯", color: stats && stats.winRate >= 50 ? "text-emerald-400" : "text-red-400", bg: "from-emerald-500/10 to-transparent" },
-            { label: "Profit Net", value: loading ? "..." : `$${parseFloat(stats?.totalProfit || "0").toLocaleString()}`, icon: "💰", color: stats && parseFloat(stats.totalProfit || "0") >= 0 ? "text-emerald-400" : "text-red-400", bg: "from-violet-500/10 to-transparent" },
+            { label: "Profit Net", value: loading ? "..." : `$${Number(stats?.totalProfit || 0).toLocaleString()}`, icon: "💰", color: stats && Number(stats.totalProfit || 0) >= 0 ? "text-emerald-400" : "text-red-400", bg: "from-violet-500/10 to-transparent" },
             { label: "Profit Factor", value: loading ? "..." : stats?.profitFactor || 0, icon: "⚡", color: stats && stats.profitFactor >= 1 ? "text-cyan-400" : "text-red-400", bg: "from-cyan-500/10 to-transparent" },
           ].map((card) => (
             <div key={card.label} className={`glass-card rounded-2xl p-6 border-white/5 bg-gradient-to-br ${card.bg} relative overflow-hidden group hover:-translate-y-1 transition-all duration-500`}>
