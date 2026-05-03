@@ -49,6 +49,7 @@ export default function BacktestPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [recentTrades, setRecentTrades] = useState<Trade[]>([]);
+  const [initialEquity, setInitialEquity] = useState(10000);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [poConnected, setPoConnected] = useState(false);
@@ -70,6 +71,7 @@ export default function BacktestPage() {
       if (data.equityCurve) setEquityCurve(data.equityCurve);
       if (data.trades) setRecentTrades(data.trades);
       if (data.poConnected !== undefined) setPoConnected(data.poConnected);
+      if (data.initialEquity !== undefined) setInitialEquity(data.initialEquity);
     } catch {}
     setLoading(false);
   }, [filterAsset, filterMode]);
@@ -226,7 +228,7 @@ export default function BacktestPage() {
                         return <div key={i} className="flex-1 min-w-[1px] rounded-t transition-all" style={{ height: `${Math.max(1, height)}%`, backgroundColor: point.result === "WIN" ? "#10b981" : "#ef4444" }} />;
                       })}
                     </div>
-                    <div className="flex justify-between text-xs text-slate-500 mt-2"><span>${minEquity.toFixed(0)}</span><span>${maxEquity.toFixed(0)}</span></div>
+                    <div className="flex justify-between text-xs text-slate-500 mt-2"><span>${initialEquity.toFixed(0)}</span><span>${maxEquity.toFixed(0)}</span></div>
                   </>
                 )}
               </div>

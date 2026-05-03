@@ -49,10 +49,21 @@ export async function GET(req: NextRequest) {
     const globalSsidStatus = await getGlobalSsidStatus();
     const onSharedClient = isUserOnSharedClient(payload.userId);
 
+    // Get real balance if connected
+    let realBalance: { demo: number; live: number } | null = null;
+    const client = getPocketOptionClient(payload.userId);
+    if (client && client.isConnected && client.balance) {
+      realBalance = {
+        demo: client.balance.demo || 0,
+        live: client.balance.live || 0,
+      };
+    }
+
     return NextResponse.json({
       sessions,
       activeSession: activeSession || null,
       runnerStatus,
+      realBalance,
       ssidInfo: {
         hasPersonalSsid: !!activeSession?.useGlobalSsid ? false : true,
         globalSsidAvailable: globalSsidStatus === "VALID",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest, handleApiError } from "@/lib/auth";
 import { profileUpdateSchema } from "@/lib/validation";
 import { updateProfile } from "@/services/auth.service";
+import { connectPocketOption, decryptSSID } from "@/services/trading.service";
 
 export async function PUT(req: NextRequest) {
   try {
@@ -22,6 +23,19 @@ export async function PUT(req: NextRequest) {
     const updated = await updateProfile(payload.userId, parsed.data);
     if (!updated) {
       return NextResponse.json({ error: "Aucune modification" }, { status: 400 });
+    }
+
+    // If SSID was updated, try to connect immediately to validate and seed data
+    if (parsed.data.pocketOptionSsid) {
+      const isDemo = updated.tradeMode === "DEMO";
+      const rawSsid = decryptSSID(updated.pocketOptionSsid);
+      if (rawSsid) {
+        console.log(`[Profile] Auto-connecting PO for user ${payload.userId} after SSID update`);
+        // We don't await this to keep profile update fast, but it will update status in DB
+        connectPocketOption(payload.userId, rawSsid, isDemo).catch(err => {
+          console.error(`[Profile] Auto-connect failed:`, err);
+        });
+      }
     }
 
     return NextResponse.json({

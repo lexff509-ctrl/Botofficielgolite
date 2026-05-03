@@ -53,7 +53,21 @@ export async function GET(req: NextRequest) {
     );
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit;
 
-    let equity = 10000;
+    // Check if PocketOption is connected and get real balance
+    const poClient = getPocketOptionClient(payload.userId);
+    const poConnected = poClient?.isConnected || false;
+    let initialEquity = 10000;
+
+    if (poClient && poClient.isConnected && poClient.balance) {
+      const currentRealBalance = mode === "LIVE" ? poClient.balance.live : poClient.balance.demo;
+      if (currentRealBalance !== undefined) {
+        // Calculate initial equity based on current balance minus cumulative profits of trades shown
+        const totalProfitShown = filteredTrades.reduce((acc, t) => acc + parseFloat(t.profit || "0"), 0);
+        initialEquity = currentRealBalance - totalProfitShown;
+      }
+    }
+
+    let equity = initialEquity;
     const equityCurve = filteredTrades.map((t) => {
       equity += parseFloat(t.profit || "0");
       return {
@@ -66,10 +80,6 @@ export async function GET(req: NextRequest) {
         amount: t.amount,
       };
     });
-
-    // Check if PocketOption is connected
-    const poClient = getPocketOptionClient(payload.userId);
-    const poConnected = poClient?.isConnected || false;
 
     return NextResponse.json({
       stats: {
@@ -85,6 +95,7 @@ export async function GET(req: NextRequest) {
       equityCurve,
       trades: filteredTrades.slice(-50).reverse(),
       poConnected,
+      initialEquity: parseFloat(initialEquity.toFixed(2)),
     });
   } catch (error) {
     return handleApiError(error, "Backtest GET");

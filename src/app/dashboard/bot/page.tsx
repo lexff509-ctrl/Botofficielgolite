@@ -84,6 +84,7 @@ export default function BotPage() {
   const [activeSession, setActiveSession] = useState<BotSession | null>(null);
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
   const [ssidInfo, setSsidInfo] = useState<SsidInfo | null>(null);
+  const [realBalance, setRealBalance] = useState<{ demo: number; live: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("DEMO");
   const [ssid, setSsid] = useState("");
@@ -143,6 +144,7 @@ export default function BotPage() {
         setRunnerStatus(null);
       }
       if (data.ssidInfo) setSsidInfo(data.ssidInfo);
+      if (data.realBalance) setRealBalance(data.realBalance);
     } catch {}
   }, []);
 
@@ -273,6 +275,11 @@ export default function BotPage() {
                       : "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
                   }`}>
                     {activeSession.useGlobalSsid ? "SSID Global (Admin)" : "SSID Personnel"}
+                  </span>
+                )}
+                {isRunning && realBalance && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-black ${mode === "LIVE" ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-blue-500/20 text-blue-400 border border-blue-500/30"}`}>
+                    SOLDE REEL: ${mode === "LIVE" ? realBalance.live.toLocaleString() : realBalance.demo.toLocaleString()}
                   </span>
                 )}
               </div>

@@ -9,8 +9,11 @@ import {
 } from "@/lib/trading";
 import { candleCache } from "@/lib/candle-cache";
 import { getDecryptedSSID } from "@/services/auth.service";
-import { encryptSSID, decryptSSID } from "@/lib/auth";
+import { encryptSSID, decryptSSID as decryptAuthSSID } from "@/lib/auth";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
+
+// Re-export for convenience
+export const decryptSSID = decryptAuthSSID;
 import { preFetchCookies, getBestHost } from "@/lib/pocketoption/connection";
 
 // Active PocketOption connections per user (personal SSID)
