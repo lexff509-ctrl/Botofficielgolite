@@ -379,6 +379,14 @@ export class BotRunner {
       return;
     }
 
+    // Diagnostic: check if price is actually moving (stale data check)
+    const lastThreeCloses = candles.slice(-3).map(c => c.close);
+    const isStale = new Set(lastThreeCloses).size === 1;
+    if (isStale) {
+      console.warn(`[BotRunner] Stale price data detected for ${this.asset}. Skipping tick.`);
+      return;
+    }
+
     this.consecutiveErrors = 0;
     this.lastSignalAt = Date.now();
     this.lastTradeDirection = signal.direction;
@@ -406,8 +414,8 @@ export class BotRunner {
           const assetInfo = assets[assetSymbol];
           const payout = assetInfo?.payout || 0;
           
-          if (payout > 0 && payout < 0.80) {
-             console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 80%). Skipping trade for user ${this.userId}.`);
+          if (payout > 0 && payout < 0.60) { // Lowered to 60% for more flexibility while still protecting
+             console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 60%). Skipping trade for user ${this.userId}.`);
              return;
           }
         }

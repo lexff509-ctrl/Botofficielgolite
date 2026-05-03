@@ -401,44 +401,38 @@ function scoreRSI(rsi: number, tf: Timeframe): number {
   if (isScalping) {
     // Tighter zones for scalping: mean reversion focus
     if (rsi < 20) return 1.0;
-    if (rsi < 30) return 0.6;
-    if (rsi < 40) return 0.3;
-    if (rsi > 40 && rsi < 60) return 0;
-    if (rsi < 70) return -0.3;
-    if (rsi < 80) return -0.6;
+    if (rsi < 30) return 0.7;
+    if (rsi < 45) return 0.3;
+    if (rsi >= 45 && rsi <= 55) return 0;
+    if (rsi > 55 && rsi < 70) return -0.3;
+    if (rsi < 80) return -0.7;
     return -1.0; // RSI > 80
   } else {
     // Balanced: trend-following above 50, reversal at extremes
-    // RSI 50-70 = bullish momentum (not overbought yet)
-    // RSI 70-80 = strong but watch for reversal
-    // RSI > 80 = overbought
-    // RSI 30-50 = bearish momentum
-    // RSI 20-30 = strong but watch for reversal
-    // RSI < 20 = oversold
-    if (rsi < 20) return 0.8;      // Deeply oversold = reversal UP
-    if (rsi < 30) return 0.4;      // Oversold
-    if (rsi < 40) return 0.15;     // Slightly bearish
-    if (rsi >= 40 && rsi < 60) return 0; // Neutral
-    if (rsi < 70) return -0.15;    // Slightly bullish (slight PUT bias as it's above neutral)
-    if (rsi < 80) return -0.4;     // Getting overbought
-    return -0.8;                    // Deeply overbought = reversal DOWN
+    if (rsi < 20) return 0.9;      // Deeply oversold = reversal UP
+    if (rsi < 30) return 0.6;      // Oversold
+    if (rsi < 45) return 0.2;      // Slightly bearish momentum
+    if (rsi >= 45 && rsi <= 55) return 0; // Neutral
+    if (rsi > 55 && rsi < 70) return -0.2;    // Slightly bullish momentum
+    if (rsi < 80) return -0.6;     // Getting overbought
+    return -0.9;                    // Deeply overbought = reversal DOWN
   }
 }
 
 function scoreStochastic(stochK: number, stochD: number): number {
   // Bullish: oversold + bullish cross
   if (stochK < 20 && stochK > stochD) return 1.0;
-  if (stochK < 20 && stochK <= stochD) return 0.5; // Oversold but still falling
-  if (stochK < 30 && stochK > stochD) return 0.7;
+  if (stochK < 20 && stochK <= stochD) return 0.4; // Oversold but still falling
+  if (stochK < 30 && stochK > stochD) return 0.8;
 
   // Bearish: overbought + bearish cross
   if (stochK > 80 && stochK < stochD) return -1.0;
-  if (stochK > 80 && stochK >= stochD) return -0.5; // Overbought but still rising
-  if (stochK > 70 && stochK < stochD) return -0.7;
+  if (stochK > 80 && stochK >= stochD) return -0.4; // Overbought but still rising
+  if (stochK > 70 && stochK < stochD) return -0.8;
 
   // Mid-range: stronger signal based on K vs D
-  if (stochK > stochD) return 0.2;
-  if (stochK < stochD) return -0.2;
+  if (stochK > stochD + 5) return 0.3;
+  if (stochK < stochD - 5) return -0.3;
 
   return 0;
 }
