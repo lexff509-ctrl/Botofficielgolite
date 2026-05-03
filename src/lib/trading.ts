@@ -814,20 +814,21 @@ function evaluateSignal(
 
   // Determine direction based on technical confluence
   // rawScore is the weighted sum of indicators (-1.0 to 1.0)
-  // Use a smaller deadzone to be more sensitive but stable
+  // Use a very small deadzone to be highly sensitive to indicator changes
   let direction: "CALL" | "PUT";
-  if (rawScore > 0.02) {
+  if (rawScore > 0.01) {
     direction = "CALL";
-  } else if (rawScore < -0.02) {
+  } else if (rawScore < -0.01) {
     direction = "PUT";
   } else {
-    // If score is exactly neutral, fall back to trend confirmation
-    // EMA20 vs EMA50 is a very reliable trend indicator
-    direction = ema20 >= ema50 ? "CALL" : "PUT";
+    // If score is completely neutral, check short-term price action (last 3 candles)
+    const lastCandle = candles[candles.length - 1];
+    const prevCandle = candles[candles.length - 2];
+    direction = lastCandle.close >= prevCandle.close ? "CALL" : "PUT";
   }
   
   // Final Adjusted Score
-  const adjustedScore = rawScore;
+  const adjustedScore = Math.abs(rawScore);
 
   // Build indicators object
   const allIndicators = {

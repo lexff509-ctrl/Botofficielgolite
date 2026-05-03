@@ -26,11 +26,19 @@ const DEFAULT_PROFIT_TARGET = 50; // Default $50 profit target
 const DEFAULT_LOSS_LIMIT = 25; // Default $25 loss limit
 
 function getLoopIntervalMs(timeframe: string): number {
-  if (timeframe.endsWith("s")) return parseInt(timeframe) * 1000;
-  if (timeframe === "1m") return 30_000;
-  if (timeframe === "3m") return 60_000;
-  if (timeframe === "5m") return 60_000;
-  return 30_000;
+  const sec = timeframe.endsWith("s")
+    ? parseInt(timeframe)
+    : timeframe === "1m"
+    ? 60
+    : timeframe === "3m"
+    ? 180
+    : 300;
+  // Faster intervals for better real-time execution
+  if (sec <= 15) return 1000; // 1s for scalping
+  if (sec <= 30) return 2000; // 2s
+  if (sec <= 60) return 5000; // 5s for 1m
+  if (sec <= 180) return 15000; // 15s for 3m
+  return 30000; // 30s for 5m+
 }
 
 // ============ BOT RUNNER CLASS ============
@@ -59,6 +67,7 @@ export class BotRunner {
 
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private consecutiveErrors = 0;
+  private signalHistory: ("CALL" | "PUT")[] = [];
   private isPaused = false;
   private pauseReason: string | null = null;
   private lastSignalAt: number | null = null;
@@ -366,16 +375,17 @@ export class BotRunner {
     const minCandles = sec <= 15 ? 20 : sec <= 60 ? 30 : 50;
     if (candles.length < minCandles) return;
 
-    // Signal cooldown: prevent over-trading on same candle
-    if (this.lastSignalAt && Date.now() - this.lastSignalAt < this.getSignalCooldownMs()) {
-      return;
-    }
-
     // Generate signal using scoring engine
     const signal = generateSignal(candles, this.asset, this.timeframe);
     if (!signal) {
       // Insufficient data for signal generation
       this.consecutiveErrors = 0;
+      return;
+    }
+
+    // Signal cooldown: prevent over-trading on same candle/signal
+    // Only check if we already have a signal timestamp
+    if (this.lastSignalAt && Date.now() - this.lastSignalAt < this.getSignalCooldownMs()) {
       return;
     }
 
@@ -388,12 +398,7 @@ export class BotRunner {
     }
 
     this.consecutiveErrors = 0;
-    this.lastSignalAt = Date.now();
-    this.lastTradeDirection = signal.direction;
-    this.signalsGenerated++;
-
-    console.log(`[BotRunner] Signal for user ${this.userId}: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
-
+    
     // Save signal to DB
     await this.saveSignal(signal);
 
@@ -410,21 +415,44 @@ export class BotRunner {
         const client = getPocketOptionClient(this.userId);
         if (client && client.isConnected) {
           const assets = (client as any).assets || {};
-          const assetSymbol = this.asset.replace("/","").replace(" (OTC)", "_otc");
+          const assetSymbol = PocketOptionClient.toPOSymbol(this.asset);
           const assetInfo = assets[assetSymbol];
           const payout = assetInfo?.payout || 0;
           
           if (payout > 0 && payout < 0.60) { // Lowered to 60% for more flexibility while still protecting
-             console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 60%). Skipping trade for user ${this.userId}.`);
+             console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 60%) for ${assetSymbol}. Skipping trade for user ${this.userId}.`);
              return;
           }
         }
 
         console.log(`[BotRunner] Payout OK. Executing trade for user ${this.userId}...`);
+        
+        // Update tracking state ONLY when trade is attempted
+        this.lastSignalAt = Date.now();
+        this.lastTradeDirection = signal.direction;
+        this.signalsGenerated++;
+        
         await this.executeAutoTrade(signal, candles);
       } else {
         console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% below threshold ${threshold}%. Skipping trade for user ${this.userId}.`);
       }
+    } else {
+      // Signal only mode: update tracking state
+      this.lastSignalAt = Date.now();
+      this.lastTradeDirection = signal.direction;
+      this.signalsGenerated++;
+
+      // Track signal history for diversity diagnostics
+      this.signalHistory.push(signal.direction);
+      if (this.signalHistory.length > 10) this.signalHistory.shift();
+
+      const callCount = this.signalHistory.filter(d => d === "CALL").length;
+      const putCount = this.signalHistory.filter(d => d === "PUT").length;
+      if (this.signalHistory.length >= 5 && (callCount === 0 || putCount === 0)) {
+        console.warn(`[BotRunner] One-sided signal direction detected (${this.signalHistory[0]} x${this.signalHistory.length}). Strategy may be trend-locked.`);
+      }
+
+      console.log(`[BotRunner] Signal for user ${this.userId}: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
     }
 
     // Update bot session stats

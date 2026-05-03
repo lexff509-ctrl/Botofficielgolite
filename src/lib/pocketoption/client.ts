@@ -134,6 +134,8 @@ export class PocketOptionClient {
 
   // SSID expiration tracking
   private ssidExpired = false;
+  // Mutex for sequential trade execution per client
+  private tradeMutex: Promise<void> = Promise.resolve();
   // Pre-fetched cookies for anti-detection
   private prefetchedCookies: string[] = [];
   // Tick counter for throttled logging
@@ -1325,41 +1327,66 @@ export class PocketOptionClient {
       throw new Error("Not connected");
     }
 
-    this.orderData = null;
-    this.successOpenOrderFlag = false;
+    // Use mutex to serialize trades on this client
+    let releaseMutex: () => void;
+    const mutexPromise = new Promise<void>((resolve) => {
+      releaseMutex = resolve;
+    });
+    const prevMutex = this.tradeMutex;
+    this.tradeMutex = this.tradeMutex.then(() => mutexPromise);
 
-    // Add human-like jitter before placing trade
-    const jitter = getTradeJitter();
-    await new Promise((r) => setTimeout(r, jitter));
+    await prevMutex;
 
-    const action = request.direction === "CALL" ? "call" : "put";
-    this.openOrder(request.asset, request.amount, action, this.isDemo ? 1 : 0, request.duration);
+    try {
+      this.orderData = null;
+      this.successOpenOrderFlag = false;
 
-    const startTime = Date.now();
-    // Increase timeout to 45s for slower network conditions
-    while (Date.now() - startTime < 45000) {
-      // Check for both binary order data AND the success flag
-      if (this.orderData !== null) break;
-      await new Promise((r) => setTimeout(r, 200));
+      // Add human-like jitter before placing trade
+      const jitter = getTradeJitter();
+      await new Promise((r) => setTimeout(r, jitter));
+
+      const action = request.direction === "CALL" ? "call" : "put";
+      this.openOrder(
+        request.asset,
+        request.amount,
+        action,
+        this.isDemo ? 1 : 0,
+        request.duration
+      );
+
+      const startTime = Date.now();
+      // Increase timeout to 45s for slower network conditions
+      while (Date.now() - startTime < 45000) {
+        // Check for both binary order data AND the success flag
+        if (this.orderData !== null) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      if (!this.orderData) {
+        console.error(
+          `[PO] Trade timeout for ${request.asset}. Order data never received.`
+        );
+        throw new Error("Trade execution timeout");
+      }
+
+      const order = this.orderData as Record<string, unknown>;
+      console.log(
+        `[PO] Trade executed! Result data:`,
+        JSON.stringify(order).substring(0, 200)
+      );
+
+      const profit = Number(order.profit ?? -request.amount);
+
+      return {
+        win: profit > 0,
+        profit,
+        openPrice: Number(order.open_price || order.openPrice || 0),
+        closePrice: Number(order.close_price || order.closePrice || 0),
+        tradeId: String(order.id || order.deal_id || ""),
+      };
+    } finally {
+      releaseMutex!();
     }
-
-    if (!this.orderData) {
-      console.error(`[PO] Trade timeout for ${request.asset}. Order data never received.`);
-      throw new Error("Trade execution timeout");
-    }
-
-    const order = this.orderData as Record<string, unknown>;
-    console.log(`[PO] Trade executed! Result data:`, JSON.stringify(order).substring(0, 200));
-    
-    const profit = Number(order.profit ?? -request.amount);
-
-    return {
-      win: profit > 0,
-      profit,
-      openPrice: Number(order.open_price || order.openPrice || 0),
-      closePrice: Number(order.close_price || order.closePrice || 0),
-      tradeId: String(order.id || order.deal_id || ""),
-    };
   }
 
   async getBalance(): Promise<{ demo: number; live: number }> {

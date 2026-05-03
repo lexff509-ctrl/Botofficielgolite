@@ -23,7 +23,6 @@ const activeConnections = new Map<number, PocketOptionClient>();
 let sharedClient: PocketOptionClient | null = null;
 let sharedSsid: string | null = null;
 const sharedClientUsers = new Set<number>();
-let tradeMutex: Promise<void> = Promise.resolve();
 
 // ============ SIGNALS ============
 
@@ -224,26 +223,15 @@ export async function executeTrade(
   const client = getPocketOptionClient(userId);
   if (client && client.isConnected) {
     try {
-      // Use mutex for shared client to prevent race conditions
-      let releaseMutex: () => void;
-      const mutexPromise = new Promise<void>((resolve) => { releaseMutex = resolve; });
-      const prevMutex = tradeMutex;
-      tradeMutex = tradeMutex.then(() => mutexPromise);
-
-      await prevMutex;
-      try {
-        const tradeResult = await client.placeTrade({
-          asset: params.asset,
-          direction: params.direction,
-          amount: params.amount,
-          duration: parseTimeframe(params.timeframe),
-        });
-        result = tradeResult.win ? "WIN" : "LOSS";
-        profit = tradeResult.profit;
-        tradeId = tradeResult.tradeId;
-      } finally {
-        releaseMutex!();
-      }
+      const tradeResult = await client.placeTrade({
+        asset: params.asset,
+        direction: params.direction,
+        amount: params.amount,
+        duration: parseTimeframe(params.timeframe),
+      });
+      result = tradeResult.win ? "WIN" : "LOSS";
+      profit = tradeResult.profit;
+      tradeId = tradeResult.tradeId;
     } catch (err) {
       console.error("[Trade] PO execution failed:", err);
       // Fallback to simulation only for DEMO mode
