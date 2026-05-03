@@ -291,44 +291,44 @@ function getPipValue(asset: string): number {
 function getTimeframeWeights(tf: Timeframe): TimeframeWeights {
   const sec = tfToSeconds(tf);
 
-  if (sec <= 15) {
-    // Scalping (5s-15s): fast indicators dominate
+  if (isScalping) {
+    // Scalping (5s-15s): dynamic momentum + fast reversal
     return {
-      tickMomentum: 0.25,
-      rsi: 0.20,
-      bollinger: 0.20,
+      tickMomentum: 0.30, // Increased for ultra-fast reaction
+      rsi: 0.15,
+      bollinger: 0.15,
       stochastic: 0.10,
       emaTrend: 0.05,
       emaCrossover: 0.05,
       macd: 0.05,
-      srProximity: 0.05,
+      srProximity: 0.10, // S/R is important even in scalping
       marketStructure: 0.05,
     };
   } else if (sec <= 60) {
-    // Short-term (30s-1m): balanced
+    // Short-term (30s-1m): balanced analysis
     return {
-      stochastic: 0.20,
-      emaTrend: 0.15,
+      stochastic: 0.25, // Stochastic cross is strong for 1m
       rsi: 0.15,
       bollinger: 0.15,
+      emaTrend: 0.10,
       emaCrossover: 0.10,
       macd: 0.10,
-      tickMomentum: 0.10,
+      tickMomentum: 0.05,
       srProximity: 0.05,
       marketStructure: 0.05,
     };
   } else {
-    // Swing (3m-5m): trend indicators dominate
+    // Swing (3m-5m): heavy trend & structure focus
     return {
-      macd: 0.20,
-      emaTrend: 0.20,
+      macd: 0.25, // Stronger trend confirmation
+      marketStructure: 0.20, // Critical for long term
+      emaTrend: 0.15,
       emaCrossover: 0.15,
-      stochastic: 0.15,
+      stochastic: 0.10,
       rsi: 0.10,
-      bollinger: 0.10,
-      marketStructure: 0.10,
-      tickMomentum: 0.05,
-      srProximity: 0.05,
+      bollinger: 0.05,
+      tickMomentum: 0.00, // Irrelevant for 5m
+      srProximity: 0.00, // Replaced by market structure
     };
   }
 }
