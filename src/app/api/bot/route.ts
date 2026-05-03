@@ -53,13 +53,12 @@ export async function GET(req: NextRequest) {
     // Get real balance if connected
     let realBalance: { demo: number; live: number } | null = null;
     const client = getPocketOptionClient(payload.userId);
-    if (client && client.isConnected && client.balance) {
-      // @ts-ignore - Handle potential discrepancy between local types and actual PO client implementation
-      const bal = client.balance;
-      const isDemoAccount = bal.isDemo === 1;
+    const balance = client?.balance;
+    if (client && client.isConnected && balance) {
+      const isDemoAccount = balance.isDemo === 1;
       realBalance = {
-        demo: isDemoAccount ? bal.balance : 0,
-        live: !isDemoAccount ? bal.balance : 0,
+        demo: isDemoAccount ? balance.balance : 0,
+        live: !isDemoAccount ? balance.balance : 0,
       };
     } else {
       realBalance = null;
