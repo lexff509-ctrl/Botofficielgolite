@@ -942,6 +942,12 @@ export function generateSignal(
 
   // Evaluate using scoring system
   const evaluation = evaluateSignal(candles, asset, timeframe);
+  
+  // LOG DE TEST DIRECT POUR LE USER (Vérification de la diversité)
+  if (asset === "EURUSD_otc" || asset === "GBPUSD_otc") {
+    console.log(`\n[Bot-Analysis] Actif: ${asset} | Direction suggérée: ${evaluation?.direction} | Score: ${evaluation?.rawScore.toFixed(3)}`);
+  }
+
   if (!evaluation) return null;
 
   // Multi-timeframe confirmation
