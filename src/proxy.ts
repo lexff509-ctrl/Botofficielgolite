@@ -14,7 +14,7 @@ const ADMIN_ROUTES = [
   "/api/admin/",
 ];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = new URL(req.url);
 
   // Allow public routes
