@@ -191,6 +191,7 @@ export class BotRunner {
     this.bootstrapCandles();
 
     const intervalMs = getLoopIntervalMs(this.timeframe);
+    console.log(`[BotRunner] Starting loop for user ${this.userId} with interval ${intervalMs}ms`);
     this.intervalHandle = setInterval(() => {
       this.tick().catch((err) => {
         console.error(`[BotRunner] Tick error for user ${this.userId}:`, err);
@@ -202,7 +203,10 @@ export class BotRunner {
     }, intervalMs);
 
     // Run first tick after a short delay to let connection settle
-    setTimeout(() => this.tick().catch(() => {}), 2000);
+    setTimeout(() => {
+      console.log(`[BotRunner] Initial tick for user ${this.userId}`);
+      this.tick().catch((err) => console.error(`[BotRunner] Initial tick error:`, err));
+    }, 2000);
   }
 
   stop(): void {
@@ -380,7 +384,7 @@ export class BotRunner {
     this.lastTradeDirection = signal.direction;
     this.signalsGenerated++;
 
-    console.log(`[BotRunner] Signal: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
+    console.log(`[BotRunner] Signal for user ${this.userId}: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
 
     // Save signal to DB
     await this.saveSignal(signal);
@@ -389,8 +393,14 @@ export class BotRunner {
     const threshold = this.confidenceMode === "high"
       ? HIGH_CONFIDENCE_THRESHOLD
       : AUTO_TRADE_CONFIDENCE_THRESHOLD;
-    if (this.botType === "auto" && signal.confidence >= threshold) {
-      await this.executeAutoTrade(signal, candles);
+
+    if (this.botType === "auto") {
+      if (signal.confidence >= threshold) {
+        console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% >= ${threshold}%. Executing trade for user ${this.userId}...`);
+        await this.executeAutoTrade(signal, candles);
+      } else {
+        console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% below threshold ${threshold}%. Skipping trade for user ${this.userId}.`);
+      }
     }
 
     // Update bot session stats

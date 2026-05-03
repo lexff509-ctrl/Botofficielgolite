@@ -55,10 +55,10 @@ export async function GET(req: NextRequest) {
     const client = getPocketOptionClient(payload.userId);
     if (client && client.isConnected && client.balance) {
       // The client balance object has { balance: number, isDemo: number }
-      const isDemo = client.balance.isDemo === 1;
+      const isDemoAccount = client.balance.isDemo === 1;
       realBalance = {
-        demo: isDemo ? client.balance.balance : 0,
-        live: !isDemo ? client.balance.balance : 0,
+        demo: isDemoAccount ? client.balance.balance : 0,
+        live: !isDemoAccount ? client.balance.balance : 0,
       };
     } else {
       realBalance = null;

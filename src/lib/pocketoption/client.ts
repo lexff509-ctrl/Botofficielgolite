@@ -793,14 +793,26 @@ export class PocketOptionClient {
 
   private handleBinaryMessage(buffer: Buffer): void {
     try {
+      // First try to parse as regular UTF-8 JSON (PocketOption often wraps JSON in binary)
       const raw = buffer.toString("utf8");
       let message: unknown;
+      
+      // If it's a binary attachment (not raw JSON), it might be msgpack or similar
+      // but PocketOption usually uses JSON even in binary frames
       try {
         message = JSON.parse(raw);
       } catch {
-        // Not JSON - might be msgpack or other binary format
-        console.log(`[PO] Non-JSON binary frame (${buffer.length} bytes), pending: ${this.pendingBinaryEvent}`);
-        this.pendingBinaryEvent = null;
+        // If not JSON, it could be a raw binary stream of ticks or balance
+        // Handle specific binary formats if known, otherwise log for debug
+        if (buffer.length === 8) {
+          // Possible 64-bit float balance update
+          const bal = buffer.readDoubleLE(0);
+          if (bal > 0 && bal < 10000000) {
+            console.log(`[PO] Detected raw binary balance: ${bal}`);
+            this.lastBalance = { balance: bal, isDemo: this.isDemo ? 1 : 0 };
+            this.onBalanceCallbacks.forEach(cb => cb(this.lastBalance!));
+          }
+        }
         return;
       }
 
@@ -859,13 +871,16 @@ export class PocketOptionClient {
           case "successauth":
             // Authentication successful - the binary data may contain user info/balance
             console.log("[PO] Auth success binary data received");
-            if (typeof message === "object" && message !== null && "balance" in (message as Record<string, unknown>)) {
-              const msg = message as Record<string, unknown>;
-              this.lastBalance = {
-                balance: Number(msg.balance),
-                isDemo: Number(msg.isDemo || 0),
-              };
-              this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+            if (typeof message === "object" && message !== null) {
+              const msg = message as Record<string, any>;
+              if (msg.balance !== undefined) {
+                this.lastBalance = {
+                  balance: Number(msg.balance),
+                  isDemo: Number(msg.isDemo !== undefined ? msg.isDemo : (this.isDemo ? 1 : 0)),
+                };
+                console.log(`[PO] Balance updated from auth: ${this.lastBalance.balance}`);
+                this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+              }
             }
             // Now trigger the auth success handler
             this.handleSocketIOEvent("successauth", message);
@@ -873,13 +888,16 @@ export class PocketOptionClient {
 
           case "successupdateBalance":
           case "successupdatePending":
-            if (typeof message === "object" && message !== null && "balance" in (message as Record<string, unknown>)) {
-              const msg = message as Record<string, unknown>;
-              this.lastBalance = {
-                balance: Number(msg.balance),
-                isDemo: Number(msg.isDemo || 0),
-              };
-              this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+            if (typeof message === "object" && message !== null) {
+              const msg = message as Record<string, any>;
+              if (msg.balance !== undefined) {
+                this.lastBalance = {
+                  balance: Number(msg.balance),
+                  isDemo: Number(msg.isDemo !== undefined ? msg.isDemo : (this.isDemo ? 1 : 0)),
+                };
+                console.log(`[PO] Balance updated from event: ${this.lastBalance.balance}`);
+                this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+              }
             }
             return;
 
@@ -890,14 +908,16 @@ export class PocketOptionClient {
       }
 
       // No pending binary event - handle as standalone binary data
-      if (typeof message === "object" && message !== null && "balance" in (message as Record<string, unknown>)) {
-        const msg = message as Record<string, unknown>;
-        this.lastBalance = {
-          balance: Number(msg.balance),
-          isDemo: Number(msg.isDemo || 0),
-        };
-        this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
-        return;
+      if (typeof message === "object" && message !== null) {
+        const msg = message as Record<string, any>;
+        if (msg.balance !== undefined) {
+          this.lastBalance = {
+            balance: Number(msg.balance),
+            isDemo: Number(msg.isDemo !== undefined ? msg.isDemo : (this.isDemo ? 1 : 0)),
+          };
+          this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+          return;
+        }
       }
 
       if (
@@ -932,7 +952,7 @@ export class PocketOptionClient {
         this.closedDealsData = message;
         return;
       }
-    } catch {
+    } catch (err) {
       // Ignore parse errors for non-JSON binary frames
     }
   }

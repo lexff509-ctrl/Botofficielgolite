@@ -94,16 +94,16 @@ export default function BotPage() {
   const [timeframe, setTimeframe] = useState("1m");
   const [tradeAmount, setTradeAmount] = useState(1);
   const [confidenceMode, setConfidenceMode] = useState<"standard" | "high">("standard");
-  const [profitTarget, setProfitTarget] = useState(50);
-  const [lossLimit, setLossLimit] = useState(25);
+  const [profitTarget, setProfitTarget] = useState<number | "">("");
+  const [lossLimit, setLossLimit] = useState<number | "">("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   // Martingale
   const [martingaleEnabled, setMartingaleEnabled] = useState(false);
   // Compound interest
   const [compoundEnabled, setCompoundEnabled] = useState(false);
-  const [compoundTradesTarget, setCompoundTradesTarget] = useState(3);
-  const [compoundPayoutRate, setCompoundPayoutRate] = useState(92);
+  const [compoundTradesTarget, setCompoundTradesTarget] = useState<number | "">("");
+  const [compoundPayoutRate, setCompoundPayoutRate] = useState<number | "">(92);
 
   const fetchUser = useCallback(async () => {
     try {
@@ -140,6 +140,9 @@ export default function BotPage() {
       if (data.runnerStatus) {
         setRunnerStatus(data.runnerStatus);
         if (data.runnerStatus.confidenceMode) setConfidenceMode(data.runnerStatus.confidenceMode);
+        if (data.runnerStatus.profitTarget) setProfitTarget(data.runnerStatus.profitTarget);
+        if (data.runnerStatus.lossLimit) setLossLimit(data.runnerStatus.lossLimit);
+        if (data.runnerStatus.compoundTradesTarget) setCompoundTradesTarget(data.runnerStatus.compoundTradesTarget);
       } else {
         setRunnerStatus(null);
       }
@@ -167,13 +170,29 @@ export default function BotPage() {
     setError("");
     setSuccess("");
     try {
-      const body: Record<string, unknown> = { action, mode, botType, asset, timeframe, tradeAmount, confidenceMode, profitTarget, lossLimit, martingaleEnabled };
+      const pTarget = profitTarget === "" ? 50 : profitTarget;
+      const lLimit = lossLimit === "" ? 25 : lossLimit;
+      const cTarget = compoundTradesTarget === "" ? 3 : compoundTradesTarget;
+      const cPayout = compoundPayoutRate === "" ? 0.92 : (compoundPayoutRate / 100);
+
+      const body: Record<string, unknown> = {
+        action,
+        mode,
+        botType,
+        asset,
+        timeframe,
+        tradeAmount: tradeAmount || 1,
+        confidenceMode,
+        profitTarget: pTarget,
+        lossLimit: lLimit,
+        martingaleEnabled
+      };
 
       if (action === "START") {
         body.ssid = ssid || undefined;
         body.compoundEnabled = compoundEnabled;
-        body.compoundTradesTarget = compoundEnabled ? compoundTradesTarget : undefined;
-        body.compoundPayoutRate = compoundEnabled ? compoundPayoutRate / 100 : undefined;
+        body.compoundTradesTarget = compoundEnabled ? cTarget : undefined;
+        body.compoundPayoutRate = compoundEnabled ? cPayout : undefined;
       }
 
       const res = await fetch("/api/bot", {
@@ -219,10 +238,10 @@ export default function BotPage() {
   };
 
   const getEffectiveAmount = () => {
-    if (!runnerStatus) return tradeAmount;
+    if (!runnerStatus) return tradeAmount || 1;
     if (runnerStatus.compoundEnabled) return runnerStatus.compoundCurrentAmount;
     if (runnerStatus.martingaleEnabled && runnerStatus.martingaleLevel === 1) return runnerStatus.baseTradeAmount * 2;
-    return runnerStatus.tradeAmount;
+    return runnerStatus.tradeAmount || 1;
   };
 
   return (
@@ -279,7 +298,7 @@ export default function BotPage() {
                 )}
                 {isRunning && realBalance && (
                   <span className={`text-xs px-2 py-0.5 rounded-full font-black ${mode === "LIVE" ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-blue-500/20 text-blue-400 border border-blue-500/30"}`}>
-                    SOLDE REEL: ${mode === "LIVE" ? realBalance.live.toLocaleString() : realBalance.demo.toLocaleString()}
+                    SOLDE REEL: ${mode === "LIVE" ? (realBalance.live || 0).toLocaleString() : (realBalance.demo || 0).toLocaleString()}
                   </span>
                 )}
               </div>
@@ -382,12 +401,13 @@ export default function BotPage() {
                 min="1"
                 step="1"
                 value={tradeAmount}
-                onChange={(e) => setTradeAmount(parseFloat(e.target.value) || 1)}
+                onChange={(e) => setTradeAmount(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                placeholder="Montant (ex: 1)"
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               />
               <p className="text-xs text-slate-500 mt-1">
-                Montant investi par trade automatique
+                Montant investi par trade automatique (défaut: 1)
               </p>
             </div>
 
@@ -470,7 +490,8 @@ export default function BotPage() {
                 min="1"
                 step="1"
                 value={profitTarget}
-                onChange={(e) => setProfitTarget(parseFloat(e.target.value) || 1)}
+                onChange={(e) => setProfitTarget(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                placeholder="Par défaut: 50"
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               />
@@ -484,7 +505,8 @@ export default function BotPage() {
                 min="1"
                 step="1"
                 value={lossLimit}
-                onChange={(e) => setLossLimit(parseFloat(e.target.value) || 1)}
+                onChange={(e) => setLossLimit(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                placeholder="Par défaut: 25"
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               />
@@ -544,7 +566,8 @@ export default function BotPage() {
                     min="1"
                     max="20"
                     value={compoundTradesTarget}
-                    onChange={(e) => setCompoundTradesTarget(parseInt(e.target.value) || 1)}
+                    onChange={(e) => setCompoundTradesTarget(e.target.value === "" ? "" : parseInt(e.target.value))}
+                    placeholder="Par défaut: 3"
                     disabled={isRunning}
                     className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
                   />
@@ -556,13 +579,14 @@ export default function BotPage() {
                     min="50"
                     max="100"
                     value={compoundPayoutRate}
-                    onChange={(e) => setCompoundPayoutRate(parseInt(e.target.value) || 92)}
+                    onChange={(e) => setCompoundPayoutRate(e.target.value === "" ? "" : parseInt(e.target.value))}
+                    placeholder="Par défaut: 92"
                     disabled={isRunning}
                     className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
                   />
                 </div>
                 <div className="col-span-2 bg-white/5 rounded-lg p-2.5 text-xs text-slate-400">
-                  Ex: ${tradeAmount} x {compoundPayoutRate}% = ${((tradeAmount * compoundPayoutRate / 100) + tradeAmount).toFixed(2)} puis ${((tradeAmount * compoundPayoutRate / 100 + tradeAmount) * compoundPayoutRate / 100 + (tradeAmount * compoundPayoutRate / 100 + tradeAmount)).toFixed(2)} etc.
+                  Ex: ${tradeAmount || 1} x {compoundPayoutRate || 92}% = ${(((tradeAmount || 1) * (Number(compoundPayoutRate || 92)) / 100) + (tradeAmount || 1)).toFixed(2)} puis ...
                 </div>
               </div>
             )}

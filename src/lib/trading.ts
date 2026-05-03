@@ -769,35 +769,43 @@ function evaluateSignal(
   // Market structure analysis
   const marketStruct = analyzeMarketStructure(candles);
 
-  // Get previous MACD histogram for crossover detection
-  const prevHistogram = macdResult.histogramSeries.length >= 2
-    ? macdResult.histogramSeries[macdResult.histogramSeries.length - 2]
-    : 0;
-
   // Score each indicator
   const weights = getTimeframeWeights(timeframe);
   const scores: Record<string, number> = {};
 
+  // EMA Trend Scoring (Primary)
   scores.emaTrend = scoreEmaTrend(currentPrice, ema20, ema50);
+  
+  // EMA Crossover (Momentum change)
   scores.emaCrossover = scoreEmaCrossover(closes);
+  
+  // RSI Scoring: overbought/oversold reversal or trend following
   scores.rsi = scoreRSI(rsi, timeframe);
+  
+  // Stochastic: Overbought/Oversold cross
   scores.stochastic = scoreStochastic(stochK, stochD);
+  
+  // MACD: Histogram momentum
+  const prevHistogram = macdResult.histogramSeries.length >= 2
+    ? macdResult.histogramSeries[macdResult.histogramSeries.length - 2]
+    : 0;
   scores.macd = scoreMACD(macdResult.histogram, prevHistogram);
+  
+  // Bollinger Rejection
   scores.bollinger = scoreBollinger(bollinger.percentB, timeframe);
+  
+  // Short-term Momentum
   scores.tickMomentum = scoreTickMomentum(candles, atr);
+  
+  // Support/Resistance Bounces
   scores.srProximity = scoreSRProximity(
     currentPrice, sr.support, sr.resistance, atr, sr.nearSupport, sr.nearResistance
   );
+  
+  // Market Structure alignment
   scores.marketStructure = scoreMarketStructure(marketStruct.structure, marketStruct.breakOfStructure);
 
-  // Apply doji filter as a score dampener (not a gate)
-  if (dojiRejected) {
-    scores.emaTrend *= 0.5;
-    scores.tickMomentum *= 0.5;
-    scores.emaCrossover *= 0.5;
-  }
-
-  // Calculate weighted raw score
+  // Apply weights
   let rawScore = 0;
   rawScore += scores.emaTrend * weights.emaTrend;
   rawScore += scores.emaCrossover * weights.emaCrossover;
@@ -809,29 +817,11 @@ function evaluateSignal(
   rawScore += scores.srProximity * weights.srProximity;
   rawScore += scores.marketStructure * weights.marketStructure;
 
-  // Apply S/R confluence adjustment
-  let adjustedScore = rawScore;
-  if (sr.nearSupport && rawScore > 0) adjustedScore += 0.1;
-  if (sr.nearResistance && rawScore < 0) adjustedScore -= 0.1;
-  if (sr.nearSupport && rawScore < 0) adjustedScore -= 0.05; // Contradiction
-  if (sr.nearResistance && rawScore > 0) adjustedScore -= 0.05;
-
-  // Apply market structure adjustment
-  if (marketStruct.breakOfStructure === "BULLISH_BOS" && rawScore > 0) adjustedScore += 0.1;
-  if (marketStruct.breakOfStructure === "BEARISH_BOS" && rawScore < 0) adjustedScore -= 0.1;
-  if (marketStruct.breakOfStructure === "BULLISH_BOS" && rawScore < 0) adjustedScore *= 0.5;
-  if (marketStruct.breakOfStructure === "BEARISH_BOS" && rawScore > 0) adjustedScore *= 0.5;
-
-  // Determine direction
-  let direction: "CALL" | "PUT";
-  if (adjustedScore > 0) {
-    direction = "CALL";
-  } else if (adjustedScore < 0) {
-    direction = "PUT";
-  } else {
-    // Tie-breaker: use EMA20 direction
-    direction = currentPrice > ema20 ? "CALL" : "PUT";
-  }
+  // Determine direction based on technical confluence
+  const direction = rawScore >= 0 ? "CALL" : "PUT";
+  
+  // Final Adjusted Score
+  const adjustedScore = rawScore;
 
   // Build indicators object
   const allIndicators = {
