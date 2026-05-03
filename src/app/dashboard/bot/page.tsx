@@ -92,7 +92,7 @@ export default function BotPage() {
   const [botType, setBotType] = useState<"signal" | "auto">("signal");
   const [asset, setAsset] = useState("EUR/USD");
   const [timeframe, setTimeframe] = useState("1m");
-  const [tradeAmount, setTradeAmount] = useState(1);
+  const [tradeAmount, setTradeAmount] = useState<number | "">(1);
   const [confidenceMode, setConfidenceMode] = useState<"standard" | "high">("standard");
   const [profitTarget, setProfitTarget] = useState<number | "">("");
   const [lossLimit, setLossLimit] = useState<number | "">("");
@@ -401,7 +401,14 @@ export default function BotPage() {
                 min="1"
                 step="1"
                 value={tradeAmount}
-                onChange={(e) => setTradeAmount(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "") {
+                    setTradeAmount("");
+                  } else {
+                    setTradeAmount(parseFloat(val));
+                  }
+                }}
                 placeholder="Montant (ex: 1)"
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"

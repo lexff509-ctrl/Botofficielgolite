@@ -396,7 +396,22 @@ export class BotRunner {
 
     if (this.botType === "auto") {
       if (signal.confidence >= threshold) {
-        console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% >= ${threshold}%. Executing trade for user ${this.userId}...`);
+        console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% >= ${threshold}%. CHECKING PAYOUT for user ${this.userId}...`);
+        
+        // Anti-ban & Payout check: Get current asset payout before trading
+        const client = getPocketOptionClient(this.userId);
+        if (client && client.isConnected) {
+          const assets = client.assets;
+          const assetInfo = assets[this.asset.replace("/","").replace(" (OTC)", "_otc")];
+          const payout = assetInfo?.payout || 0;
+          
+          if (payout < 0.80) {
+             console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 80%). Skipping trade for user ${this.userId}.`);
+             return;
+          }
+        }
+
+        console.log(`[BotRunner] Payout OK. Executing trade for user ${this.userId}...`);
         await this.executeAutoTrade(signal, candles);
       } else {
         console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% below threshold ${threshold}%. Skipping trade for user ${this.userId}.`);
