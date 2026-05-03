@@ -830,6 +830,11 @@ function evaluateSignal(
   // Final Adjusted Score
   const adjustedScore = Math.abs(rawScore);
 
+  // Diagnostic direct pour les tests
+  if (asset === "EURUSD_otc" && timeframe === "1m") {
+    console.log(`[Diagnostic-Test] Direction: ${direction} | Score: ${rawScore.toFixed(4)}`);
+  }
+
   // Build indicators object
   const allIndicators = {
     ema20, ema50, stochK, stochD, lowFractal, highFractal, dojiRejected, atr,

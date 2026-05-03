@@ -72,6 +72,7 @@ export class BotRunner {
   private pauseReason: string | null = null;
   private lastSignalAt: number | null = null;
   private lastTradeDirection: "CALL" | "PUT" | null = null;
+  private lastPayout: number | null = null;
   private signalsGenerated = 0;
   private tradesExecuted = 0;
   private dailyWins = 0;
@@ -402,6 +403,12 @@ export class BotRunner {
     // Save signal to DB
     await this.saveSignal(signal);
 
+    // LOG DE TEST DIRECT POUR LE USER
+    console.log(`\n--- [TEST EN DIRECT] ---`);
+    console.log(`Actif: ${this.asset} | Direction: ${signal.direction}`);
+    console.log(`Confiance: ${signal.confidence.toFixed(1)}% | Payout: ${this.lastPayout || '?'}`);
+    console.log(`------------------------\n`);
+
     // Auto mode: execute trade if confidence >= threshold
     const threshold = this.confidenceMode === "high"
       ? HIGH_CONFIDENCE_THRESHOLD
@@ -418,6 +425,7 @@ export class BotRunner {
           const assetSymbol = PocketOptionClient.toPOSymbol(this.asset);
           const assetInfo = assets[assetSymbol];
           const payout = assetInfo?.payout || 0;
+          this.lastPayout = payout;
           
           if (payout > 0 && payout < 0.60) { // Lowered to 60% for more flexibility while still protecting
              console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 60%) for ${assetSymbol}. Skipping trade for user ${this.userId}.`);
