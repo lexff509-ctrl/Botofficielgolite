@@ -121,7 +121,10 @@ export function testHostReachable(host: string): Promise<string> {
     });
 
     req.on("error", () => resolve(""));
-    req.setTimeout(3000, () => { req.destroy(); resolve(""); });
+    req.setTimeout(2000, () => { // Reduce to 2s
+      req.destroy();
+      resolve("");
+    });
   });
 }
 
@@ -217,22 +220,20 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
       const cookieHeader = cookies.join("; ");
 
       console.log(`[PO-Cookie] Got ${cookies.length} cookies from ${host}`);
-      if (cookies.length > 0) {
-        console.log(`[PO-Cookie] Cookies: ${cookieHeader.substring(0, 200)}`);
-      }
-
-      res.resume();
+      
+      res.on("data", () => {}); // Consume data
       res.on("end", () => {
         resolve({ cookies, cookieHeader });
       });
     });
 
     req.on("error", (err: Error) => {
-      console.warn(`[PO-Cookie] Pre-fetch failed: ${err.message}`);
+      console.warn(`[PO-Cookie] Pre-fetch failed for ${host}: ${err.message}`);
       resolve({ cookies: [], cookieHeader: "" });
     });
 
-    req.setTimeout(8000, () => {
+    req.setTimeout(5000, () => { // Reduce to 5s
+      console.warn(`[PO-Cookie] Pre-fetch timeout for ${host}`);
       req.destroy();
       resolve({ cookies: [], cookieHeader: "" });
     });

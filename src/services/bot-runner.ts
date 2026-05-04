@@ -9,6 +9,9 @@ import { eq, desc, and, gte } from "drizzle-orm";
 import {
   generateSignal,
   evaluateBollingerStochSignal,
+  calculateRSI,
+  calculateEMA,
+  calculateMACD,
   type Timeframe,
   type Signal,
   type Candle,
@@ -405,6 +408,8 @@ export class BotRunner {
     // === 2. Data & Candle Manager: Get candles from cache ===
     let candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
 
+    console.log(`[BotRunner] Tick user ${this.userId} - ${this.asset} (${this.timeframe}) - Candles: ${candles.length}`);
+
     // Bootstrap if needed
     if (candles.length < 30 && poClient && poClient.isConnected) {
       try {
@@ -429,6 +434,8 @@ export class BotRunner {
     if (lastClosedCandle.timestamp <= this.lastProcessedTimestamp) {
       return;
     }
+
+    this.lastProcessedTimestamp = lastClosedCandle.timestamp;
 
     // We analyze using all candles up to the closed one
     const analysisCandles = candles.slice(0, -1);
@@ -475,8 +482,8 @@ export class BotRunner {
       confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 40,
       indicators: {
         rsi: calculateRSI(analysisCandles.map(c => c.close)),
-        macd: 0,
-        ema9: 0,
+        macd: calculateMACD(analysisCandles.map(c => c.close)).macd,
+        ema9: calculateEMA(analysisCandles.map(c => c.close), 9),
         bollingerUpper: strategy.bollinger.upper,
         bollingerMiddle: strategy.bollinger.middle,
         bollingerLower: strategy.bollinger.lower,
@@ -571,7 +578,7 @@ export class BotRunner {
         asset: signal.asset,
         direction: signal.direction,
         timeframe: signal.timeframe,
-        confidence: signal.confidence.toFixed(2),
+        confidence: signal.confidence,
         // Legacy indicators
         rsi: signal.indicators.rsi.toFixed(4),
         macd: signal.indicators.macd.toFixed(8),

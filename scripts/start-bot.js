@@ -16,7 +16,7 @@ function post(path, body, cookie) {
   });
 }
 async function main() {
-  const login = await post('/api/auth/login', { email: 'admin@golite.com', password: 'Admin1234' });
+  const login = await post('/api/auth/login', { identifier: 'Admin@golite.com', password: 'Admin1234' });
   console.log('Login:', login.status);
   if (login.status !== 200) { console.log('FAIL:', login.body.substring(0, 300)); return; }
   const cookie = login.cookie ? login.cookie[0].split(';')[0] : '';
@@ -24,7 +24,7 @@ async function main() {
   const start = await post('/api/bot', {
     action: 'START', botType: 'auto', asset: 'EUR/USD (OTC)', timeframe: '1m',
     mode: 'DEMO', tradeAmount: 1, confidenceMode: 'standard',
-    ssid: '42["auth",{"session":"ui79rfql07vtntchhuqrm3ikb8","isDemo":1,"uid":90720400,"platform":2,"isFastHistory":true,"isOptimized":true}]'
+    ssid: 'YOUR_SSID_HERE'
   }, cookie);
   console.log('Bot:', start.status, start.body.substring(0, 500));
 }

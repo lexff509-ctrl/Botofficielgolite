@@ -956,6 +956,11 @@ export class PocketOptionClient {
             }
             return;
 
+          case "successopenOrder":
+            console.log("[PO] Order confirmation data received (binary)");
+            this.orderData = message as Record<string, unknown>;
+            return;
+
           default:
             console.log(`[PO] Unhandled binary event: ${eventName}`);
             return;
@@ -976,7 +981,6 @@ export class PocketOptionClient {
       }
 
       if (
-        this.pendingBinaryEvent === "successopenOrder" ||
         (typeof message === "object" &&
         message !== null &&
         "requestId" in (message as Record<string, unknown>))
