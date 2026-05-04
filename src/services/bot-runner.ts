@@ -444,17 +444,65 @@ export class BotRunner {
 
     // Prepare Signal Object
     const signal: Signal = {
-      direction: strategy.direction as "CALL" | "PUT",
-      confidence: 100, // Strategy matches perfectly
+      signal: strategy.signal,
+      confidence: strategy.confidence,
       timeframe: this.timeframe,
+      timestamp: new Date().toISOString().replace('T', ' ').split('.')[0],
+      price_current: lastClosedCandle.close,
       asset: this.asset,
-      diagnostic: strategy.diagnostic,
-      timestamp: Date.now(),
+      
+      bollinger: {
+        signal: strategy.bollinger.signal,
+        upper: strategy.bollinger.upper,
+        middle: strategy.bollinger.middle,
+        lower: strategy.bollinger.lower,
+        price_position: strategy.bollinger.price_position
+      },
+
+      stochastic: {
+        signal: strategy.stochastic.signal,
+        k_value: strategy.stochastic.k,
+        d_value: strategy.stochastic.d,
+        zone: strategy.stochastic.k < 20 ? "oversold" : strategy.stochastic.k > 80 ? "overbought" : "neutral",
+        crossover: strategy.stochastic.signal !== "NEUTRAL"
+      },
+
+      reason: strategy.reason,
+      action: strategy.confidence === "HIGH" ? "ENTRER MAINTENANT" : strategy.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
+      
+      // Internal/Legacy fields for compatibility
+      direction: strategy.signal === "BUY" ? "CALL" : "PUT",
+      confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 40,
       indicators: {
-        signalScore: 1.0,
-        indicatorScores: { bollinger: 1, stochastic: 1 }
-      } as any,
-      multiTimeframeConfirmation: {} as any,
+        rsi: calculateRSI(analysisCandles.map(c => c.close)),
+        macd: 0,
+        ema9: 0,
+        bollingerUpper: strategy.bollinger.upper,
+        bollingerMiddle: strategy.bollinger.middle,
+        bollingerLower: strategy.bollinger.lower,
+        stochastic: strategy.stochastic.k,
+        stochasticSignal: strategy.stochastic.d,
+        ema20: strategy.bollinger.middle,
+        ema50: calculateEMA(analysisCandles.map(c => c.close), 50),
+        stochK: strategy.stochastic.k,
+        stochD: strategy.stochastic.d,
+        lowFractal: false,
+        highFractal: false,
+        dojiRejected: false,
+        atr: 0,
+        bollingerPercentB: 0,
+        bollingerWidth: 0,
+        supportLevel: 0,
+        resistanceLevel: 0,
+        nearSupport: strategy.bollinger.price_position === "near_lower",
+        nearResistance: strategy.bollinger.price_position === "near_upper",
+        marketStructure: "NEUTRAL",
+        structureBreak: "NONE",
+        signalScore: strategy.confidence === "HIGH" ? 1.0 : 0.5,
+        indicatorScores: { bollinger: strategy.bollinger.signal !== "NEUTRAL" ? 1 : 0, stochastic: strategy.stochastic.signal !== "NEUTRAL" ? 1 : 0 }
+      },
+      multiTimeframeConfirmation: {},
+      diagnostic: strategy.reason
     };
 
     // Update state before execution
@@ -463,8 +511,8 @@ export class BotRunner {
     this.lastSignalAt = Date.now();
     this.lastTradeDirection = signal.direction;
 
-    console.log(`[BotRunner] NOUVEAU SIGNAL DETECTE: ${signal.direction} sur ${this.asset} (${this.timeframe})`);
-    console.log(`[BotRunner] Diagnostic: ${signal.diagnostic}`);
+    console.log(`[BotRunner] NOUVEAU SIGNAL DETECTE: ${signal.signal} (${signal.confidence}) sur ${this.asset} (${this.timeframe})`);
+    console.log(`[BotRunner] Raison: ${signal.reason}`);
 
     // Track signal for traceability
     const signalId = await signalTracker.logSignal({
@@ -473,7 +521,7 @@ export class BotRunner {
       direction: signal.direction,
       timeframe: this.timeframe,
       entryPrice: analysisCandles[analysisCandles.length - 1].close,
-      confidence: signal.confidence,
+      confidence: signal.confidence_score,
     });
 
     // Save to DB

@@ -71,14 +71,38 @@ export interface Indicators {
 }
 
 export interface Signal {
-  direction: "CALL" | "PUT";
-  confidence: number;
+  signal: "BUY" | "SELL" | "WAIT";
+  confidence: "HIGH" | "MEDIUM" | "LOW";
   timeframe: Timeframe;
+  timestamp: string;
+  price_current: number;
   asset: string;
-  indicators: Indicators;
-  multiTimeframeConfirmation: Record<Timeframe, "CALL" | "PUT" | "NEUTRAL">;
+  
+  bollinger: {
+    signal: "BUY" | "SELL" | "NEUTRAL";
+    upper: number;
+    middle: number;
+    lower: number;
+    price_position: "near_lower" | "near_upper" | "middle" | string;
+  };
+
+  stochastic: {
+    signal: "BUY" | "SELL" | "NEUTRAL";
+    k_value: number;
+    d_value: number;
+    zone: "oversold" | "overbought" | "neutral";
+    crossover: boolean;
+  };
+
+  reason: string;
+  action: "ENTRER MAINTENANT" | "ATTENDRE" | "ÉVITER";
+  
+  // Internal/Legacy fields for compatibility
+  direction: "CALL" | "PUT";
+  confidence_score: number; // 0-100 or 0-200
+  indicators: any;
+  multiTimeframeConfirmation: any;
   diagnostic: string;
-  timestamp: number;
 }
 
 // ============ INTERNAL TYPES ============
@@ -105,50 +129,107 @@ interface SignalEvaluation {
 
 // ============ BOLLINGER + STOCHASTIC STRATEGY (REQUESTED REFACTOR) ============
 
+/**
+ * Signal Engine based on expert requirements:
+ * Bollinger Bands (20, 2) + Stochastic (14, 3, 3)
+ */
 export function evaluateBollingerStochSignal(
   candles: Candle[]
-): { direction: "CALL" | "PUT" | "NONE"; diagnostic: string } {
-  if (candles.length < 20) {
-    return { direction: "NONE", diagnostic: "Pas assez de données (min 20)" };
+): { 
+  signal: "BUY" | "SELL" | "WAIT"; 
+  confidence: "HIGH" | "MEDIUM" | "LOW"; 
+  reason: string;
+  bollinger: { signal: "BUY" | "SELL" | "NEUTRAL"; upper: number; middle: number; lower: number; price_position: string };
+  stochastic: { signal: "BUY" | "SELL" | "NEUTRAL"; k: number; d: number };
+} {
+  const minRequired = 25;
+  if (candles.length < minRequired) {
+    return { 
+      signal: "WAIT", 
+      confidence: "LOW", 
+      reason: "Pas assez de données",
+      bollinger: { signal: "NEUTRAL", upper: 0, middle: 0, lower: 0, price_position: "unknown" },
+      stochastic: { signal: "NEUTRAL", k: 50, d: 50 }
+    };
   }
 
   const closes = candles.map((c) => c.close);
-  const lastPrice = closes[closes.length - 1];
+  const currentPrice = closes[closes.length - 1];
+  const prevPrice = closes[closes.length - 2];
 
-  // 1. Bollinger Bands (20, 2)
+  // 1. Bollinger Bands Calculation (20, 2)
   const bb = calculateBollinger(closes, 20, 2);
+  
+  let bbSignal: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
+  let pricePosition = "middle";
 
-  // 2. Stochastic (14, 3, 3)
+  if (currentPrice <= bb.lower) {
+    pricePosition = "near_lower";
+    if (currentPrice > prevPrice) bbSignal = "BUY"; // Rebound after contact
+  } else if (currentPrice >= bb.upper) {
+    pricePosition = "near_upper";
+    if (currentPrice < prevPrice) bbSignal = "SELL"; // Rebound after contact
+  }
+
+  // 2. Stochastic Calculation (14, 3, 3)
   const stoch = calculateStochastic(candles, 14, 3, 3);
   const k = stoch.k;
   const d = stoch.d;
   
-  // Need previous values for crossover detection
   const prevK = stoch.kSeries.length >= 2 ? stoch.kSeries[stoch.kSeries.length - 2] : k;
   const prevD = stoch.dSeries.length >= 2 ? stoch.dSeries[stoch.dSeries.length - 2] : d;
 
-  // Crossover logic
-  const bullishCross = prevK <= prevD && k > d;
-  const bearishCross = prevK >= prevD && k < d;
-
-  // Signal Logic
-  // CALL: Price <= Lower Band AND Stoch < 20 AND Bullish Cross
-  if (lastPrice <= bb.lower && k < 20 && bullishCross) {
-    return {
-      direction: "CALL",
-      diagnostic: `CALL: Prix (${lastPrice.toFixed(5)}) <= BB Bas (${bb.lower.toFixed(5)}) + Stoch OverSold (${k.toFixed(1)}) + Bullish Cross`,
-    };
+  let stochSignal: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
+  
+  // BUY: K crosses D UP AND K < 20
+  if (k < 20 && prevK <= prevD && k > d) {
+    stochSignal = "BUY";
+  }
+  // SELL: K crosses D DOWN AND K > 80
+  else if (k > 80 && prevK >= prevD && k < d) {
+    stochSignal = "SELL";
   }
 
-  // PUT: Price >= Upper Band AND Stoch > 80 AND Bearish Cross
-  if (lastPrice >= bb.upper && k > 80 && bearishCross) {
-    return {
-      direction: "PUT",
-      diagnostic: `PUT: Prix (${lastPrice.toFixed(5)}) >= BB Haut (${bb.upper.toFixed(5)}) + Stoch OverBought (${k.toFixed(1)}) + Bearish Cross`,
-    };
+  // 3. Confluence Logic
+  let finalSignal: "BUY" | "SELL" | "WAIT" = "WAIT";
+  let confidence: "HIGH" | "MEDIUM" | "LOW" = "LOW";
+  let reason = "Pas de setup clair";
+
+  if (bbSignal === "BUY" && stochSignal === "BUY") {
+    finalSignal = "BUY";
+    confidence = "HIGH";
+    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stoch Crossover en zone de survente";
+  } else if (bbSignal === "SELL" && stochSignal === "SELL") {
+    finalSignal = "SELL";
+    confidence = "HIGH";
+    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stoch Crossover en zone de surachat";
+  } else if (bbSignal === "BUY" || stochSignal === "BUY") {
+    finalSignal = "BUY";
+    confidence = "MEDIUM";
+    reason = bbSignal === "BUY" ? "Bollinger Rebond détecté" : "Stochastique Crossover détecté";
+  } else if (bbSignal === "SELL" || stochSignal === "SELL") {
+    finalSignal = "SELL";
+    confidence = "MEDIUM";
+    reason = bbSignal === "SELL" ? "Bollinger Rebond détecté" : "Stochastique Crossover détecté";
   }
 
-  return { direction: "NONE", diagnostic: "Aucun signal clair" };
+  return {
+    signal: finalSignal,
+    confidence,
+    reason,
+    bollinger: {
+      signal: bbSignal,
+      upper: bb.upper,
+      middle: bb.middle,
+      lower: bb.lower,
+      price_position: pricePosition
+    },
+    stochastic: {
+      signal: stochSignal,
+      k: k,
+      d: d
+    }
+  };
 }
 
 // ============ PROFESSIONAL INDICATOR CALCULATIONS ============
@@ -1108,82 +1189,78 @@ export function generateSignal(
   asset: string,
   timeframe: Timeframe
 ): Signal | null {
-  // Minimum candles depends on timeframe
-  const sec = tfToSeconds(timeframe);
-  const minCandles = sec <= 15 ? 20 : sec <= 60 ? 30 : 50;
-  if (candles.length < minCandles) return null;
-
-  // Evaluate using scoring system
-  const evaluation = evaluateSignal(candles, asset, timeframe);
+  // Use expert Signal Engine logic
+  const bs = evaluateBollingerStochSignal(candles);
   
-  // LOG DE TEST DIRECT POUR LE USER (Vérification de la diversité)
-  if (asset === "EURUSD_otc" || asset === "GBPUSD_otc") {
-    console.log(`\n[Bot-Analysis] Actif: ${asset} | Direction suggérée: ${evaluation?.direction} | Score: ${evaluation?.rawScore.toFixed(3)}`);
-  }
+  if (bs.signal === "WAIT" && candles.length < 25) return null;
 
-  if (!evaluation) return null;
+  const currentPrice = candles[candles.length - 1].close;
+  const now = new Date();
+  
+  // Format the signal according to the requested EXACT FORMAT
+  const signal: Signal = {
+    signal: bs.signal,
+    confidence: bs.confidence,
+    timeframe: timeframe,
+    timestamp: now.toISOString().replace('T', ' ').split('.')[0],
+    price_current: currentPrice,
+    asset: asset,
+    
+    bollinger: {
+      signal: bs.bollinger.signal,
+      upper: bs.bollinger.upper,
+      middle: bs.bollinger.middle,
+      lower: bs.bollinger.lower,
+      price_position: bs.bollinger.price_position
+    },
 
-  // Multi-timeframe confirmation
-  const mtfConfirmation: Record<Timeframe, "CALL" | "PUT" | "NEUTRAL"> =
-    {} as Record<Timeframe, "CALL" | "PUT" | "NEUTRAL">;
+    stochastic: {
+      signal: bs.stochastic.signal,
+      k_value: bs.stochastic.k,
+      d_value: bs.stochastic.d,
+      zone: bs.stochastic.k < 20 ? "oversold" : bs.stochastic.k > 80 ? "overbought" : "neutral",
+      crossover: bs.stochastic.signal !== "NEUTRAL"
+    },
 
-  for (const tf of TIMEFRAMES) {
-    const aggregationFactor = getTimeframeFactor(timeframe, tf);
-    const aggregatedCandles = aggregateCandles(candles, aggregationFactor);
-
-    if (aggregatedCandles.length < 30) {
-      mtfConfirmation[tf] = "NEUTRAL";
-      continue;
-    }
-
-    const tfCloses = aggregatedCandles.map((c) => c.close);
-    const tfEma20 = calculateEMA(tfCloses, 20);
-    const tfEma50 = calculateEMA(tfCloses, 50);
-    const tfPrice = tfCloses[tfCloses.length - 1];
-
-    if (tfPrice > tfEma50 && tfEma20 > tfEma50) {
-      mtfConfirmation[tf] = "CALL";
-    } else if (tfPrice < tfEma50 && tfEma20 < tfEma50) {
-      mtfConfirmation[tf] = "PUT";
-    } else {
-      mtfConfirmation[tf] = "NEUTRAL";
-    }
-  }
-
-  // Calculate confidence
-  const confidence = calculateConfidence(
-    evaluation.direction,
-    evaluation.adjustedScore,
-    mtfConfirmation,
-    evaluation.allIndicators.nearSupport,
-    evaluation.allIndicators.nearResistance,
-    evaluation.allIndicators.marketStructure,
-    evaluation.allIndicators.structureBreak,
-    evaluation.indicatorScores
-  );
-
-  // Generate diagnostic string based on top 3 scores
-  const topScores = Object.entries(evaluation.indicatorScores)
-    .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
-    .slice(0, 3)
-    .map(([name, score]) => {
-      const dir = score > 0 ? "Bullish" : "Bearish";
-      return `${name.toUpperCase()} (${dir})`;
-    })
-    .join(", ");
-
-  const diagnostic = `Confluence: ${topScores}. Market: ${evaluation.allIndicators.marketStructure}.`;
-
-  return {
-    direction: evaluation.direction,
-    confidence,
-    timeframe,
-    asset,
-    indicators: evaluation.allIndicators as any,
-    multiTimeframeConfirmation: mtfConfirmation,
-    diagnostic,
-    timestamp: Date.now(),
+    reason: bs.reason,
+    action: bs.confidence === "HIGH" ? "ENTRER MAINTENANT" : bs.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
+    
+    // Internal/Legacy fields for compatibility
+    direction: bs.signal === "BUY" ? "CALL" : "PUT",
+    confidence_score: bs.confidence === "HIGH" ? 95 : bs.confidence === "MEDIUM" ? 70 : 40,
+    indicators: {
+      rsi: calculateRSI(candles.map(c => c.close)),
+      macd: 0, // Simplified
+      ema9: 0,
+      bollingerUpper: bs.bollinger.upper,
+      bollingerMiddle: bs.bollinger.middle,
+      bollingerLower: bs.bollinger.lower,
+      stochastic: bs.stochastic.k,
+      stochasticSignal: bs.stochastic.d,
+      ema20: bs.bollinger.middle,
+      ema50: calculateEMA(candles.map(c => c.close), 50),
+      stochK: bs.stochastic.k,
+      stochD: bs.stochastic.d,
+      lowFractal: false,
+      highFractal: false,
+      dojiRejected: false,
+      atr: 0,
+      bollingerPercentB: 0,
+      bollingerWidth: 0,
+      supportLevel: 0,
+      resistanceLevel: 0,
+      nearSupport: bs.bollinger.price_position === "near_lower",
+      nearResistance: bs.bollinger.price_position === "near_upper",
+      marketStructure: "NEUTRAL",
+      structureBreak: "NONE",
+      signalScore: bs.confidence === "HIGH" ? 1.0 : 0.5,
+      indicatorScores: { bollinger: bs.bollinger.signal !== "NEUTRAL" ? 1 : 0, stochastic: bs.stochastic.signal !== "NEUTRAL" ? 1 : 0 }
+    },
+    multiTimeframeConfirmation: {},
+    diagnostic: bs.reason
   };
+
+  return signal;
 }
 
 // ============ HELPERS ============
