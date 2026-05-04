@@ -50,7 +50,7 @@ function evaluate(candles: Candle[]) {
     console.log(`Score:      ${signal.indicators.signalScore?.toFixed(4)}`);
     
     console.log("\n--- Indicator Scores ---");
-    Object.entries(signal.indicators.indicatorScores || {}).forEach(([name, score]) => {
+    Object.entries((signal.indicators.indicatorScores as Record<string, number>) || {}).forEach(([name, score]) => {
       console.log(`${name.padEnd(18)}: ${score.toFixed(3)}`);
     });
 
