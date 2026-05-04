@@ -167,6 +167,8 @@ export class PocketOptionClient {
       // Send Socket.IO Ping (2)
       try {
         this.ws.send("2");
+        // Also send Socket.IO keep-alive (some PO versions use 42["ps"])
+        this.ws.send('42["ps"]');
       } catch (err) {
         this.handleDisconnect();
       }
@@ -1515,19 +1517,6 @@ export class PocketOptionClient {
     } catch (err) {
       console.error("[PO] Send error:", err);
     }
-  }
-
-  private startHeartbeats(): void {
-    this.cleanup();
-    // Engine.IO PING every 20 seconds
-    this.socketIoHeartbeat = setInterval(() => {
-      if (this.ws && this.connected) {
-        // Send Engine.IO PING (char "2")
-        this.ws.send("2");
-        // Also send Socket.IO keep-alive if needed (some PO versions use 42["ps"])
-        this.ws.send('42["ps"]');
-      }
-    }, 20000);
   }
 
   private cleanup(): void {
