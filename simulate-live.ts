@@ -51,7 +51,7 @@ async function simulateLiveTrading() {
         const signal = generateSignal(history, "EURUSD_otc", "1m");
         
         if (signal) {
-            console.log(`✅ SIGNAL GÉNÉRÉ : ${signal.direction} | Confiance : ${signal.confidence.toFixed(1)}%`);
+            console.log(`✅ SIGNAL GÉNÉRÉ : ${signal.direction} | Confiance : ${signal.confidence}`);
             console.log(`📊 Diagnostic : ${signal.diagnostic}`);
             
             // Simulation de l'exécution

@@ -25,7 +25,7 @@ async function runDiversityTest() {
   }
 
   const putSignal = generateSignal(bearishCandles, "EURUSD", "1m");
-  console.log(`Test 1 (Bearish Trend): Expected PUT, Got: ${putSignal?.direction} (Confidence: ${putSignal?.confidence}%)`);
+  console.log(`Test 1 (Bearish Trend): Expected PUT, Got: ${putSignal?.direction} (Confidence: ${putSignal?.confidence})`);
 
   // 2. Reversal Setup (to trigger CALL)
   const reversalCandles = [...bearishCandles];
@@ -42,7 +42,7 @@ async function runDiversityTest() {
   }
 
   const callSignal = generateSignal(reversalCandles, "EURUSD", "1m");
-  console.log(`Test 2 (Bullish Reversal): Expected CALL, Got: ${callSignal?.direction} (Confidence: ${callSignal?.confidence}%)`);
+  console.log(`Test 2 (Bullish Reversal): Expected CALL, Got: ${callSignal?.direction} (Confidence: ${callSignal?.confidence})`);
 
   // 3. Evaluation
   if (putSignal?.direction === "PUT" && callSignal?.direction === "CALL") {

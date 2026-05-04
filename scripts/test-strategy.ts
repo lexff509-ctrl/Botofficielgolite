@@ -45,7 +45,7 @@ function evaluate(candles: Candle[]) {
   if (signal) {
     console.log(`Asset:      ${signal.asset}`);
     console.log(`Direction:  ${signal.direction}`);
-    console.log(`Confidence: ${signal.confidence.toFixed(1)}%`);
+    console.log(`Confidence: ${signal.confidence}`);
     console.log(`Diagnostic: ${signal.diagnostic}`);
     console.log(`Score:      ${signal.indicators.signalScore?.toFixed(4)}`);
     
