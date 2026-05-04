@@ -91,6 +91,7 @@ export default function BotPage() {
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
   const [ssidInfo, setSsidInfo] = useState<SsidInfo | null>(null);
   const [realBalance, setRealBalance] = useState<{ demo: number; live: number } | null>(null);
+  const [poAssets, setPoAssets] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("DEMO");
   const [ssid, setSsid] = useState("");
@@ -154,6 +155,7 @@ export default function BotPage() {
       }
       if (data.ssidInfo) setSsidInfo(data.ssidInfo);
       if (data.realBalance) setRealBalance(data.realBalance);
+      if (data.assets) setPoAssets(data.assets);
     } catch {}
   }, []);
 
@@ -365,23 +367,47 @@ export default function BotPage() {
             {/* Asset */}
             <div>
               <label className="block text-slate-400 text-xs mb-1.5">Actif</label>
-              <select
-                value={asset}
-                onChange={(e) => setAsset(e.target.value)}
-                disabled={isRunning}
-                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
-              >
-                <optgroup label="Marche Regulier" className="bg-slate-900">
-                  {REGULAR_ASSETS.map((a) => (
-                    <option key={a} value={a} className="bg-slate-900">{a}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="Marche OTC" className="bg-slate-900">
-                  {OTC_ASSETS.map((a) => (
-                    <option key={a} value={a} className="bg-slate-900">{a}</option>
-                  ))}
-                </optgroup>
-              </select>
+              <div className="relative group">
+                <select
+                  value={asset}
+                  onChange={(e) => setAsset(e.target.value)}
+                  disabled={isRunning}
+                  className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50 appearance-none pr-10"
+                >
+                  <optgroup label="Marché Régulier" className="bg-slate-900">
+                    {REGULAR_ASSETS.map((a) => {
+                      const poSymbol = a.replace("/", "").replace(" (OTC)", "_otc");
+                      const payout = poAssets[poSymbol]?.payout;
+                      return (
+                        <option key={a} value={a} className="bg-slate-900">
+                          {a} {payout ? `(${Math.round(payout * 100)}%)` : ""}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                  <optgroup label="Marché OTC" className="bg-slate-900">
+                    {OTC_ASSETS.map((a) => {
+                      const poSymbol = a.replace("/", "").replace(" (OTC)", "_otc");
+                      const payout = poAssets[poSymbol]?.payout;
+                      return (
+                        <option key={a} value={a} className="bg-slate-900">
+                          {a} {payout ? `(${Math.round(payout * 100)}%)` : ""}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none flex items-center gap-2">
+                   {runnerStatus?.running && (
+                     <span className="text-[10px] font-black text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20">
+                       {Math.round((runnerStatus as any).compoundPayoutRate * 100 || 92)}%
+                     </span>
+                   )}
+                   <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                   </svg>
+                </div>
+              </div>
             </div>
 
             {/* Timeframe */}

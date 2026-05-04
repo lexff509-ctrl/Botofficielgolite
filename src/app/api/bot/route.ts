@@ -50,16 +50,20 @@ export async function GET(req: NextRequest) {
     const globalSsidStatus = await getGlobalSsidStatus();
     const onSharedClient = isUserOnSharedClient(payload.userId);
 
-    // Get real balance if connected
+    // Get real balance and assets (payouts) if connected
     let realBalance: { demo: number; live: number } | null = null;
+    let assets: Record<string, any> = {};
     const client = getPocketOptionClient(payload.userId);
     const balance = client?.balance;
-    if (client && client.isConnected && balance) {
-      const isDemoAccount = balance.isDemo === 1;
-      realBalance = {
-        demo: isDemoAccount ? balance.balance : 0,
-        live: !isDemoAccount ? balance.balance : 0,
-      };
+    if (client && client.isConnected) {
+      if (balance) {
+        const isDemoAccount = balance.isDemo === 1;
+        realBalance = {
+          demo: isDemoAccount ? balance.balance : 0,
+          live: !isDemoAccount ? balance.balance : 0,
+        };
+      }
+      assets = client.assets || {};
     } else {
       realBalance = null;
     }
@@ -69,6 +73,7 @@ export async function GET(req: NextRequest) {
       activeSession: activeSession || null,
       runnerStatus,
       realBalance,
+      assets,
       ssidInfo: {
         hasPersonalSsid: !!activeSession?.useGlobalSsid ? false : true,
         globalSsidAvailable: globalSsidStatus === "VALID",

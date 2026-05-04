@@ -147,7 +147,8 @@ export class PocketOptionClient {
   }
 
   get isConnected(): boolean {
-    return this.connected && this.authenticated;
+    // A client is only truly connected if the WebSocket is open AND it's authenticated
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN && this.connected && this.authenticated;
   }
 
   get isSsidExpired(): boolean {

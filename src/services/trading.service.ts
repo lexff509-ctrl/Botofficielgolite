@@ -161,7 +161,7 @@ export async function getRecentSignals(userId: number, limit = 20) {
   return db
     .select()
     .from(signals)
-    .where(eq(signals.userId, userId))
+    .where(and(eq(signals.userId, userId), eq(signals.isActive, true)))
     .orderBy(desc(signals.createdAt))
     .limit(limit);
 }
@@ -181,7 +181,7 @@ export async function getUserTrades(
     .select()
     .from(trades)
     .where(and(...conditions))
-    .orderBy(desc(trades.openedAt))
+    .orderBy(desc(trades.closedAt))
     .limit(limit);
 }
 

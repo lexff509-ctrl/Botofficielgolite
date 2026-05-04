@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const recent = await getRecentSignals(payload.userId);
+    const recent = await getRecentSignals(payload.userId, 50);
     return NextResponse.json({ signals: recent });
   } catch (error) {
     return handleApiError(error, "Signals GET");

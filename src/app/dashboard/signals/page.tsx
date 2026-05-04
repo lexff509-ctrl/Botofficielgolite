@@ -6,11 +6,17 @@ import DashboardLayout from "@/components/DashboardLayout";
 const REGULAR_ASSETS = [
   "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
   "USD/CAD", "EUR/GBP", "BTC/USD", "ETH/USD",
+  "USD/CHF", "EUR/JPY", "GBP/JPY", "NZD/USD",
+  "EUR/CHF", "AUD/JPY", "CAD/JPY", "EUR/CAD",
 ];
 
 const OTC_ASSETS = [
   "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)",
   "AUD/USD (OTC)", "BTC/USD (OTC)", "ETH/USD (OTC)",
+  "USD/CHF (OTC)", "EUR/JPY (OTC)", "GBP/JPY (OTC)",
+  "NZD/USD (OTC)", "EUR/CHF (OTC)", "AUD/JPY (OTC)",
+  "CAD/JPY (OTC)", "EUR/CAD (OTC)", "USD/CAD (OTC)",
+  "EUR/GBP (OTC)", "AUD/CAD (OTC)", "GBP/CHF (OTC)",
 ];
 
 const TIMEFRAMES = ["5s", "10s", "15s", "30s", "1m", "3m", "5m"];
@@ -27,6 +33,7 @@ interface Signal {
   multiTimeframeConfirmation: Record<string, string>;
   diagnostic: string;
   createdAt: string;
+  isActive?: boolean;
 }
 
 export default function SignalsPage() {
@@ -45,7 +52,10 @@ export default function SignalsPage() {
     try {
       const res = await fetch("/api/signals");
       const data = await res.json();
-      if (data.signals) setSignals(data.signals);
+      if (data.signals) {
+        // Newest are already first from API
+        setSignals(data.signals);
+      }
     } catch {}
     setLoading(false);
   }, []);
@@ -212,7 +222,7 @@ export default function SignalsPage() {
               <div className={`text-6xl font-black mb-4 tracking-tighter ${
                 lastSignal.direction === "CALL" ? "text-emerald-400" : "text-red-400"
               }`}>
-                {lastSignal.direction === "CALL" ? "CALL ↑" : "PUT ↓"}
+                {lastSignal.direction === "CALL" ? "ACHAT ↑" : "VENTE ↓"}
               </div>
               <div className="text-2xl font-black text-white mb-2">{lastSignal.asset}</div>
               <div className="flex items-center justify-center gap-4">
@@ -294,7 +304,7 @@ export default function SignalsPage() {
                                 : "bg-red-500/10 text-red-400 border-red-500/20"
                             }`}
                           >
-                            {sig.direction}
+                            {sig.direction === "CALL" ? "ACHAT ↑" : "VENTE ↓"}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-xs text-slate-400 font-black">{sig.timeframe}</td>
@@ -319,7 +329,7 @@ export default function SignalsPage() {
                         </td>
                         <td className="px-6 py-4">
                            <div className="text-[10px] font-bold text-slate-300 max-w-[150px] truncate" title={sig.diagnostic}>
-                             {sig.diagnostic || "Standard"}
+                             {sig.diagnostic || "Analyse Standard"}
                            </div>
                         </td>
                         <td className="px-6 py-4">
