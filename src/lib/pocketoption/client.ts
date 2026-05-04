@@ -1217,12 +1217,10 @@ export class PocketOptionClient {
     this.loadHistoryPeriodFlag = false;
 
     const endTime = Math.floor(Date.now() / 1000);
-    this.sendEvent([
-      "loadHistoryPeriod",
-      { asset: poAsset, index: endTime, time: endTime, offset: count, period },
-    ]);
+    // Request a bit more than needed to ensure we get enough after filtering
+    this.loadHistoryPeriod(poAsset, period, endTime, Math.max(count, 300));
 
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 60; i++) { // Increase wait to 6s
       if (this.historyPeriodData !== null) break;
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -1235,19 +1233,15 @@ export class PocketOptionClient {
       }
     }
 
-    // Strategy 3: Try with different offset values
-    // Sometimes the server needs a specific time range
-    for (const offsetMult of [1, 5, 10]) {
+    // Strategy 3: Try with different offset values and longer wait
+    for (const offsetMult of [1, 2, 5]) {
       this.historyPeriodData = null;
       this.loadHistoryPeriodFlag = false;
 
       const offsetTime = endTime - (count * period * offsetMult);
-      this.sendEvent([
-        "loadHistoryPeriod",
-        { asset: poAsset, index: offsetTime, time: offsetTime, offset: count, period },
-      ]);
+      this.loadHistoryPeriod(poAsset, period, offsetTime, Math.max(count, 300));
 
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 40; i++) {
         if (this.historyPeriodData !== null) break;
         await new Promise((r) => setTimeout(r, 100));
       }

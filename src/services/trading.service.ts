@@ -53,6 +53,8 @@ export async function generateAndSaveSignal(
 ): Promise<{ signal: Signal | null; saved: unknown | null; error?: string }> {
   const selectedAsset = asset || ALL_ASSETS[Math.floor(Math.random() * ALL_ASSETS.length)];
   const selectedTimeframe = timeframe || "1m";
+  // Minimum candles for indicators: Bollinger(20) and Stoch(14) need at least 20
+  const minRequired = 20;
 
   if (!TIMEFRAMES.includes(selectedTimeframe as Timeframe)) {
     return { signal: null, saved: null, error: "Timeframe invalide" };
@@ -66,9 +68,10 @@ export async function generateAndSaveSignal(
   );
 
   // If cache is empty, fetch historical candles directly from PocketOption
-  if (candles.length < 50) {
+  if (candles.length < minRequired) {
     const client = activeConnections.get(userId);
     if (client && client.isConnected) {
+      console.log(`[Signal] Cache low (${candles.length}/${minRequired}), forcing historical fetch for ${selectedAsset}...`);
       try {
         const tfToSeconds = (tf: string): number => {
           if (tf.endsWith("s")) return parseInt(tf);
@@ -76,15 +79,18 @@ export async function generateAndSaveSignal(
           return 60;
         };
         const sizeSeconds = tfToSeconds(selectedTimeframe);
+        
+        // Force a subscription change first to wake up the stream
+        client.changeSymbol(selectedAsset, sizeSeconds);
+        await new Promise(r => setTimeout(r, 1500));
+
         const historicalCandles = await client.requestCandleHistory(
           selectedAsset,
           sizeSeconds,
           200
         );
         if (historicalCandles.length > 0) {
-          // Seed cache for future use
           candleCache.seedCandles(selectedAsset, sizeSeconds, historicalCandles);
-          // Re-read from cache
           candles = candleCache.getCandlesForTimeframe(
             selectedAsset,
             selectedTimeframe as Timeframe,
@@ -97,7 +103,7 @@ export async function generateAndSaveSignal(
     }
   }
 
-  if (candles.length < 50) {
+  if (candles.length < minRequired) {
     return { 
       signal: null, 
       saved: null, 
