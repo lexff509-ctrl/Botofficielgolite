@@ -98,7 +98,11 @@ export async function generateAndSaveSignal(
   }
 
   if (candles.length < 50) {
-    return { signal: null, saved: null, error: "Pas assez de données de marché. Assurez-vous que le bot est connecté à PocketOption." };
+    return { 
+      signal: null, 
+      saved: null, 
+      error: "Le bot n'a pas encore accumulé assez de données pour cet actif. Veuillez démarrer le bot dans la page 'Automatique' et attendre 10-15 secondes que l'historique se charge." 
+    };
   }
 
   const signal = generateSignal(

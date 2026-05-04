@@ -194,12 +194,32 @@ export class BotRunner {
     // Load today's trade stats from DB for risk management
     this.loadDailyStats().catch(() => {});
 
-    // Subscribe to candle data via cache
     const sizeSeconds = this.timeframeToSeconds();
-    candleCache.subscribe(this.asset, sizeSeconds);
 
-    // If cache is empty, request historical candles to bootstrap
-    this.bootstrapCandles();
+    // The connection might still be establishing in the background
+    // We will attempt to subscribe and bootstrap once connected
+    const trySetup = () => {
+      const poClient = getPocketOptionClient(this.userId);
+      if (poClient && poClient.isConnected) {
+        console.log(`[BotRunner] Connection established for user ${this.userId}, setting up cache...`);
+        candleCache.setClient(poClient);
+        candleCache.subscribe(this.asset, sizeSeconds);
+        this.bootstrapCandles();
+        return true;
+      }
+      return false;
+    };
+
+    // Initial attempt
+    if (!trySetup()) {
+      console.log(`[BotRunner] Waiting for PO connection for user ${this.userId}...`);
+      // Retry setup every 2 seconds until connected
+      const setupInterval = setInterval(() => {
+        if (trySetup() || this.stopped) {
+          clearInterval(setupInterval);
+        }
+      }, 2000);
+    }
 
     const intervalMs = getLoopIntervalMs(this.timeframe);
     console.log(`[BotRunner] Starting loop for user ${this.userId} with interval ${intervalMs}ms`);
@@ -213,11 +233,13 @@ export class BotRunner {
       });
     }, intervalMs);
 
-    // Run first tick after a short delay to let connection settle
+    // Run first tick after a short delay to let data start flowing
     setTimeout(() => {
-      console.log(`[BotRunner] Initial tick for user ${this.userId}`);
-      this.tick().catch((err) => console.error(`[BotRunner] Initial tick error:`, err));
-    }, 2000);
+      if (!this.stopped) {
+        console.log(`[BotRunner] Initial tick for user ${this.userId}`);
+        this.tick().catch((err) => console.error(`[BotRunner] Initial tick error:`, err));
+      }
+    }, 5000); // Increased to 5s to allow bootstrap to finish
   }
 
   stop(): void {
@@ -301,18 +323,29 @@ export class BotRunner {
     if (client && client.isConnected) {
       try {
         const sizeSeconds = this.timeframeToSeconds();
+        console.log(`[BotRunner] Bootstrapping candles for ${this.asset} (${this.timeframe})...`);
+        
+        // Strategy: Ensure subscription is active first
+        client.changeSymbol(this.asset, sizeSeconds);
+        await new Promise(r => setTimeout(r, 1000)); // Give PO a second to start streaming
+        
         const historicalCandles = await client.requestCandleHistory(
           this.asset,
           sizeSeconds,
           200
         );
+        
         if (historicalCandles.length > 0) {
           candleCache.seedCandles(this.asset, sizeSeconds, historicalCandles);
           console.log(`[BotRunner] Bootstrapped ${historicalCandles.length} candles for ${this.asset}`);
+        } else {
+          console.warn(`[BotRunner] No historical candles returned for ${this.asset}`);
         }
-      } catch {
-        // Historical bootstrap failed, will rely on real-time data
+      } catch (err) {
+        console.error(`[BotRunner] Historical bootstrap failed for ${this.asset}:`, err);
       }
+    } else {
+      console.warn(`[BotRunner] Cannot bootstrap candles: Client not connected for user ${this.userId}`);
     }
   }
 
@@ -375,7 +408,15 @@ export class BotRunner {
     // Minimum candles depends on timeframe (scoring engine needs less than old AND gate)
     const sec = this.timeframeToSeconds();
     const minCandles = sec <= 15 ? 20 : sec <= 60 ? 30 : 50;
-    if (candles.length < minCandles) return;
+    
+    if (candles.length < minCandles) {
+      // If we don't have enough candles, try to bootstrap again occasionally
+      if (this.signalsGenerated === 0 && Math.random() < 0.1) {
+        console.log(`[BotRunner] Still waiting for data (${candles.length}/${minCandles}). Retrying bootstrap...`);
+        this.bootstrapCandles();
+      }
+      return;
+    }
 
     // Generate signal using scoring engine
     const signal = generateSignal(candles, this.asset, this.timeframe);

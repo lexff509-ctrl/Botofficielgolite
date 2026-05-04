@@ -1152,11 +1152,15 @@ export class PocketOptionClient {
 
     // Strategy 1: Subscribe via changeSymbol and wait for updateHistoryNew
     // This typically provides the most complete candle history
-    this.currentSymbol = { asset, period };
-    this.sendEvent(["changeSymbol", { asset: poAsset, period }]);
+    if (this.currentSymbol?.asset !== asset || this.currentSymbol?.period !== period) {
+      this.changeSymbol(asset, period);
+    } else {
+      // Already watching, but force a refresh if we need history
+      this.sendEvent(["changeSymbol", { asset: poAsset, period }]);
+    }
 
-    // Wait for updateHistoryNew/Fast binary data to arrive
-    for (let i = 0; i < 50; i++) {
+    // Wait for updateHistoryNew/Fast binary data to arrive (max 3 seconds)
+    for (let i = 0; i < 30; i++) {
       if (this.historyNewData !== null) break;
       await new Promise((r) => setTimeout(r, 100));
     }
