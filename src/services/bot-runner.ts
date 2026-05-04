@@ -414,15 +414,26 @@ export class BotRunner {
     if (candles.length < 30 && poClient && poClient.isConnected) {
       try {
         const sizeSeconds = this.timeframeToSeconds();
+        console.log(`[BotRunner] Cache low (${candles.length}), requesting history for ${this.asset}...`);
         const historical = await poClient.requestCandleHistory(this.asset, sizeSeconds, 200);
         if (historical.length > 0) {
           candleCache.seedCandles(this.asset, sizeSeconds, historical);
           candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
+          console.log(`[BotRunner] Cache seeded with ${historical.length} candles. New count: ${candles.length}`);
         }
-      } catch {}
+      } catch (err) {
+        console.error(`[BotRunner] History request failed:`, err);
+      }
     }
 
-    if (candles.length < 20) return;
+    if (candles.length < 20) {
+      if (this.consecutiveErrors % 10 === 0) {
+        console.warn(`[BotRunner] Still waiting for data for ${this.asset}... (${candles.length} candles)`);
+      }
+      this.consecutiveErrors++;
+      return;
+    }
+    this.consecutiveErrors = 0;
 
     // === 3. Trigger only on Candle Close ===
     // Analysis should trigger when a candle is FINISHED.

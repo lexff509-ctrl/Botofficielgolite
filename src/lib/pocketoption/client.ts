@@ -745,7 +745,7 @@ export class PocketOptionClient {
 
         // Re-subscribe to previously active symbols
         for (const [, sub] of this.activeSubscriptions) {
-          this.sendEvent(["changeSymbol", { asset: PocketOptionClient.toPOSymbol(sub.asset), period: sub.size }]);
+          this.changeSymbol(sub.asset, sub.size);
         }
 
         this.onAuthCallbacks.forEach((cb) => cb());
@@ -1126,10 +1126,12 @@ export class PocketOptionClient {
   // ============ Commands ============
 
   changeSymbol(asset: string, period: number): void {
+    const poAsset = PocketOptionClient.toPOSymbol(asset);
+    console.log(`[PO] changeSymbol: ${asset} (${poAsset}) @ ${period}s`);
     this.currentSymbol = { asset, period };
     const subKey = `${asset}:${period}`;
     this.activeSubscriptions.set(subKey, { asset, size: period });
-    this.sendEvent(["changeSymbol", { asset: PocketOptionClient.toPOSymbol(asset), period }]);
+    this.sendEvent(["changeSymbol", { asset: poAsset, period }]);
   }
 
   loadHistoryPeriod(
