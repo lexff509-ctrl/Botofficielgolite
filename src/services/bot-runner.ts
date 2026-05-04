@@ -14,6 +14,7 @@ import {
   TIMEFRAMES,
 } from "@/lib/trading";
 import { candleCache } from "@/lib/candle-cache";
+import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { getPocketOptionClient, executeTrade } from "@/services/trading.service";
 import { hasActiveSubscription } from "@/services/payment.service";
 
@@ -400,6 +401,22 @@ export class BotRunner {
 
     this.consecutiveErrors = 0;
     
+    // Track signal history for diversity diagnostics (all modes)
+    this.signalHistory.push(signal.direction);
+    if (this.signalHistory.length > 10) this.signalHistory.shift();
+
+    this.signalsGenerated++;
+    this.lastTradeDirection = signal.direction;
+    this.lastSignalAt = Date.now();
+
+    console.log(`[BotRunner] Signal for user ${this.userId}: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
+
+    const callCount = this.signalHistory.filter(d => d === "CALL").length;
+    const putCount = this.signalHistory.filter(d => d === "PUT").length;
+    if (this.signalHistory.length >= 5 && (callCount === 0 || putCount === 0)) {
+      console.warn(`[BotRunner] One-sided signal direction detected (${this.signalHistory[0]} x${this.signalHistory.length}). Strategy may be trend-locked.`);
+    }
+
     // Save signal to DB
     await this.saveSignal(signal);
 
@@ -434,33 +451,10 @@ export class BotRunner {
         }
 
         console.log(`[BotRunner] Payout OK. Executing trade for user ${this.userId}...`);
-        
-        // Update tracking state ONLY when trade is attempted
-        this.lastSignalAt = Date.now();
-        this.lastTradeDirection = signal.direction;
-        this.signalsGenerated++;
-        
         await this.executeAutoTrade(signal, candles);
       } else {
         console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% below threshold ${threshold}%. Skipping trade for user ${this.userId}.`);
       }
-    } else {
-      // Signal only mode: update tracking state
-      this.lastSignalAt = Date.now();
-      this.lastTradeDirection = signal.direction;
-      this.signalsGenerated++;
-
-      // Track signal history for diversity diagnostics
-      this.signalHistory.push(signal.direction);
-      if (this.signalHistory.length > 10) this.signalHistory.shift();
-
-      const callCount = this.signalHistory.filter(d => d === "CALL").length;
-      const putCount = this.signalHistory.filter(d => d === "PUT").length;
-      if (this.signalHistory.length >= 5 && (callCount === 0 || putCount === 0)) {
-        console.warn(`[BotRunner] One-sided signal direction detected (${this.signalHistory[0]} x${this.signalHistory.length}). Strategy may be trend-locked.`);
-      }
-
-      console.log(`[BotRunner] Signal for user ${this.userId}: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
     }
 
     // Update bot session stats
