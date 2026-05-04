@@ -103,6 +103,54 @@ interface SignalEvaluation {
   allIndicators: Omit<Indicators, "signalScore" | "indicatorScores">;
 }
 
+// ============ BOLLINGER + STOCHASTIC STRATEGY (REQUESTED REFACTOR) ============
+
+export function evaluateBollingerStochSignal(
+  candles: Candle[]
+): { direction: "CALL" | "PUT" | "NONE"; diagnostic: string } {
+  if (candles.length < 20) {
+    return { direction: "NONE", diagnostic: "Pas assez de données (min 20)" };
+  }
+
+  const closes = candles.map((c) => c.close);
+  const lastPrice = closes[closes.length - 1];
+
+  // 1. Bollinger Bands (20, 2)
+  const bb = calculateBollinger(closes, 20, 2);
+
+  // 2. Stochastic (14, 3, 3)
+  const stoch = calculateStochastic(candles, 14, 3, 3);
+  const k = stoch.k;
+  const d = stoch.d;
+  
+  // Need previous values for crossover detection
+  const prevK = stoch.kSeries.length >= 2 ? stoch.kSeries[stoch.kSeries.length - 2] : k;
+  const prevD = stoch.dSeries.length >= 2 ? stoch.dSeries[stoch.dSeries.length - 2] : d;
+
+  // Crossover logic
+  const bullishCross = prevK <= prevD && k > d;
+  const bearishCross = prevK >= prevD && k < d;
+
+  // Signal Logic
+  // CALL: Price <= Lower Band AND Stoch < 20 AND Bullish Cross
+  if (lastPrice <= bb.lower && k < 20 && bullishCross) {
+    return {
+      direction: "CALL",
+      diagnostic: `CALL: Prix (${lastPrice.toFixed(5)}) <= BB Bas (${bb.lower.toFixed(5)}) + Stoch OverSold (${k.toFixed(1)}) + Bullish Cross`,
+    };
+  }
+
+  // PUT: Price >= Upper Band AND Stoch > 80 AND Bearish Cross
+  if (lastPrice >= bb.upper && k > 80 && bearishCross) {
+    return {
+      direction: "PUT",
+      diagnostic: `PUT: Prix (${lastPrice.toFixed(5)}) >= BB Haut (${bb.upper.toFixed(5)}) + Stoch OverBought (${k.toFixed(1)}) + Bearish Cross`,
+    };
+  }
+
+  return { direction: "NONE", diagnostic: "Aucun signal clair" };
+}
+
 // ============ PROFESSIONAL INDICATOR CALCULATIONS ============
 
 export function calculateEMA(closes: number[], period: number): number {

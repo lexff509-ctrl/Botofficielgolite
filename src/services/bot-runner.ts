@@ -8,6 +8,7 @@ import { botSessions, signals, trades, users } from "@/db/schema";
 import { eq, desc, and, gte } from "drizzle-orm";
 import {
   generateSignal,
+  evaluateBollingerStochSignal,
   type Timeframe,
   type Signal,
   type Candle,
@@ -83,6 +84,11 @@ export class BotRunner {
   private dailyProfit = 0;
   private startedAt: Date;
   private stopped = false;
+
+  // New Strategy State Management
+  private lastProcessedTimestamp = 0;
+  private isInPosition = false;
+  private currentTradeId: string | null = null;
 
   constructor(opts: {
     userId: number;
@@ -365,6 +371,11 @@ export class BotRunner {
   private async tick(): Promise<void> {
     if (this.isPaused || this.stopped) return;
 
+    // === 1. State Management: Prevent multiple simultaneous trades ===
+    if (this.isInPosition) {
+      return;
+    }
+
     // Check if SSID has expired
     const poClient = getPocketOptionClient(this.userId);
     if (poClient && poClient.isSsidExpired) {
@@ -372,156 +383,110 @@ export class BotRunner {
       return;
     }
 
-    // Check subscription is still active
+    // Check subscription
     const hasAccess = await hasActiveSubscription(this.userId);
     if (!hasAccess) {
       this.pause("Abonnement expiré");
       return;
     }
 
-    // Risk management: check dollar-based daily limits
+    // Risk management
     if (this.dailyProfit <= -this.lossLimit) {
-      this.pause(`Limite de perte atteinte: -$${Math.abs(this.dailyProfit).toFixed(2)} (limite: $${this.lossLimit})`);
+      this.pause(`Limite de perte atteinte: -$${Math.abs(this.dailyProfit).toFixed(2)}`);
       return;
     }
     if (this.dailyProfit >= this.profitTarget) {
-      this.pause(`Objectif de profit atteint: +$${this.dailyProfit.toFixed(2)} (objectif: $${this.profitTarget})`);
+      this.pause(`Objectif de profit atteint: +$${this.dailyProfit.toFixed(2)}`);
       return;
     }
 
-    // Get candles from cache
-    let candles = candleCache.getCandlesForTimeframe(
-      this.asset,
-      this.timeframe,
-      100
-    );
+    // === 2. Data & Candle Manager: Get candles from cache ===
+    let candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
 
-    // If cache is empty, try fetching historical candles directly
-    if (candles.length < 50 && poClient && poClient.isConnected) {
+    // Bootstrap if needed
+    if (candles.length < 30 && poClient && poClient.isConnected) {
       try {
         const sizeSeconds = this.timeframeToSeconds();
-        const historicalCandles = await poClient.requestCandleHistory(
-          this.asset,
-          sizeSeconds,
-          200
-        );
-        if (historicalCandles.length > 0) {
-          candleCache.seedCandles(this.asset, sizeSeconds, historicalCandles);
-          candles = candleCache.getCandlesForTimeframe(
-            this.asset,
-            this.timeframe,
-            100
-          );
+        const historical = await poClient.requestCandleHistory(this.asset, sizeSeconds, 200);
+        if (historical.length > 0) {
+          candleCache.seedCandles(this.asset, sizeSeconds, historical);
+          candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
         }
-      } catch {
-        // Historical fetch failed, will retry next tick
-      }
+      } catch {}
     }
 
-    // Minimum candles depends on timeframe (scoring engine needs less than old AND gate)
-    const sec = this.timeframeToSeconds();
-    const minCandles = sec <= 15 ? 20 : sec <= 60 ? 30 : 50;
+    if (candles.length < 20) return;
+
+    // === 3. Trigger only on Candle Close ===
+    // Analysis should trigger when a candle is FINISHED.
+    // candles[length - 1] is the current moving candle.
+    // candles[length - 2] is the last completed candle.
+    const lastClosedCandle = candles[candles.length - 2];
     
-    if (candles.length < minCandles) {
-      // If we don't have enough candles, try to bootstrap again occasionally
-      if (this.signalsGenerated === 0 && Math.random() < 0.1) {
-        console.log(`[BotRunner] Still waiting for data (${candles.length}/${minCandles}). Retrying bootstrap...`);
-        this.bootstrapCandles();
-      }
+    // Check if we already processed this closed candle
+    if (lastClosedCandle.timestamp <= this.lastProcessedTimestamp) {
       return;
     }
 
-    // Generate signal using scoring engine
-    const signal = generateSignal(candles, this.asset, this.timeframe);
-    if (!signal) {
-      // Insufficient data for signal generation
-      this.consecutiveErrors = 0;
-      return;
-    }
+    // We analyze using all candles up to the closed one
+    const analysisCandles = candles.slice(0, -1);
 
-    // Signal cooldown: prevent over-trading on same candle/signal
-    // Only check if we already have a signal timestamp
-    if (this.lastSignalAt && Date.now() - this.lastSignalAt < this.getSignalCooldownMs()) {
-      return;
-    }
-
-    // Diagnostic: check if price is actually moving (stale data check)
-    const lastThreeCloses = candles.slice(-3).map(c => c.close);
-    const isStale = new Set(lastThreeCloses).size === 1;
-    if (isStale) {
-      console.warn(`[BotRunner] Stale price data detected for ${this.asset}. Skipping tick.`);
-      return;
-    }
-
-    this.consecutiveErrors = 0;
+    // === 4. Indicator Engine & Signal Generator (Bollinger + Stoch) ===
+    const strategy = evaluateBollingerStochSignal(analysisCandles);
     
-    // Track signal history for diversity diagnostics (all modes)
-    this.signalHistory.push(signal.direction);
-    if (this.signalHistory.length > 10) this.signalHistory.shift();
+    if (strategy.direction === "NONE") {
+      // Mark as processed even if no signal to wait for next candle
+      this.lastProcessedTimestamp = lastClosedCandle.timestamp;
+      return;
+    }
 
+    // Prepare Signal Object
+    const signal: Signal = {
+      direction: strategy.direction as "CALL" | "PUT",
+      confidence: 100, // Strategy matches perfectly
+      timeframe: this.timeframe,
+      asset: this.asset,
+      diagnostic: strategy.diagnostic,
+      timestamp: Date.now(),
+      indicators: {
+        signalScore: 1.0,
+        indicatorScores: { bollinger: 1, stochastic: 1 }
+      } as any,
+      multiTimeframeConfirmation: {} as any,
+    };
+
+    // Update state before execution
+    this.lastProcessedTimestamp = lastClosedCandle.timestamp;
     this.signalsGenerated++;
-    this.lastTradeDirection = signal.direction;
     this.lastSignalAt = Date.now();
+    this.lastTradeDirection = signal.direction;
 
-    console.log(`[BotRunner] Signal for user ${this.userId}: ${signal.direction} ${signal.asset} @ ${signal.confidence.toFixed(1)}% confidence (score: ${signal.indicators.signalScore?.toFixed(3) || 'N/A'})`);
+    console.log(`[BotRunner] NOUVEAU SIGNAL DETECTE: ${signal.direction} sur ${this.asset} (${this.timeframe})`);
+    console.log(`[BotRunner] Diagnostic: ${signal.diagnostic}`);
 
-    const callCount = this.signalHistory.filter(d => d === "CALL").length;
-    const putCount = this.signalHistory.filter(d => d === "PUT").length;
-    if (this.signalHistory.length >= 5 && (callCount === 0 || putCount === 0)) {
-      console.warn(`[BotRunner] One-sided signal direction detected (${this.signalHistory[0]} x${this.signalHistory.length}). Strategy may be trend-locked.`);
-    }
-
-    // Save signal to DB
+    // Save to DB
     await this.saveSignal(signal);
 
-    // LOG DE TEST DIRECT POUR LE USER
-    console.log(`\n--- [TEST EN DIRECT] ---`);
-    console.log(`Actif: ${this.asset} | Direction: ${signal.direction}`);
-    console.log(`Confiance: ${signal.confidence.toFixed(1)}% | Payout: ${this.lastPayout || '?'}`);
-    console.log(`------------------------\n`);
-
-    // Auto mode: execute trade if confidence >= threshold
-    const threshold = this.confidenceMode === "high"
-      ? HIGH_CONFIDENCE_THRESHOLD
-      : AUTO_TRADE_CONFIDENCE_THRESHOLD;
-
+    // === 5. Trade Execution & State Management ===
     if (this.botType === "auto") {
-      // MANDATORY: Check if client is REALLY connected AND authenticated before auto-trading
-      if (!poClient || !poClient.isConnected) {
-        console.warn(`[BotRunner] Connection lost or not authenticated for user ${this.userId}. Skipping auto-trade.`);
-        // If we are supposed to be running but disconnected, try to re-bootstrap
-        if (!this.stopped && Math.random() < 0.05) {
-           this.bootstrapCandles();
-        }
-        return;
-      }
+      if (!poClient || !poClient.isConnected) return;
 
-      if (signal.confidence >= threshold) {
-        console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% >= ${threshold}%. CHECKING PAYOUT for user ${this.userId}...`);
-        
-        // Anti-ban & Payout check: Get current asset payout before trading
-        const client = getPocketOptionClient(this.userId);
-        if (client && client.isConnected) {
-          const assets = (client as any).assets || {};
-          const assetSymbol = PocketOptionClient.toPOSymbol(this.asset);
-          const assetInfo = assets[assetSymbol];
-          const payout = assetInfo?.payout || 0;
-          this.lastPayout = payout;
-          
-          if (payout > 0 && payout < 0.60) { // Lowered to 60% for more flexibility while still protecting
-             console.log(`[BotRunner] Payout too low (${(payout*100).toFixed(0)}% < 60%) for ${assetSymbol}. Skipping trade for user ${this.userId}.`);
-             return;
-          }
-        }
+      // Lock position until trade is finished
+      this.isInPosition = true;
+      console.log(`[BotRunner] Entrée en position: ${signal.direction} $${this.tradeAmount}`);
 
-        console.log(`[BotRunner] Payout OK. Executing trade for user ${this.userId}...`);
-        await this.executeAutoTrade(signal, candles);
-      } else {
-        console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% below threshold ${threshold}%. Skipping trade for user ${this.userId}.`);
+      try {
+        // executeAutoTrade calls executeTrade which calls poClient.placeTrade (which waits for expiry)
+        await this.executeAutoTrade(signal, analysisCandles);
+      } catch (err) {
+        console.error(`[BotRunner] Erreur lors de l'exécution du trade:`, err);
+      } finally {
+        // Unlock once trade is finished
+        this.isInPosition = false;
+        console.log(`[BotRunner] Sortie de position. Prêt pour le prochain signal.`);
       }
     }
 
-    // Update bot session stats
     await this.updateSessionStats();
   }
 
