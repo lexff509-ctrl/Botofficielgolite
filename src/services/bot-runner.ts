@@ -436,7 +436,7 @@ export class BotRunner {
     // === 4. Indicator Engine & Signal Generator (Bollinger + Stoch) ===
     const strategy = evaluateBollingerStochSignal(analysisCandles);
     
-    if (strategy.direction === "NONE") {
+    if (strategy.signal === "WAIT") {
       // Mark as processed even if no signal to wait for next candle
       this.lastProcessedTimestamp = lastClosedCandle.timestamp;
       return;
