@@ -67,6 +67,8 @@ export class BotRunner {
   private compoundInitialAmount: number;
 
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  private setupInterval: ReturnType<typeof setInterval> | null = null;
+  private firstTickTimeout: ReturnType<typeof setTimeout> | null = null;
   private consecutiveErrors = 0;
   private signalHistory: ("CALL" | "PUT")[] = [];
   private isPaused = false;
@@ -214,9 +216,10 @@ export class BotRunner {
     if (!trySetup()) {
       console.log(`[BotRunner] Waiting for PO connection for user ${this.userId}...`);
       // Retry setup every 2 seconds until connected
-      const setupInterval = setInterval(() => {
+      this.setupInterval = setInterval(() => {
         if (trySetup() || this.stopped) {
-          clearInterval(setupInterval);
+          if (this.setupInterval) clearInterval(this.setupInterval);
+          this.setupInterval = null;
         }
       }, 2000);
     }
@@ -224,6 +227,7 @@ export class BotRunner {
     const intervalMs = getLoopIntervalMs(this.timeframe);
     console.log(`[BotRunner] Starting loop for user ${this.userId} with interval ${intervalMs}ms`);
     this.intervalHandle = setInterval(() => {
+      if (this.stopped || this.isPaused) return;
       this.tick().catch((err) => {
         console.error(`[BotRunner] Tick error for user ${this.userId}:`, err);
         this.consecutiveErrors++;
@@ -234,11 +238,12 @@ export class BotRunner {
     }, intervalMs);
 
     // Run first tick after a short delay to let data start flowing
-    setTimeout(() => {
-      if (!this.stopped) {
+    this.firstTickTimeout = setTimeout(() => {
+      if (!this.stopped && !this.isPaused) {
         console.log(`[BotRunner] Initial tick for user ${this.userId}`);
         this.tick().catch((err) => console.error(`[BotRunner] Initial tick error:`, err));
       }
+      this.firstTickTimeout = null;
     }, 5000); // Increased to 5s to allow bootstrap to finish
   }
 
@@ -247,6 +252,14 @@ export class BotRunner {
     if (this.intervalHandle) {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
+    }
+    if (this.setupInterval) {
+      clearInterval(this.setupInterval);
+      this.setupInterval = null;
+    }
+    if (this.firstTickTimeout) {
+      clearTimeout(this.firstTickTimeout);
+      this.firstTickTimeout = null;
     }
     // Unsubscribe from candle cache
     const sizeSeconds = this.timeframeToSeconds();
@@ -473,6 +486,12 @@ export class BotRunner {
       : AUTO_TRADE_CONFIDENCE_THRESHOLD;
 
     if (this.botType === "auto") {
+      // MANDATORY: Check if client is REALLY connected before auto-trading
+      if (!poClient || !poClient.isConnected) {
+        console.warn(`[BotRunner] Connection lost for user ${this.userId}. Skipping auto-trade.`);
+        return;
+      }
+
       if (signal.confidence >= threshold) {
         console.log(`[BotRunner] Confidence ${signal.confidence.toFixed(1)}% >= ${threshold}%. CHECKING PAYOUT for user ${this.userId}...`);
         

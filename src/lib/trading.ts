@@ -925,19 +925,22 @@ function evaluateSignal(
   
   // Anti-bias: Check if recent price action is extreme
   const lastCandle = candles[candles.length - 1];
+  const prevCandle = candles[candles.length - 2];
   const thirdCandle = candles[candles.length - 3];
   
   // Trend change detection: If the last 3 candles are showing a strong reversal, 
   // prioritize that over slow indicators
   const shortTermTrend = (lastCandle.close - thirdCandle.close) / thirdCandle.close;
   
-  if (rawScore > 0.005 || shortTermTrend > 0.0002) {
+  if (rawScore > 0.05) {
     direction = "CALL";
-  } else if (rawScore < -0.005 || shortTermTrend < -0.0002) {
+  } else if (rawScore < -0.05) {
     direction = "PUT";
   } else {
-    // If score is completely neutral, check short-term price action
-    direction = lastCandle.close >= prevCandle.close ? "CALL" : "PUT";
+    // If score is neutral, check short-term price action trend
+    if (shortTermTrend > 0.0001) direction = "CALL";
+    else if (shortTermTrend < -0.0001) direction = "PUT";
+    else direction = lastCandle.close >= prevCandle.close ? "CALL" : "PUT";
   }
   
   // Final Adjusted Score
@@ -997,15 +1000,15 @@ function calculateConfidence(
   
   // High-performance strategy tuning:
   // We use a more aggressive confidence curve to reach the 89%+ range
-  let confidence = Math.min(95, Math.round(40 + scoreMagnitude * 110));
+  let confidence = Math.min(85, Math.round(35 + scoreMagnitude * 90));
 
   // Pattern bonus
   if (direction === "CALL" && scores.patterns > 0) confidence += 10;
   if (direction === "PUT" && scores.patterns < 0) confidence += 10;
 
   // Divergence bonus (very strong)
-  if (direction === "CALL" && scores.divergence > 0) confidence += 20;
-  if (direction === "PUT" && scores.divergence < 0) confidence += 20;
+  if (direction === "CALL" && scores.divergence > 0) confidence += 15;
+  if (direction === "PUT" && scores.divergence < 0) confidence += 15;
 
   // MTF bonus: High importance for 89%+ confidence
   const confirmedTFs = TIMEFRAMES.filter((tf) => mtfConfirmation[tf] === direction).length;
@@ -1015,35 +1018,38 @@ function calculateConfidence(
   const netConfirm = confirmedTFs - contraryTFs;
   
   // Significant bonus for multi-timeframe alignment
-  if (netConfirm >= 4) confidence += 30; // Full alignment
-  else if (netConfirm >= 3) confidence += 20;
-  else if (netConfirm >= 2) confidence += 15;
-  else if (netConfirm >= 1) confidence += 10;
+  if (netConfirm >= 4) confidence += 20; // Full alignment
+  else if (netConfirm >= 3) confidence += 15;
+  else if (netConfirm >= 2) confidence += 10;
+  else if (netConfirm >= 1) confidence += 5;
 
   // Contrary trend penalty
-  if (contraryTFs >= 3) confidence -= 25;
-  else if (contraryTFs >= 2) confidence -= 15;
+  if (contraryTFs >= 3) confidence -= 30;
+  else if (contraryTFs >= 2) confidence -= 20;
 
   // S/R confluence bonus: Critical for high-confidence trades
-  if (direction === "CALL" && nearSupport) confidence += 20;
-  if (direction === "PUT" && nearResistance) confidence += 20;
+  if (direction === "CALL" && nearSupport) confidence += 10;
+  if (direction === "PUT" && nearResistance) confidence += 10;
   
   // S/R contradiction penalty
-  if (direction === "CALL" && nearResistance) confidence -= 20;
-  if (direction === "PUT" && nearSupport) confidence -= 20;
+  if (direction === "CALL" && nearResistance) confidence -= 15;
+  if (direction === "PUT" && nearSupport) confidence -= 15;
 
   // Market structure alignment (SMC/ICT concepts)
-  if (structureBreak === "BULLISH_BOS" && direction === "CALL") confidence += 25;
-  if (structureBreak === "BEARISH_BOS" && direction === "PUT") confidence += 25;
+  if (structureBreak === "BULLISH_BOS" && direction === "CALL") confidence += 15;
+  if (structureBreak === "BEARISH_BOS" && direction === "PUT") confidence += 15;
   
-  if (marketStructure === "BULLISH" && direction === "CALL") confidence += 15;
-  if (marketStructure === "BEARISH" && direction === "PUT") confidence += 15;
+  if (marketStructure === "BULLISH" && direction === "CALL") confidence += 10;
+  if (marketStructure === "BEARISH" && direction === "PUT") confidence += 10;
   
   // Institutional Flow / Trend alignment
-  if (marketStructure === "BULLISH" && direction === "PUT") confidence -= 20;
-  if (marketStructure === "BEARISH" && direction === "CALL") confidence -= 20;
+  if (marketStructure === "BULLISH" && direction === "PUT") confidence -= 25;
+  if (marketStructure === "BEARISH" && direction === "CALL") confidence -= 25;
 
   // The user requested 89-200% confidence.
+  // We'll normalize to ensure 89%+ is only reached with strong confluence
+  if (confidence > 100) confidence = 100 + (confidence - 100) * 0.5;
+  
   return Math.min(200, Math.max(5, confidence));
 }
 
