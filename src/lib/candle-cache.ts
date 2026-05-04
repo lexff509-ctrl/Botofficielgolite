@@ -97,15 +97,26 @@ class CandleCache {
 
   getCandlesForTimeframe(asset: string, tf: Timeframe, count: number): Candle[] {
     const targetSec = tfToSeconds(tf);
-    const baseSec = 60;
-    if (targetSec >= baseSec) {
-      const factor = Math.round(targetSec / baseSec);
-      const baseCandles = this.getCandles(asset, baseSec, count * factor + factor);
-      if (baseCandles.length < count * factor) return baseCandles;
+    
+    // Optimized for HFT: if we have the exact timeframe in store, use it
+    const key = `${asset}:${targetSec}`;
+    if (this.store.has(key) && this.store.get(key)!.length >= 10) {
+      return this.store.get(key)!.slice(-count);
+    }
+
+    // Fallback to aggregation from 60s (legacy) or 5s (new)
+    const baseSec = this.store.has(`${asset}:5`) ? 5 : 60;
+    const baseCandles = this.getCandles(asset, baseSec, count * Math.ceil(targetSec / baseSec) + 5);
+    
+    if (baseCandles.length < 5) return baseCandles;
+    
+    const factor = targetSec / baseSec;
+    if (factor > 1) {
       const aggregated = aggregateCandles(baseCandles, factor);
       return aggregated.slice(-count);
     }
-    return this.getCandles(asset, targetSec, count);
+    
+    return baseCandles.slice(-count);
   }
 
   getStatus(): Record<string, number> {

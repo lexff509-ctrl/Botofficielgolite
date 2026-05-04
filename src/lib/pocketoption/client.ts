@@ -126,6 +126,8 @@ export class PocketOptionClient {
 
   // Heartbeat
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
+  private lastPongAt = Date.now();
+  private pingInterval = 25000;
 
   // Reconnection
   private reconnectAttempts = 0;
@@ -144,6 +146,35 @@ export class PocketOptionClient {
   constructor(ssid: string, cookies?: string[]) {
     this.ssid = ssid;
     if (cookies) this.prefetchedCookies = cookies;
+  }
+
+  // ============ Connection Management ============
+
+  private startHeartbeats(): void {
+    if (this.socketIoHeartbeat) clearInterval(this.socketIoHeartbeat);
+    this.lastPongAt = Date.now();
+    
+    this.socketIoHeartbeat = setInterval(() => {
+      if (!this.connected || !this.ws) return;
+
+      // Check for timeout
+      if (Date.now() - this.lastPongAt > this.pingInterval * 2) {
+        console.warn("[PO] Pong timeout, reconnecting...");
+        this.handleDisconnect();
+        return;
+      }
+
+      // Send Socket.IO Ping (2)
+      try {
+        this.ws.send("2");
+      } catch (err) {
+        this.handleDisconnect();
+      }
+    }, this.pingInterval);
+  }
+
+  private handlePong(): void {
+    this.lastPongAt = Date.now();
   }
 
   get isConnected(): boolean {
@@ -615,7 +646,8 @@ export class PocketOptionClient {
 
     // Engine.IO PONG: "3"
     if (message === "3") {
-      return; // Regular pong, nothing to do
+      this.handlePong();
+      return;
     }
 
     // Engine.IO NOOP: "6" (sent by server to close active polling GET requests)

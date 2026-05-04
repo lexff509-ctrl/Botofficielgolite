@@ -19,6 +19,8 @@ import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { getPocketOptionClient, executeTrade } from "@/services/trading.service";
 import { hasActiveSubscription } from "@/services/payment.service";
 
+import { signalTracker } from "@/services/signal-tracker";
+
 // ============ CONFIG ============
 
 const AUTO_TRADE_CONFIDENCE_THRESHOLD = 70; // Minimum confidence % to auto-trade (standard mode)
@@ -464,6 +466,16 @@ export class BotRunner {
     console.log(`[BotRunner] NOUVEAU SIGNAL DETECTE: ${signal.direction} sur ${this.asset} (${this.timeframe})`);
     console.log(`[BotRunner] Diagnostic: ${signal.diagnostic}`);
 
+    // Track signal for traceability
+    const signalId = await signalTracker.logSignal({
+      timestamp: Date.now(),
+      asset: this.asset,
+      direction: signal.direction,
+      timeframe: this.timeframe,
+      entryPrice: analysisCandles[analysisCandles.length - 1].close,
+      confidence: signal.confidence,
+    });
+
     // Save to DB
     await this.saveSignal(signal);
 
@@ -477,13 +489,27 @@ export class BotRunner {
 
       try {
         // executeAutoTrade calls executeTrade which calls poClient.placeTrade (which waits for expiry)
-        await this.executeAutoTrade(signal, analysisCandles);
+        const result = await this.executeAutoTrade(signal, analysisCandles);
+        
+        // Update signal tracker with result
+        if (result && result.trade) {
+          const res = (result as any).profit > 0 ? 'WIN' : 'LOSS';
+          await signalTracker.updateResult(signalId, res, (result as any).closePrice || 0, (result as any).profit);
+        }
       } catch (err) {
         console.error(`[BotRunner] Erreur lors de l'exécution du trade:`, err);
       } finally {
         // Unlock once trade is finished
         this.isInPosition = false;
-        console.log(`[BotRunner] Sortie de position. Prêt pour le prochain signal.`);
+        
+        // Sniper Cooldown: Lock for timeframe duration to avoid spamming same setup
+        const cooldownMs = this.timeframeToSeconds() * 1000;
+        console.log(`[BotRunner] Sortie de position. Sniper Lock actif pendant ${cooldownMs/1000}s...`);
+        this.isPaused = true;
+        setTimeout(() => {
+          this.isPaused = false;
+          console.log(`[BotRunner] Sniper Lock levé. Prêt pour le prochain signal.`);
+        }, cooldownMs);
       }
     }
 
@@ -539,17 +565,17 @@ export class BotRunner {
   private async executeAutoTrade(
     signal: Signal,
     candles: Candle[]
-  ): Promise<void> {
+  ): Promise<any> {
     const currentPrice = candles[candles.length - 1]?.close;
 
     // Double-check dollar-based daily limits before executing
     if (this.dailyProfit <= -this.lossLimit) {
       this.pause(`Limite de perte atteinte: -$${Math.abs(this.dailyProfit).toFixed(2)} (limite: $${this.lossLimit})`);
-      return;
+      return null;
     }
     if (this.dailyProfit >= this.profitTarget) {
       this.pause(`Objectif de profit atteint: +$${this.dailyProfit.toFixed(2)} (objectif: $${this.profitTarget})`);
-      return;
+      return null;
     }
 
     // Determine the effective trade amount
@@ -593,12 +619,12 @@ export class BotRunner {
 
             if (this.compoundTradesTaken >= this.compoundTradesTarget) {
               this.pause(`Compound: Objectif atteint! ${this.compoundTradesTaken} trades reussis. Montant final: $${this.compoundCurrentAmount.toFixed(2)}`);
-              return;
+              return result;
             }
           } else {
             // LOSS in compound: STOP immediately
             this.pause(`Compound: Perte au trade #${this.compoundTradesTaken + 1}. Montant perdu: $${effectiveAmount.toFixed(2)}`);
-            return;
+            return result;
           }
         }
 
@@ -623,9 +649,12 @@ export class BotRunner {
 
         const amountStr = effectiveAmount !== this.tradeAmount ? `$${effectiveAmount.toFixed(2)}` : `$${this.tradeAmount}`;
         console.log(`[BotRunner] Trade executed: ${signal.direction} ${signal.asset} amount=${amountStr} profit=${result.profit.toFixed(2)} dailyP/L=$${this.dailyProfit.toFixed(2)} (W:${this.dailyWins}/L:${this.dailyLosses})`);
+        return result;
       }
+      return null;
     } catch (err) {
       console.error(`[BotRunner] Trade execution failed:`, err);
+      return null;
     }
   }
 
