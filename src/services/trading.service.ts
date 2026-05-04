@@ -272,6 +272,7 @@ export async function executeTrade(
       result,
       profit: profit.toFixed(2),
       isAutomatic: params.isAutomatic || false,
+      poTradeId: tradeId,
       closedAt: new Date(),
     })
     .returning();
