@@ -819,6 +819,7 @@ function evaluateSignal(
   let direction: "CALL" | "PUT";
   
   // Anti-bias: Check if recent price action is extreme
+  const lastCandle = candles[candles.length - 1];
   const thirdCandle = candles[candles.length - 3];
   
   // Trend change detection: If the last 3 candles are showing a strong reversal, 
