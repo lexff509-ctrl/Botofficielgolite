@@ -626,7 +626,11 @@ export class PocketOptionClient {
     // Socket.IO CONNECT ACK: "40{sid:...}"
     if (message.startsWith("40")) {
       console.log("[PO] Socket.IO CONNECT ACK received, sending auth...");
-      this.ws?.send(this.ssid);
+      // Auto-wrap SSID if it's just the token
+      const authMessage = this.ssid.startsWith('42["auth"') 
+        ? this.ssid 
+        : `42["auth","${this.ssid}"]`;
+      this.ws?.send(authMessage);
       return;
     }
 
@@ -1338,9 +1342,9 @@ export class PocketOptionClient {
       releaseMutex = resolve;
     });
     const prevMutex = this.tradeMutex;
-    this.tradeMutex = this.tradeMutex.then(() => mutexPromise);
+    this.tradeMutex = this.tradeMutex.catch(() => {}).then(() => mutexPromise);
 
-    await prevMutex;
+    await prevMutex.catch(() => {});
 
     try {
       this.orderData = null;

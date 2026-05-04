@@ -119,6 +119,11 @@ class CandleCache {
   private handleCandle(key: string, candle: CandleData): void {
     const arr = this.store.get(key);
     if (!arr) return;
+
+    if (arr.length === 0) {
+      console.log(`[CandleCache] First candle received for ${key}`);
+    }
+
     const newCandle: Candle = {
       open: candle.open,
       high: candle.high,

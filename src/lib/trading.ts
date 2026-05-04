@@ -286,6 +286,92 @@ function getPipValue(asset: string): number {
   return 0.0001;
 }
 
+// ============ PRICE ACTION PATTERNS ============
+
+export function detectCandlePatterns(candles: Candle[]): {
+  engulfing: "CALL" | "PUT" | "NONE";
+  hammer: "CALL" | "NONE";
+  shootingStar: "PUT" | "NONE";
+  doji: boolean;
+} {
+  if (candles.length < 2) {
+    return { engulfing: "NONE", hammer: "NONE", shootingStar: "NONE", doji: false };
+  }
+
+  const current = candles[candles.length - 1];
+  const previous = candles[candles.length - 2];
+
+  const currentBody = Math.abs(current.close - current.open);
+  const previousBody = Math.abs(previous.close - previous.open);
+  const currentRange = current.high - current.low;
+
+  // Engulfing
+  let engulfing: "CALL" | "PUT" | "NONE" = "NONE";
+  if (currentBody > previousBody) {
+    if (current.close > current.open && previous.close < previous.open && current.close > previous.open && current.open < previous.close) {
+      engulfing = "CALL";
+    } else if (current.close < current.open && previous.close > previous.open && current.close < previous.open && current.open > previous.close) {
+      engulfing = "PUT";
+    }
+  }
+
+  // Hammer & Shooting Star
+  const upperWick = current.high - Math.max(current.open, current.close);
+  const lowerWick = Math.min(current.open, current.close) - current.low;
+  
+  let hammer: "CALL" | "NONE" = "NONE";
+  if (lowerWick > currentBody * 2 && upperWick < currentBody * 0.5) {
+    hammer = "CALL";
+  }
+
+  let shootingStar: "PUT" | "NONE" = "NONE";
+  if (upperWick > currentBody * 2 && lowerWick < currentBody * 0.5) {
+    shootingStar = "PUT";
+  }
+
+  const doji = isDojiCandle(current);
+
+  return { engulfing, hammer, shootingStar, doji };
+}
+
+// ============ DIVERGENCE DETECTION ============
+
+function detectRSIDivergence(candles: Candle[], rsiSeries: number[]): "CALL" | "PUT" | "NONE" {
+  if (candles.length < 20 || rsiSeries.length < 20) return "NONE";
+
+  // Simple divergence check (last 10-15 bars)
+  const len = rsiSeries.length;
+  const currentRSI = rsiSeries[len - 1];
+  const currentPrice = candles[candles.length - 1].close;
+  
+  // Find local price/RSI lows
+  let prevPriceLow = candles[candles.length - 10].low;
+  let prevRSILow = rsiSeries[len - 10];
+  for(let i = 2; i < 15; i++) {
+    if (candles[candles.length - i].low < prevPriceLow) prevPriceLow = candles[candles.length - i].low;
+    if (rsiSeries[len - i] < prevRSILow) prevRSILow = rsiSeries[len - i];
+  }
+
+  // Bullish Divergence: Price makes Lower Low, RSI makes Higher Low
+  if (currentPrice < prevPriceLow && currentRSI > prevRSILow && currentRSI < 40) {
+    return "CALL";
+  }
+
+  // Bearish Divergence: Price makes Higher High, RSI makes Lower High
+  let prevPriceHigh = candles[candles.length - 10].high;
+  let prevRSIHigh = rsiSeries[len - 10];
+  for(let i = 2; i < 15; i++) {
+    if (candles[candles.length - i].high > prevPriceHigh) prevPriceHigh = candles[candles.length - i].high;
+    if (rsiSeries[len - i] > prevRSIHigh) prevRSIHigh = rsiSeries[len - i];
+  }
+
+  if (currentPrice > prevPriceHigh && currentRSI < prevRSIHigh && currentRSI > 60) {
+    return "PUT";
+  }
+
+  return "NONE";
+}
+
 // ============ TIMEFRAME WEIGHTS ============
 
 function getTimeframeWeights(tf: Timeframe): TimeframeWeights {
@@ -769,6 +855,21 @@ function evaluateSignal(
   const weights = getTimeframeWeights(timeframe);
   const scores: Record<string, number> = {};
 
+  // Price Action Patterns
+  const patterns = detectCandlePatterns(candles);
+  scores.patterns = 0;
+  if (patterns.engulfing === "CALL") scores.patterns += 0.6;
+  if (patterns.engulfing === "PUT") scores.patterns -= 0.6;
+  if (patterns.hammer === "CALL") scores.patterns += 0.4;
+  if (patterns.shootingStar === "PUT") scores.patterns -= 0.4;
+  
+  // RSI Divergence
+  const rsiSeries = RSI.calculate({ period: 14, values: closes });
+  const divergence = detectRSIDivergence(candles, rsiSeries);
+  scores.divergence = 0;
+  if (divergence === "CALL") scores.divergence = 1.0;
+  if (divergence === "PUT") scores.divergence = -1.0;
+
   // EMA Trend Scoring (Primary)
   scores.emaTrend = scoreEmaTrend(currentPrice, ema20, ema50);
   
@@ -812,6 +913,10 @@ function evaluateSignal(
   rawScore += scores.tickMomentum * weights.tickMomentum;
   rawScore += scores.srProximity * weights.srProximity;
   rawScore += scores.marketStructure * weights.marketStructure;
+  
+  // Add Price Action and Divergence with fixed weights for all TFs
+  rawScore += scores.patterns * 0.15;
+  rawScore += scores.divergence * 0.20;
 
   // Determine direction based on technical confluence
   // rawScore is the weighted sum of indicators (-1.0 to 1.0)
@@ -884,15 +989,23 @@ function calculateConfidence(
   nearSupport: boolean,
   nearResistance: boolean,
   marketStructure: "BULLISH" | "BEARISH" | "NEUTRAL",
-  structureBreak: "BULLISH_BOS" | "BEARISH_BOS" | "NONE"
+  structureBreak: "BULLISH_BOS" | "BEARISH_BOS" | "NONE",
+  scores: Record<string, number>
 ): number {
   // Base confidence from score magnitude
   const scoreMagnitude = Math.abs(adjustedScore);
   
   // High-performance strategy tuning:
   // We use a more aggressive confidence curve to reach the 89%+ range
-  // Base: 0.1 -> 40%, 0.3 -> 70%, 0.5 -> 85%, 0.7 -> 92%
-  let confidence = Math.min(92, Math.round(30 + scoreMagnitude * 120));
+  let confidence = Math.min(95, Math.round(40 + scoreMagnitude * 110));
+
+  // Pattern bonus
+  if (direction === "CALL" && scores.patterns > 0) confidence += 10;
+  if (direction === "PUT" && scores.patterns < 0) confidence += 10;
+
+  // Divergence bonus (very strong)
+  if (direction === "CALL" && scores.divergence > 0) confidence += 20;
+  if (direction === "PUT" && scores.divergence < 0) confidence += 20;
 
   // MTF bonus: High importance for 89%+ confidence
   const confirmedTFs = TIMEFRAMES.filter((tf) => mtfConfirmation[tf] === direction).length;
@@ -902,37 +1015,35 @@ function calculateConfidence(
   const netConfirm = confirmedTFs - contraryTFs;
   
   // Significant bonus for multi-timeframe alignment
-  if (netConfirm >= 4) confidence += 25; // Full alignment
-  else if (netConfirm >= 3) confidence += 15;
-  else if (netConfirm >= 2) confidence += 10;
-  else if (netConfirm >= 1) confidence += 5;
+  if (netConfirm >= 4) confidence += 30; // Full alignment
+  else if (netConfirm >= 3) confidence += 20;
+  else if (netConfirm >= 2) confidence += 15;
+  else if (netConfirm >= 1) confidence += 10;
 
   // Contrary trend penalty
-  if (contraryTFs >= 3) confidence -= 20;
-  else if (contraryTFs >= 2) confidence -= 10;
+  if (contraryTFs >= 3) confidence -= 25;
+  else if (contraryTFs >= 2) confidence -= 15;
 
   // S/R confluence bonus: Critical for high-confidence trades
-  if (direction === "CALL" && nearSupport) confidence += 15;
-  if (direction === "PUT" && nearResistance) confidence += 15;
+  if (direction === "CALL" && nearSupport) confidence += 20;
+  if (direction === "PUT" && nearResistance) confidence += 20;
   
   // S/R contradiction penalty
-  if (direction === "CALL" && nearResistance) confidence -= 15;
-  if (direction === "PUT" && nearSupport) confidence -= 15;
+  if (direction === "CALL" && nearResistance) confidence -= 20;
+  if (direction === "PUT" && nearSupport) confidence -= 20;
 
   // Market structure alignment (SMC/ICT concepts)
-  if (structureBreak === "BULLISH_BOS" && direction === "CALL") confidence += 20;
-  if (structureBreak === "BEARISH_BOS" && direction === "PUT") confidence += 20;
+  if (structureBreak === "BULLISH_BOS" && direction === "CALL") confidence += 25;
+  if (structureBreak === "BEARISH_BOS" && direction === "PUT") confidence += 25;
   
-  if (marketStructure === "BULLISH" && direction === "CALL") confidence += 10;
-  if (marketStructure === "BEARISH" && direction === "PUT") confidence += 10;
+  if (marketStructure === "BULLISH" && direction === "CALL") confidence += 15;
+  if (marketStructure === "BEARISH" && direction === "PUT") confidence += 15;
   
   // Institutional Flow / Trend alignment
-  if (marketStructure === "BULLISH" && direction === "PUT") confidence -= 15;
-  if (marketStructure === "BEARISH" && direction === "CALL") confidence -= 15;
+  if (marketStructure === "BULLISH" && direction === "PUT") confidence -= 20;
+  if (marketStructure === "BEARISH" && direction === "CALL") confidence -= 20;
 
   // The user requested 89-200% confidence.
-  // We'll allow confidence to go above 100% to represent "Ultra-High Confidence" or "Perfect Setup"
-  // but we'll cap it at 200% as requested.
   return Math.min(200, Math.max(5, confidence));
 }
 
@@ -993,40 +1104,28 @@ export function generateSignal(
     evaluation.allIndicators.nearSupport,
     evaluation.allIndicators.nearResistance,
     evaluation.allIndicators.marketStructure,
-    evaluation.allIndicators.structureBreak
+    evaluation.allIndicators.structureBreak,
+    evaluation.indicatorScores
   );
 
-  // Generate diagnostic summary
-  const diagnostics: string[] = [];
-  const dir = evaluation.direction;
+  // Generate diagnostic string based on top 3 scores
+  const topScores = Object.entries(evaluation.indicatorScores)
+    .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
+    .slice(0, 3)
+    .map(([name, score]) => {
+      const dir = score > 0 ? "Bullish" : "Bearish";
+      return `${name.toUpperCase()} (${dir})`;
+    })
+    .join(", ");
 
-  if (Math.abs(evaluation.adjustedScore) > 0.4) diagnostics.push("Momentum fort");
-  if (evaluation.indicatorScores.emaTrend > 0.7 && dir === "CALL") diagnostics.push("Tendance haussière confirmée");
-  if (evaluation.indicatorScores.emaTrend < -0.7 && dir === "PUT") diagnostics.push("Tendance baissière confirmée");
-  if (evaluation.allIndicators.nearSupport && dir === "CALL") diagnostics.push("Rebond sur support");
-  if (evaluation.allIndicators.nearResistance && dir === "PUT") diagnostics.push("Rejet sur résistance");
-  if (evaluation.allIndicators.structureBreak === "BULLISH_BOS" && dir === "CALL") diagnostics.push("Cassure de structure haussière");
-  if (evaluation.allIndicators.structureBreak === "BEARISH_BOS" && dir === "PUT") diagnostics.push("Cassure de structure baissière");
-  
-  const mtfCount = Object.values(mtfConfirmation).filter(v => v === dir).length;
-  if (mtfCount >= 4) diagnostics.push("Confirmation multi-timeframe totale");
-  else if (mtfCount >= 2) diagnostics.push(`Confirmation multi-timeframe (${mtfCount} TFs)`);
-
-  const diagnostic = diagnostics.length > 0 ? diagnostics.join(" | ") : "Signal standard";
-
-  // Build full indicators object
-  const indicators: Indicators = {
-    ...evaluation.allIndicators,
-    signalScore: evaluation.adjustedScore,
-    indicatorScores: evaluation.indicatorScores,
-  };
+  const diagnostic = `Confluence: ${topScores}. Market: ${evaluation.allIndicators.marketStructure}.`;
 
   return {
     direction: evaluation.direction,
     confidence,
     timeframe,
     asset,
-    indicators,
+    indicators: evaluation.allIndicators as any,
     multiTimeframeConfirmation: mtfConfirmation,
     diagnostic,
     timestamp: Date.now(),
