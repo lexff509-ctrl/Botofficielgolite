@@ -290,6 +290,7 @@ function getPipValue(asset: string): number {
 
 function getTimeframeWeights(tf: Timeframe): TimeframeWeights {
   const sec = tfToSeconds(tf);
+  const isScalping = sec <= 15;
 
   if (isScalping) {
     // Scalping (5s-15s): dynamic momentum + fast reversal
@@ -816,14 +817,22 @@ function evaluateSignal(
   // rawScore is the weighted sum of indicators (-1.0 to 1.0)
   // Use a very small deadzone to be highly sensitive to indicator changes
   let direction: "CALL" | "PUT";
-  if (rawScore > 0.01) {
+  
+  // Anti-bias: Check if recent price action is extreme
+  const lastCandle = candles[candles.length - 1];
+  const prevCandle = candles[candles.length - 2];
+  const thirdCandle = candles[candles.length - 3];
+  
+  // Trend change detection: If the last 3 candles are showing a strong reversal, 
+  // prioritize that over slow indicators
+  const shortTermTrend = (lastCandle.close - thirdCandle.close) / thirdCandle.close;
+  
+  if (rawScore > 0.005 || shortTermTrend > 0.0002) {
     direction = "CALL";
-  } else if (rawScore < -0.01) {
+  } else if (rawScore < -0.005 || shortTermTrend < -0.0002) {
     direction = "PUT";
   } else {
-    // If score is completely neutral, check short-term price action (last 3 candles)
-    const lastCandle = candles[candles.length - 1];
-    const prevCandle = candles[candles.length - 2];
+    // If score is completely neutral, check short-term price action
     direction = lastCandle.close >= prevCandle.close ? "CALL" : "PUT";
   }
   
