@@ -401,7 +401,8 @@ export default function SignalsPage() {
                         </td>
                       </tr>
                     );
-                  })}
+                  })
+                )}
               </tbody>
             </table>
           </div>
