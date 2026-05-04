@@ -17,11 +17,12 @@ async function simulateLiveTrading() {
     for (let i = 0; i < 100; i++) {
         currentPrice += (Math.random() - 0.5) * 0.0001;
         history.push({
-            time: Date.now() - (100 - i) * 1000,
+            timestamp: Date.now() - (100 - i) * 1000,
             open: currentPrice,
             close: currentPrice,
             high: currentPrice + 0.00005,
-            low: currentPrice - 0.00005
+            low: currentPrice - 0.00005,
+            volume: 100
         });
     }
 
@@ -37,11 +38,12 @@ async function simulateLiveTrading() {
         for (let j = 0; j < 5; j++) {
             currentPrice += trend + (Math.random() - 0.5) * 0.0001;
             history.push({
-                time: Date.now(),
+                timestamp: Date.now(),
                 open: history[history.length-1].close,
                 close: currentPrice,
                 high: currentPrice + 0.00002,
-                low: currentPrice - 0.00002
+                low: currentPrice - 0.00002,
+                volume: 100
             });
             if (history.length > 200) history.shift();
         }

@@ -15,11 +15,12 @@ async function runDiversityTest() {
   for (let i = 0; i < 50; i++) {
     basePrice -= 0.0001;
     bearishCandles.push({
-      time: Date.now() - (50 - i) * 60000,
+      timestamp: Date.now() - (50 - i) * 60000,
       open: basePrice + 0.00005,
       close: basePrice,
       high: basePrice + 0.0001,
       low: basePrice - 0.00005,
+      volume: 100,
     });
   }
 
@@ -31,11 +32,12 @@ async function runDiversityTest() {
   for (let i = 0; i < 20; i++) {
     basePrice += 0.0002; // Stronger move up
     reversalCandles.push({
-      time: Date.now() - (20 - i) * 60000,
+      timestamp: Date.now() - (20 - i) * 60000,
       open: basePrice - 0.0001,
       close: basePrice,
       high: basePrice + 0.00005,
       low: basePrice - 0.00015,
+      volume: 100,
     });
   }
 
