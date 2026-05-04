@@ -486,9 +486,13 @@ export class BotRunner {
       : AUTO_TRADE_CONFIDENCE_THRESHOLD;
 
     if (this.botType === "auto") {
-      // MANDATORY: Check if client is REALLY connected before auto-trading
+      // MANDATORY: Check if client is REALLY connected AND authenticated before auto-trading
       if (!poClient || !poClient.isConnected) {
-        console.warn(`[BotRunner] Connection lost for user ${this.userId}. Skipping auto-trade.`);
+        console.warn(`[BotRunner] Connection lost or not authenticated for user ${this.userId}. Skipping auto-trade.`);
+        // If we are supposed to be running but disconnected, try to re-bootstrap
+        if (!this.stopped && Math.random() < 0.05) {
+           this.bootstrapCandles();
+        }
         return;
       }
 

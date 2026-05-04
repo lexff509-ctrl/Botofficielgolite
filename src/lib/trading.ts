@@ -931,15 +931,16 @@ function evaluateSignal(
   // prioritize that over slow indicators
   const shortTermTrend = (lastCandle.close - thirdCandle.close) / thirdCandle.close;
   
-  if (rawScore > 0.05) {
+  if (rawScore > 0.08) {
     direction = "CALL";
-  } else if (rawScore < -0.05) {
+  } else if (rawScore < -0.08) {
     direction = "PUT";
   } else {
-    // If score is neutral, check short-term price action trend
-    if (shortTermTrend > 0.0001) direction = "CALL";
-    else if (shortTermTrend < -0.0001) direction = "PUT";
-    else direction = lastCandle.close >= prevCandle.close ? "CALL" : "PUT";
+    // If score is neutral, only take a direction if short-term trend is clear
+    // Otherwise return null to prevent biased/forced trades
+    if (shortTermTrend > 0.0004) direction = "CALL";
+    else if (shortTermTrend < -0.0004) direction = "PUT";
+    else return null; 
   }
   
   // Final Adjusted Score
