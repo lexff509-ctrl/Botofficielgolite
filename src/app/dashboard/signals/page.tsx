@@ -323,85 +323,87 @@ export default function SignalsPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredSignals.map((sig) => {
-                    const mtf = sig.multiTimeframeConfirmation || {};
-                    const confValue = parseFloat(sig.confidence);
-                    const isElite = confValue >= 89;
-                    const isHigh = confValue >= 80;
-                    return (
-                      <tr key={sig.id} className="hover:bg-white/[0.02] transition-colors group">
-                        <td className="px-8 py-5">
-                          <div className="flex items-center gap-3">
-                             <div className={`w-1 h-8 rounded-full ${sig.direction === 'CALL' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                             <div>
-                                <div className="font-black text-white text-sm">{sig.asset}</div>
-                                {sig.asset.includes("(OTC)") && (
-                                  <span className="text-[8px] font-black text-orange-400 uppercase tracking-tighter">Marché OTC</span>
-                                )}
-                             </div>
-                          </div>
-                        </td>
-                        <td className="px-8 py-5">
-                          <span
-                            className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border ${
-                              sig.direction === "CALL"
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                : "bg-red-500/10 text-red-400 border-red-500/20"
-                            }`}
-                          >
-                            {sig.direction === "CALL" ? "BUY ↑" : "SELL ↓"}
-                          </span>
-                        </td>
-                        <td className="px-8 py-5">
-                          <span className="bg-white/5 px-3 py-1 rounded-lg text-[10px] text-white font-black border border-white/5">{sig.timeframe}</span>
-                        </td>
-                        <td className="px-8 py-5">
-                          <div className="flex items-center gap-3">
-                            <div className="h-1.5 w-20 bg-white/5 rounded-full overflow-hidden border border-white/5">
-                              <div
-                                className={`h-full rounded-full transition-all duration-1000 ${
-                                  isElite ? "bg-gradient-to-r from-cyan-400 to-blue-600 shadow-[0_0_10px_rgba(6,182,212,0.5)]" :
-                                  isHigh ? "bg-gradient-to-r from-amber-400 to-orange-600" :
-                                  "bg-slate-500"
-                                }`}
-                                style={{ width: `${Math.min(100, confValue)}%` }}
-                              />
+                  [...filteredSignals]
+                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                    .map((sig) => {
+                      const mtf = sig.multiTimeframeConfirmation || {};
+                      const confValue = parseFloat(sig.confidence);
+                      const isElite = confValue >= 89;
+                      const isHigh = confValue >= 80;
+                      return (
+                        <tr key={sig.id} className="hover:bg-white/[0.02] transition-colors group">
+                          <td className="px-8 py-5">
+                            <div className="flex items-center gap-3">
+                               <div className={`w-1 h-8 rounded-full ${sig.direction === 'CALL' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                               <div>
+                                  <div className="font-black text-white text-sm">{sig.asset}</div>
+                                  {sig.asset.includes("(OTC)") && (
+                                    <span className="text-[8px] font-black text-orange-400 uppercase tracking-tighter">Marché OTC</span>
+                                  )}
+                               </div>
                             </div>
-                            <span className={`text-xs font-black ${
-                              isElite ? "text-cyan-400" : isHigh ? "text-amber-400" : "text-slate-400"
-                            }`}>
-                              {confValue.toFixed(1)}%
+                          </td>
+                          <td className="px-8 py-5">
+                            <span
+                              className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border ${
+                                sig.direction === "CALL"
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                  : "bg-red-500/10 text-red-400 border-red-500/20"
+                              }`}
+                            >
+                              {sig.direction === "CALL" ? "BUY ↑" : "SELL ↓"}
                             </span>
-                          </div>
-                        </td>
-                        <td className="px-8 py-5">
-                           <div className="text-[10px] font-bold text-slate-400 max-w-[200px] leading-relaxed italic" title={sig.diagnostic}>
-                             {sig.diagnostic || "Analyse Standard"}
-                           </div>
-                        </td>
-                        <td className="px-8 py-5">
-                          <div className="flex gap-1.5">
-                            {TIMEFRAMES.map((tf) => (
-                              <div
-                                key={tf}
-                                className={`w-2 h-2 rounded-full transition-all ${
-                                  mtf[tf] === sig.direction
-                                    ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
-                                    : mtf[tf] === "NEUTRAL"
-                                    ? "bg-white/10"
-                                    : "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]"
-                                }`}
-                                title={`${tf}: ${mtf[tf] || "?"}`}
-                              />
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-8 py-5 text-right text-[10px] text-slate-500 font-black uppercase">
-                          {new Date(sig.createdAt).toLocaleTimeString("fr-FR", { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </td>
-                      </tr>
-                    );
-                  })
+                          </td>
+                          <td className="px-8 py-5">
+                            <span className="bg-white/5 px-3 py-1 rounded-lg text-[10px] text-white font-black border border-white/5">{sig.timeframe}</span>
+                          </td>
+                          <td className="px-8 py-5">
+                            <div className="flex items-center gap-3">
+                              <div className="h-1.5 w-20 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-1000 ${
+                                    isElite ? "bg-gradient-to-r from-cyan-400 to-blue-600 shadow-[0_0_10px_rgba(6,182,212,0.5)]" :
+                                    isHigh ? "bg-gradient-to-r from-amber-400 to-orange-600" :
+                                    "bg-slate-500"
+                                  }`}
+                                  style={{ width: `${Math.min(100, confValue)}%` }}
+                                />
+                              </div>
+                              <span className={`text-xs font-black ${
+                                isElite ? "text-cyan-400" : isHigh ? "text-amber-400" : "text-slate-400"
+                              }`}>
+                                {confValue.toFixed(1)}%
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-8 py-5">
+                             <div className="text-[10px] font-bold text-slate-400 max-w-[200px] leading-relaxed italic" title={sig.diagnostic}>
+                               {sig.diagnostic || "Analyse Standard"}
+                             </div>
+                          </td>
+                          <td className="px-8 py-5">
+                            <div className="flex gap-1.5">
+                              {TIMEFRAMES.map((tf) => (
+                                <div
+                                  key={tf}
+                                  className={`w-2 h-2 rounded-full transition-all ${
+                                    !mtf[tf] || mtf[tf] === "NEUTRAL"
+                                      ? "bg-white/10"
+                                      : mtf[tf] === sig.direction
+                                      ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                                      : "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]"
+                                  }`}
+                                  title={`${tf}: ${mtf[tf] || "?"}`}
+                                />
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-8 py-5 text-right text-[10px] text-slate-500 font-black uppercase">
+                            {new Date(sig.createdAt).toLocaleTimeString("fr-FR", { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </td>
+                        </tr>
+                      );
+                    })
                 )}
               </tbody>
             </table>
