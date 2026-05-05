@@ -163,30 +163,35 @@ export function evaluateBollingerStochSignal(
   let bbSignal: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
   let pricePosition = "middle";
 
-  if (currentPrice <= bb.lower) {
+  const prevCandle = candles[candles.length - 2];
+  const currentCandle = candles[candles.length - 1];
+
+  // Relaxed Bollinger Bands rules:
+  // BUY: If the previous or current candle touched/closed below the lower band, and the current candle is bullish
+  if (currentPrice <= bb.lower || prevCandle.low <= bb.lower) {
     pricePosition = "near_lower";
-    if (currentPrice > prevPrice) bbSignal = "BUY"; // Rebound after contact
-  } else if (currentPrice >= bb.upper) {
+    if (currentPrice > currentCandle.open || currentPrice > prevPrice) bbSignal = "BUY";
+  } 
+  // SELL: If the previous or current candle touched/closed above the upper band, and the current candle is bearish
+  else if (currentPrice >= bb.upper || prevCandle.high >= bb.upper) {
     pricePosition = "near_upper";
-    if (currentPrice < prevPrice) bbSignal = "SELL"; // Rebound after contact
+    if (currentPrice < currentCandle.open || currentPrice < prevPrice) bbSignal = "SELL";
   }
 
   // 2. Stochastic Calculation (14, 3, 3)
   const stoch = calculateStochastic(candles, 14, 3, 3);
   const k = stoch.k;
   const d = stoch.d;
-  
-  const prevK = stoch.kSeries.length >= 2 ? stoch.kSeries[stoch.kSeries.length - 2] : k;
-  const prevD = stoch.dSeries.length >= 2 ? stoch.dSeries[stoch.dSeries.length - 2] : d;
 
   let stochSignal: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
   
-  // BUY: K crosses D UP AND K < 20
-  if (k < 20 && prevK <= prevD && k > d) {
+  // Relaxed Stochastic rules:
+  // BUY: K is above D AND K is in oversold zone (e.g. < 30)
+  if (k < 30 && k > d) {
     stochSignal = "BUY";
   }
-  // SELL: K crosses D DOWN AND K > 80
-  else if (k > 80 && prevK >= prevD && k < d) {
+  // SELL: K is below D AND K is in overbought zone (e.g. > 70)
+  else if (k > 70 && k < d) {
     stochSignal = "SELL";
   }
 
@@ -198,19 +203,19 @@ export function evaluateBollingerStochSignal(
   if (bbSignal === "BUY" && stochSignal === "BUY") {
     finalSignal = "BUY";
     confidence = "HIGH";
-    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stoch Crossover en zone de survente";
+    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stochastique en zone d'achat";
   } else if (bbSignal === "SELL" && stochSignal === "SELL") {
     finalSignal = "SELL";
     confidence = "HIGH";
-    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stoch Crossover en zone de surachat";
+    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stochastique en zone de vente";
   } else if (bbSignal === "BUY" || stochSignal === "BUY") {
     finalSignal = "BUY";
     confidence = "MEDIUM";
-    reason = bbSignal === "BUY" ? "Bollinger Rebond détecté" : "Stochastique Crossover détecté";
+    reason = bbSignal === "BUY" ? "Bollinger Rebond détecté" : "Stochastique en zone d'achat";
   } else if (bbSignal === "SELL" || stochSignal === "SELL") {
     finalSignal = "SELL";
     confidence = "MEDIUM";
-    reason = bbSignal === "SELL" ? "Bollinger Rebond détecté" : "Stochastique Crossover détecté";
+    reason = bbSignal === "SELL" ? "Bollinger Rebond détecté" : "Stochastique en zone de vente";
   }
 
   return {

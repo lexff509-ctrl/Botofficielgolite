@@ -145,7 +145,27 @@ export class PocketOptionClient {
 
   constructor(ssid: string, cookies?: string[]) {
     this.ssid = ssid;
-    if (cookies) this.prefetchedCookies = cookies;
+    if (cookies) this.prefetchedCookies = [...cookies];
+
+    try {
+      let sessionToken = "";
+      if (this.ssid.startsWith('42["auth"')) {
+        const jsonPart = this.ssid.substring(2);
+        const parsed = JSON.parse(jsonPart);
+        if (parsed && parsed.length > 1 && typeof parsed[1] === 'object' && parsed[1].session) {
+          sessionToken = parsed[1].session;
+        } else if (parsed && parsed.length > 1 && typeof parsed[1] === 'string') {
+          sessionToken = parsed[1];
+        }
+      } else {
+        sessionToken = this.ssid;
+      }
+      if (sessionToken && !this.prefetchedCookies.some(c => c.includes("PHPSESSID"))) {
+        this.prefetchedCookies.push(`PHPSESSID=${sessionToken}`);
+      }
+    } catch(err) {
+      // Ignore parse errors
+    }
   }
 
   // ============ Connection Management ============
