@@ -126,7 +126,7 @@ export async function generateAndSaveSignal(
     return { 
       signal: null, 
       saved: null, 
-      error: "Le bot n'a pas encore accumulé assez de données pour cet actif. Veuillez démarrer le bot dans la page 'Automatique' et attendre 10-15 secondes que l'historique se charge." 
+      error: `Données insuffisantes pour ${selectedAsset} (${candles.length}/${minRequired}). Si c'est un marché OTC, attendez 10s. Si c'est un marché réel, Binance est en cours de synchronisation.` 
     };
   }
 

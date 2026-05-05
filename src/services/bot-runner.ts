@@ -446,9 +446,7 @@ export class BotRunner {
     }
 
     if (candles.length < 20) {
-      if (this.consecutiveErrors % 10 === 0) {
-        console.warn(`[BotRunner] Still waiting for data for ${this.asset}... (${candles.length} candles)`);
-      }
+      // console.warn(`[BotRunner] Still waiting for data for ${this.asset}... (${candles.length} candles)`);
       this.consecutiveErrors++;
       return;
     }
