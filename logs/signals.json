@@ -1596,5 +1596,207 @@
     "result": "WIN",
     "exitPrice": 0,
     "profit": 0.85
+  },
+  {
+    "timestamp": 1777876863836,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1942660819047768,
+    "confidence": 70,
+    "id": "sig_1777876863836_hb06w",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876867190,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1943960656905686,
+    "confidence": 70,
+    "id": "sig_1777876867190_zkphv",
+    "result": "WIN",
+    "exitPrice": 0,
+    "profit": 0.85
+  },
+  {
+    "timestamp": 1777876870784,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.194432719764042,
+    "confidence": 70,
+    "id": "sig_1777876870784_v555s",
+    "result": "LOSS",
+    "exitPrice": 0,
+    "profit": -1
+  },
+  {
+    "timestamp": 1777876880329,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1948772063268904,
+    "confidence": 70,
+    "id": "sig_1777876880329_bed42",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876881422,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1944873080419052,
+    "confidence": 70,
+    "id": "sig_1777876881422_vxfzd",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876963278,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.194714887969617,
+    "confidence": 70,
+    "id": "sig_1777876963278_28nm5",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876971437,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.194900519769538,
+    "confidence": 70,
+    "id": "sig_1777876971437_pami8",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876973905,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.194800905023898,
+    "confidence": 70,
+    "id": "sig_1777876973905_buqd0",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876977357,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1942532311261074,
+    "confidence": 70,
+    "id": "sig_1777876977357_97oz9",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876978225,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1949289485576247,
+    "confidence": 70,
+    "id": "sig_1777876978225_y3shl",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876980999,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.194978885146734,
+    "confidence": 70,
+    "id": "sig_1777876980999_w3cc5",
+    "result": "WIN",
+    "exitPrice": 0,
+    "profit": 0.85
+  },
+  {
+    "timestamp": 1777876981025,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1945334141413506,
+    "confidence": 70,
+    "id": "sig_1777876981025_jnleu",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777876982649,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1946228280729936,
+    "confidence": 70,
+    "id": "sig_1777876982649_86eeb",
+    "result": "LOSS",
+    "exitPrice": 0,
+    "profit": -1
+  },
+  {
+    "timestamp": 1777877011895,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.19443732756599,
+    "confidence": 70,
+    "id": "sig_1777877011895_cwkhu",
+    "result": "LOSS",
+    "exitPrice": 0,
+    "profit": -1
+  },
+  {
+    "timestamp": 1777877105871,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1947588197727192,
+    "confidence": 70,
+    "id": "sig_1777877105871_i8siz",
+    "result": "LOSS",
+    "exitPrice": 0,
+    "profit": -1
+  },
+  {
+    "timestamp": 1777877113007,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.194137043960341,
+    "confidence": 70,
+    "id": "sig_1777877113007_p7s2h",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777877132261,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1942338468263547,
+    "confidence": 70,
+    "id": "sig_1777877132261_7d4x2",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777877141149,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1946693164295452,
+    "confidence": 70,
+    "id": "sig_1777877141149_ndcb0",
+    "result": "PENDING"
+  },
+  {
+    "timestamp": 1777877147317,
+    "asset": "EUR/USD (OTC)",
+    "direction": "CALL",
+    "timeframe": "5s",
+    "entryPrice": 1.1947030532211493,
+    "confidence": 70,
+    "id": "sig_1777877147317_mbmj9",
+    "result": "PENDING"
   }
 ]

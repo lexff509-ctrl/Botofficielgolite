@@ -19,6 +19,7 @@ import {
 } from "@/lib/trading";
 import { candleCache } from "@/lib/candle-cache";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
+import { externalDataService } from "@/services/external-data.service";
 import { getPocketOptionClient, executeTrade } from "@/services/trading.service";
 import { hasActiveSubscription } from "@/services/payment.service";
 
@@ -405,24 +406,42 @@ export class BotRunner {
       return;
     }
 
-    // === 2. Data & Candle Manager: Get candles from cache ===
-    let candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
+    // === 2. Data & Candle Manager: Get candles from cache or external API ===
+    const isOTC = this.asset.toUpperCase().includes("(OTC)");
+    let candles: Candle[] = [];
 
-    console.log(`[BotRunner] Tick user ${this.userId} - ${this.asset} (${this.timeframe}) - Candles: ${candles.length}`);
+    if (!isOTC) {
+      // Try external API for regular assets to bypass PO history issues
+      candles = await externalDataService.getExternalCandles(this.asset, this.timeframe, 100);
+      if (candles.length > 0) {
+        // Sync to cache for consistency
+        candleCache.seedCandles(this.asset, this.timeframeToSeconds(), candles.map(c => ({
+          ...c,
+          asset: this.asset
+        })));
+      }
+    }
 
-    // Bootstrap if needed
-    if (candles.length < 30 && poClient && poClient.isConnected) {
+    if (candles.length === 0) {
+      // Fallback to PO cache (mandatory for OTC)
+      candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
+    }
+
+    console.log(`[BotRunner] Tick user ${this.userId} - ${this.asset} (${this.timeframe}) - Candles: ${candles.length} (Source: ${isOTC || candles.length === 0 ? 'PO' : 'External'})`);
+
+    // Bootstrap if needed (only for OTC or if external failed)
+    if (isOTC && candles.length < 30 && poClient && poClient.isConnected) {
       try {
         const sizeSeconds = this.timeframeToSeconds();
-        console.log(`[BotRunner] Cache low (${candles.length}), requesting history for ${this.asset}...`);
+        console.log(`[BotRunner] OTC Cache low (${candles.length}), requesting history for ${this.asset}...`);
         const historical = await poClient.requestCandleHistory(this.asset, sizeSeconds, 200);
         if (historical.length > 0) {
           candleCache.seedCandles(this.asset, sizeSeconds, historical);
           candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
-          console.log(`[BotRunner] Cache seeded with ${historical.length} candles. New count: ${candles.length}`);
+          console.log(`[BotRunner] OTC Cache seeded with ${historical.length} candles. New count: ${candles.length}`);
         }
       } catch (err) {
-        console.error(`[BotRunner] History request failed:`, err);
+        console.error(`[BotRunner] OTC History request failed:`, err);
       }
     }
 
