@@ -29,13 +29,16 @@ interface Signal {
   confidence: string;
   rsi: string;
   macd: string;
+  ema: string;
   stochastic: string;
+  bollinger: any;
   multiTimeframeConfirmation: Record<string, string>;
   diagnostic: string;
   createdAt: string;
   isActive?: boolean;
   marketStructure?: string;
   signalScore?: string;
+  isExternal?: boolean; // New field for Binance source
 }
 
 export default function SignalsPage() {
@@ -249,38 +252,60 @@ export default function SignalsPage() {
                     Signal Détecté • {lastSignal.timeframe}
                   </div>
                   
-                  <div className={`text-8xl font-black mb-6 tracking-tighter filter drop-shadow-2xl transition-transform duration-500 group-hover:scale-105 ${
-                    lastSignal.direction === "CALL" ? "text-emerald-400" : "text-red-400"
-                  }`}>
-                    {lastSignal.direction === "CALL" ? "BUY ↑" : "SELL ↓"}
+                  <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-500 mb-6">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      ANALYSE {lastSignal.asset.includes("(OTC)") ? "PO" : "BINANCE"}
+                    </div>
+                    <div>SCORE: {lastSignal.confidence}%</div>
                   </div>
-                  
-                  <div className="text-3xl font-black text-white mb-8 tracking-tight">{lastSignal.asset}</div>
-                  
-                  <div className="flex flex-wrap items-center justify-center gap-6">
-                    <div className="bg-[#0a0f1e] px-6 py-4 rounded-2xl border border-white/5 shadow-xl">
-                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Confiance Algorithmique</span>
-                      <span className={`text-3xl font-black ${
-                        parseFloat(lastSignal.confidence) >= 89 ? "text-cyan-400" : "text-amber-400"
-                      }`}>{parseFloat(lastSignal.confidence).toFixed(1)}%</span>
+
+                  <div className={`text-7xl md:text-8xl font-black mb-6 drop-shadow-2xl transition-all duration-700 group-hover:scale-110 ${
+                    lastSignal.direction === "CALL" ? "text-emerald-500" : "text-red-500"
+                  }`}>
+                    {lastSignal.direction === "CALL" ? "ACHAT ▲" : "VENTE ▼"}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4 w-full max-w-md mx-auto">
+                    <div className="bg-white/5 rounded-2xl p-3 border border-white/5">
+                      <div className="text-[9px] text-slate-500 mb-1">RSI</div>
+                      <div className="text-sm font-black text-white">{parseFloat(lastSignal.rsi).toFixed(2)}</div>
                     </div>
-                    
-                    <div className="bg-[#0a0f1e] px-6 py-4 rounded-2xl border border-white/5 shadow-xl max-w-[300px]">
-                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">Analyse Technique</span>
-                      <span className="text-sm font-black text-white/90 leading-relaxed italic">
-                        "{lastSignal.diagnostic || "Configuration de marché optimale détectée."}"
-                      </span>
+                    <div className="bg-white/5 rounded-2xl p-3 border border-white/5">
+                      <div className="text-[9px] text-slate-500 mb-1">STOCH</div>
+                      <div className="text-sm font-black text-white">{parseFloat(lastSignal.stochastic).toFixed(2)}</div>
                     </div>
+                    <div className="bg-white/5 rounded-2xl p-3 border border-white/5">
+                      <div className="text-[9px] text-slate-500 mb-1">EMA</div>
+                      <div className="text-sm font-black text-white">{parseFloat(lastSignal.ema).toFixed(2)}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-8 flex flex-col items-center gap-3">
+                    <div className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border-2 ${
+                      parseFloat(lastSignal.confidence) >= 89 
+                      ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400"
+                      : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                    }`}>
+                      FIABILITÉ {lastSignal.confidence}%
+                    </div>
+                    <p className="text-slate-400 text-[10px] font-bold max-w-xs leading-relaxed uppercase tracking-wider mx-auto">
+                      {lastSignal.diagnostic}
+                    </p>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="h-full glass-card rounded-3xl p-12 flex flex-col items-center justify-center text-center border-white/5 border-dashed border-2">
-                <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6 animate-pulse">
-                  <span className="text-4xl opacity-40">📡</span>
+              <div className="h-full glass-card rounded-3xl p-8 border-white/5 flex flex-col items-center justify-center text-center space-y-4">
+                <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center text-3xl animate-pulse">
+                  📡
                 </div>
-                <h3 className="text-xl font-black text-white mb-2 uppercase tracking-tighter">En attente d'analyse</h3>
-                <p className="text-slate-500 text-sm max-w-xs font-medium uppercase tracking-widest">Sélectionnez un actif et lancez le scanner pour obtenir un signal.</p>
+                <div>
+                  <h3 className="text-white font-black uppercase tracking-widest mb-2">Prêt pour le Scan</h3>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-wider max-w-xs">
+                    Sélectionnez un actif et une unité de temps pour lancer l'analyse institutionnelle.
+                  </p>
+                </div>
               </div>
             )}
           </div>
@@ -308,6 +333,7 @@ export default function SignalsPage() {
                 <tr className="bg-[#0a0f1e]/50 border-b border-white/5">
                   <th className="text-left text-[10px] text-slate-500 px-8 py-5 font-black uppercase tracking-widest">Actif / Marché</th>
                   <th className="text-left text-[10px] text-slate-500 px-8 py-5 font-black uppercase tracking-widest">Action</th>
+                  <th className="text-left text-[10px] text-slate-500 px-8 py-5 font-black uppercase tracking-widest">Source</th>
                   <th className="text-left text-[10px] text-slate-500 px-8 py-5 font-black uppercase tracking-widest">TF</th>
                   <th className="text-left text-[10px] text-slate-500 px-8 py-5 font-black uppercase tracking-widest">Score de Confiance</th>
                   <th className="text-left text-[10px] text-slate-500 px-8 py-5 font-black uppercase tracking-widest">Confluence Technique</th>
@@ -318,7 +344,7 @@ export default function SignalsPage() {
               <tbody className="divide-y divide-white/5">
                 {filteredSignals.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-8 py-20 text-center text-slate-600">
+                    <td colSpan={8} className="px-8 py-20 text-center text-slate-600">
                        <div className="text-xs font-black uppercase tracking-[0.3em]">Aucune donnée disponible</div>
                     </td>
                   </tr>
@@ -351,7 +377,12 @@ export default function SignalsPage() {
                                   : "bg-red-500/10 text-red-400 border-red-500/20"
                               }`}
                             >
-                              {sig.direction === "CALL" ? "BUY ↑" : "SELL ↓"}
+                              {sig.direction === "CALL" ? "ACHAT ▲" : "VENTE ▼"}
+                            </span>
+                          </td>
+                          <td className="px-8 py-5">
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">
+                              {sig.asset.includes("(OTC)") ? "PocketOption" : "Binance"}
                             </span>
                           </td>
                           <td className="px-8 py-5">

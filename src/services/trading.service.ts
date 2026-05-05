@@ -11,6 +11,7 @@ import { candleCache } from "@/lib/candle-cache";
 import { getDecryptedSSID } from "@/services/auth.service";
 import { encryptSSID, decryptSSID as decryptAuthSSID } from "@/lib/auth";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
+import { externalDataService } from "@/services/external-data.service";
 
 // Re-export for convenience
 export const decryptSSID = decryptAuthSSID;
@@ -60,14 +61,31 @@ export async function generateAndSaveSignal(
     return { signal: null, saved: null, error: "Timeframe invalide" };
   }
 
-  // Use real candle data from CandleCache
-  let candles = candleCache.getCandlesForTimeframe(
-    selectedAsset,
-    selectedTimeframe as Timeframe,
-    100
-  );
+  // Use real candle data from CandleCache or External API
+  let candles: Candle[] = [];
+  const isOTC = selectedAsset.toUpperCase().includes("(OTC)");
 
-  // If cache is empty, fetch historical candles directly from PocketOption
+  if (!isOTC) {
+    // Try external API for regular assets to bypass PO history issues
+    candles = await externalDataService.getExternalCandles(selectedAsset, selectedTimeframe as Timeframe, 100);
+    if (candles.length > 0) {
+      // Sync to cache for consistency
+      candleCache.seedCandles(selectedAsset, parseTimeframe(selectedTimeframe), candles.map(c => ({
+        ...c,
+        asset: selectedAsset
+      })));
+    }
+  }
+
+  if (candles.length === 0) {
+    candles = candleCache.getCandlesForTimeframe(
+      selectedAsset,
+      selectedTimeframe as Timeframe,
+      100
+    );
+  }
+
+  // If cache is empty and not external, fetch historical candles directly from PocketOption
   if (candles.length < minRequired) {
     const client = activeConnections.get(userId);
     if (client && client.isConnected) {

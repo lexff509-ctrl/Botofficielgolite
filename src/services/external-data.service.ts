@@ -45,7 +45,7 @@ class ExternalDataService {
       const ohlcv = await this.binance.fetchOHLCV(symbol, timeframe, undefined, limit);
       
       return ohlcv.map(c => ({
-        timestamp: Math.floor(c[0] / 1000),
+        timestamp: Math.floor((c[0] as number) / 1000),
         open: c[1] as number,
         high: c[2] as number,
         low: c[3] as number,

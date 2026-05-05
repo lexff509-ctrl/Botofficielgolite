@@ -314,6 +314,16 @@ export default function BotPage() {
                 Source: {getSsidSource()}
               </div>
             </div>
+            {isRunning && (
+              <div className="flex flex-col items-end gap-1">
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${asset.includes("(OTC)") ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>
+                  ANALYSE {asset.includes("(OTC)") ? "POCKETOPTION" : "BINANCE"}
+                </span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+                  FLUX TEMPS RÉEL ACTIF
+                </span>
+              </div>
+            )}
             {!isRunning && !ssidInfo?.globalSsidAvailable && !user?.pocketOptionSsid && !ssid && (
               <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-1.5 text-yellow-400 text-xs">
                 Aucun SSID - Ajoutez-le ci-dessous ou demandez a l&apos;admin
