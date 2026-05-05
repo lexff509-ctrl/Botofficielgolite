@@ -5,6 +5,7 @@ import {
   generateSignal,
   type Timeframe,
   type Signal,
+  type Candle,
   TIMEFRAMES,
 } from "@/lib/trading";
 import { candleCache } from "@/lib/candle-cache";
