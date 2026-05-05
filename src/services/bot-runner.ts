@@ -20,6 +20,8 @@ import {
 import { candleCache } from "@/lib/candle-cache";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { externalDataService } from "@/services/external-data.service";
+import { RiskManager } from "@/services/risk-manager.service";
+import { BollingerStochStrategy } from "@/strategies/bollinger-stoch.strategy";
 import { getPocketOptionClient, executeTrade } from "@/services/trading.service";
 import { hasActiveSubscription } from "@/services/payment.service";
 
@@ -95,6 +97,8 @@ export class BotRunner {
   private lastProcessedTimestamp = 0;
   private isInPosition = false;
   private currentTradeId: string | null = null;
+  private riskManager: RiskManager;
+  private strategy: BollingerStochStrategy;
 
   constructor(opts: {
     userId: number;
@@ -128,6 +132,14 @@ export class BotRunner {
     this.compoundCurrentAmount = this.tradeAmount;
     this.compoundInitialAmount = this.tradeAmount;
     this.startedAt = new Date();
+
+    this.riskManager = new RiskManager({
+      dailyLossLimit: this.lossLimit,
+      dailyProfitTarget: this.profitTarget,
+      maxPositionSize: this.tradeAmount * 5,
+      riskPerTradePercent: 2
+    });
+    this.strategy = new BollingerStochStrategy(this.asset, this.timeframe, {});
   }
 
   get running(): boolean {
