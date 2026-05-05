@@ -1,7 +1,9 @@
 
+import { Timeframe } from "@/lib/trading";
+export type { Timeframe };
+
 export type Direction = "BUY" | "SELL" | "WAIT";
 export type ConfidenceLabel = "HIGH" | "MEDIUM" | "LOW";
-export type Timeframe = "5s" | "10s" | "15s" | "30s" | "1m" | "3m" | "5m";
 export type Zone = "oversold" | "overbought" | "neutral";
 
 export interface IndicatorResult {
