@@ -124,6 +124,11 @@ export class PocketOptionClient {
   private lastBalance: { balance: number; isDemo: number } | null = null;
   private assetData: Record<string, { payout: number }> = {};
 
+  // Trade result tracking: stores confirmed trade results keyed by deal_id/id
+  private pendingTradeRequestId: number | null = null;
+  private confirmedOrderId: string | null = null;   // set after successopenOrder
+  private tradeResult: Record<string, unknown> | null = null; // set after updateClosedDeals
+
   // Heartbeat
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
   private lastPongAt = Date.now();
@@ -775,12 +780,20 @@ export class PocketOptionClient {
         break;
 
       case "successopenOrder":
-            this.successOpenOrderFlag = true;
-            this.pendingBinaryEvent = "successopenOrder";
-            console.log("[PO] Order request accepted, waiting for confirmation data...");
-            break;
+        this.successOpenOrderFlag = true;
+        // Set pendingBinaryEvent so the NEXT binary frame is also captured
+        this.pendingBinaryEvent = "successopenOrder";
+        console.log("[PO] Order request accepted, waiting for binary confirmation...");
+        // Create a minimal orderData immediately in case there is no binary frame
+        // (some PO server versions send successopenOrder as plain 42 text without a binary attachment)
+        // This prevents the 15s Phase-1 timeout in placeTrade
+        if (!this.orderData) {
+          this.orderData = { _textOnly: true, requestId: this.pendingTradeRequestId ?? Date.now() };
+          console.log("[PO] Created minimal orderData from text event (no binary yet)");
+        }
+        break;
 
-          case "updateClosedDeals":
+      case "updateClosedDeals":
         this.updateClosedDealsFlag = true;
         break;
 
@@ -976,10 +989,18 @@ export class PocketOptionClient {
             }
             return;
 
-          case "successopenOrder":
+          case "successopenOrder": {
             console.log("[PO] Order confirmation data received (binary)");
-            this.orderData = message as Record<string, unknown>;
+            const orderMsg = message as Record<string, unknown>;
+            this.orderData = orderMsg;
+            // Extract the deal id so we can match it in closedDeals
+            const dealId = String(orderMsg.id ?? orderMsg.deal_id ?? orderMsg.requestId ?? "");
+            if (dealId) {
+              this.confirmedOrderId = dealId;
+              console.log(`[PO] Confirmed order id: ${dealId}`);
+            }
             return;
+          }
 
           default:
             console.log(`[PO] Unhandled binary event: ${eventName}`);
@@ -1401,8 +1422,12 @@ export class PocketOptionClient {
     await prevMutex.catch(() => {});
 
     try {
+      // Reset all trade state before placing
       this.orderData = null;
+      this.tradeResult = null;
+      this.confirmedOrderId = null;
       this.successOpenOrderFlag = false;
+      this.pendingTradeRequestId = Date.now();
 
       // Add human-like jitter before placing trade
       const jitter = getTradeJitter();
@@ -1417,35 +1442,79 @@ export class PocketOptionClient {
         request.duration
       );
 
-      const startTime = Date.now();
-      // Increase timeout to 45s for slower network conditions
-      while (Date.now() - startTime < 45000) {
-        // Check for both binary order data AND the success flag
+      // ── Phase 1: Wait for successopenOrder binary confirmation (max 15s) ──
+      const phase1Start = Date.now();
+      while (Date.now() - phase1Start < 15000) {
         if (this.orderData !== null) break;
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 150));
       }
 
       if (!this.orderData) {
-        console.error(
-          `[PO] Trade timeout for ${request.asset}. Order data never received.`
-        );
-        throw new Error("Trade execution timeout");
+        console.error(`[PO] Trade NOT confirmed for ${request.asset} after 15s — order may not have been placed.`);
+        throw new Error("Trade confirmation timeout (successopenOrder)");
       }
 
       const order = this.orderData as Record<string, unknown>;
-      console.log(
-        `[PO] Trade executed! Result data:`,
-        JSON.stringify(order).substring(0, 200)
-      );
+      const tradeId = String(order.id ?? order.deal_id ?? order.requestId ?? "");
+      const openPrice = Number(order.open_price ?? order.openPrice ?? 0);
+      const tradeDurationMs = request.duration * 1000;
+      console.log(`[PO] Trade confirmed: id=${tradeId}, open=${openPrice}, duration=${request.duration}s`);
 
-      const profit = Number(order.profit ?? -request.amount);
+      // ── Phase 2: Wait for trade expiry then look for result in closedDeals (max duration + 30s) ──
+      // First wait for the trade to expire
+      const waitForExpiry = Math.max(tradeDurationMs - (Date.now() - phase1Start), 0);
+      if (waitForExpiry > 0) {
+        console.log(`[PO] Waiting ${Math.round(waitForExpiry / 1000)}s for trade expiry...`);
+        await new Promise((r) => setTimeout(r, waitForExpiry));
+      }
+
+      // Now poll closedDeals for the result (max 30s after expiry)
+      // First, ask PocketOption to send updateClosedDeals by requesting balance update
+      console.log(`[PO] Requesting balance update to trigger updateClosedDeals...`);
+      this.updateClosedDealsFlag = false;
+      this.getBalances();
+      const phase2Start = Date.now();
+      let closePrice = 0;
+      let profit = -request.amount; // default: loss
+
+      while (Date.now() - phase2Start < 30000) {
+        // Search in closedDealsData for our trade
+        const match = this.closedDealsData.find((d) => {
+          if (typeof d !== "object" || d === null) return false;
+          const deal = d as Record<string, unknown>;
+          const id = String(deal.id ?? deal.deal_id ?? "");
+          return tradeId && id === tradeId;
+        }) as Record<string, unknown> | undefined;
+
+        if (match) {
+          profit = Number(match.profit ?? match.win_amount ?? -request.amount);
+          closePrice = Number(match.close_price ?? match.closePrice ?? 0);
+          console.log(`[PO] Trade result found: id=${tradeId} profit=${profit} close=${closePrice}`);
+          break;
+        }
+
+        // Also check if orderData was updated with result
+        const od = this.orderData as Record<string, unknown> | null;
+        if (od && od.profit !== undefined) {
+          profit = Number(od.profit);
+          closePrice = Number((od.close_price as number | undefined) ?? (od.closePrice as number | undefined) ?? 0);
+          console.log(`[PO] Trade result from orderData: profit=${profit}`);
+          break;
+        }
+
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
+      if (profit === -request.amount) {
+        console.warn(`[PO] Trade result not found in closedDeals after 30s for id=${tradeId}. Defaulting to LOSS.`);
+      }
 
       return {
         win: profit > 0,
         profit,
-        openPrice: Number(order.open_price || order.openPrice || 0),
-        closePrice: Number(order.close_price || order.closePrice || 0),
-        tradeId: String(order.id || order.deal_id || ""),
+        openPrice,
+        closePrice,
+        tradeId,
       };
     } finally {
       releaseMutex!();

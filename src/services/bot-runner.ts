@@ -99,6 +99,8 @@ export class BotRunner {
   private currentTradeId: string | null = null;
   private riskManager: RiskManager;
   private strategy: BollingerStochStrategy;
+  // Force-signal timeout: reset lastProcessedTimestamp if stuck for > 2x timeframe
+  private lastSignalGeneratedAt = 0;
 
   constructor(opts: {
     userId: number;
@@ -399,13 +401,30 @@ export class BotRunner {
     if (!poClient || !poClient.isConnected) {
       console.warn(`[BotRunner] PocketOption not connected for user ${this.userId} — forcing reconnect...`);
       try {
-        const { connectPocketOption } = await import("@/services/trading.service");
+        const { connectPocketOption, getGlobalSsid } = await import("@/services/trading.service");
+        const { getUserProfile, getDecryptedSSID } = await import("@/services/auth.service");
         const isDemo = this.mode === "DEMO";
-        // We try with an empty SSID — the service will pull from DB/global/env
-        connectPocketOption(this.userId, "", isDemo).then(r => {
-          if (r.success) console.log(`[BotRunner] Auto-reconnect succeeded for user ${this.userId}`);
-          else console.warn(`[BotRunner] Auto-reconnect failed: ${r.error}`);
-        }).catch(() => {});
+
+        // 1. Try personal SSID from DB
+        let ssid = "";
+        const profile = await getUserProfile(this.userId);
+        if (profile?.pocketOptionSsid) {
+          ssid = getDecryptedSSID(profile);
+        }
+
+        // 2. Fallback to global SSID (admin-provided)
+        if (!ssid) {
+          ssid = await getGlobalSsid();
+        }
+
+        if (!ssid) {
+          console.warn(`[BotRunner] No SSID found for user ${this.userId} — cannot reconnect`);
+        } else {
+          connectPocketOption(this.userId, ssid, isDemo).then(r => {
+            if (r.success) console.log(`[BotRunner] Auto-reconnect succeeded for user ${this.userId}`);
+            else console.warn(`[BotRunner] Auto-reconnect failed: ${r.error}`);
+          }).catch(() => {});
+        }
       } catch { /* non-blocking */ }
     }
 
@@ -499,7 +518,16 @@ export class BotRunner {
 
     // Check if we already processed this closed candle
     if (lastClosedCandle.timestamp <= this.lastProcessedTimestamp) {
-      return;
+      // Force-signal safety valve: if we've been stuck for > 2x timeframe, reset
+      const stuckMs = Date.now() - this.lastSignalGeneratedAt;
+      const forceAfterMs = this.timeframeToSeconds() * 2 * 1000;
+      if (this.lastSignalGeneratedAt > 0 && stuckMs > forceAfterMs) {
+        console.warn(`[BotRunner] ⚠️  Signal bloqué depuis ${Math.round(stuckMs / 1000)}s (max: ${forceAfterMs / 1000}s) — reset lastProcessedTimestamp pour forcer un signal`);
+        this.lastProcessedTimestamp = 0;
+        // Don't return — fall through to generate the signal
+      } else {
+        return; // Normal skip: candle already processed
+      }
     }
 
     this.lastProcessedTimestamp = lastClosedCandle.timestamp;
@@ -577,6 +605,7 @@ export class BotRunner {
 
     // Update state before execution
     this.lastProcessedTimestamp = lastClosedCandle.timestamp;
+    this.lastSignalGeneratedAt = Date.now();
     this.signalsGenerated++;
     this.lastSignalAt = Date.now();
     this.lastTradeDirection = signal.direction;

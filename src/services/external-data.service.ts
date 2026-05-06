@@ -17,64 +17,65 @@ import { Candle, Timeframe } from '../lib/trading';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const CANDLE_CACHE_MS   = 30_000;   // 30 s cache between real fetches
-const FETCH_TIMEOUT_MS  = 10_000;   // 10 s hard timeout
-const FOREX_TICK_MS     = 20_000;   // Store a new forex tick every 20 s
-const FOREX_MAX_TICKS   = 300;      // Keep up to 300 ticks (≈ 100 min)
+const CANDLE_CACHE_MS = 30_000;   // 30 s cache between real fetches
+const FETCH_TIMEOUT_MS = 10_000;   // 10 s hard timeout
+const FOREX_TICK_MS = 20_000;   // Store a new forex tick every 20 s
+const FOREX_MAX_TICKS = 300;      // Keep up to 300 ticks (≈ 100 min)
+const TWELVE_DATA_BASE = 'https://api.twelvedata.com'; // Free: 800 req/day, no key needed for basic
 
 // ─── Asset maps ──────────────────────────────────────────────────────────────
 
 /** Crypto assets: PO name → Binance REST symbol (e.g. BTCUSDT) */
 const CRYPTO_MAP: Record<string, string> = {
-  'BTC/USD':   'BTCUSDT',
-  'BTCUSD':    'BTCUSDT',
-  'ETH/USD':   'ETHUSDT',
-  'ETHUSD':    'ETHUSDT',
-  'LTC/USD':   'LTCUSDT',
-  'LTCUSD':    'LTCUSDT',
-  'XRP/USD':   'XRPUSDT',
-  'XRPUSD':    'XRPUSDT',
-  'SOL/USD':   'SOLUSDT',
-  'SOLUSD':    'SOLUSDT',
-  'DOGE/USD':  'DOGEUSDT',
-  'DOGEUSD':   'DOGEUSDT',
-  'BNB/USD':   'BNBUSDT',
-  'BNBUSD':    'BNBUSDT',
-  'ADA/USD':   'ADAUSDT',
-  'DOT/USD':   'DOTUSDT',
+  'BTC/USD': 'BTCUSDT',
+  'BTCUSD': 'BTCUSDT',
+  'ETH/USD': 'ETHUSDT',
+  'ETHUSD': 'ETHUSDT',
+  'LTC/USD': 'LTCUSDT',
+  'LTCUSD': 'LTCUSDT',
+  'XRP/USD': 'XRPUSDT',
+  'XRPUSD': 'XRPUSDT',
+  'SOL/USD': 'SOLUSDT',
+  'SOLUSD': 'SOLUSDT',
+  'DOGE/USD': 'DOGEUSDT',
+  'DOGEUSD': 'DOGEUSDT',
+  'BNB/USD': 'BNBUSDT',
+  'BNBUSD': 'BNBUSDT',
+  'ADA/USD': 'ADAUSDT',
+  'DOT/USD': 'DOTUSDT',
   'MATIC/USD': 'MATICUSDT',
 };
 
 /** Forex assets: PO name → { base, quote } for ExchangeRate-API */
-const FOREX_MAP: Record<string, { base: string; quote: string }> = {
-  'EUR/USD': { base: 'EUR', quote: 'USD' },
-  'EURUSD':  { base: 'EUR', quote: 'USD' },
-  'GBP/USD': { base: 'GBP', quote: 'USD' },
-  'GBPUSD':  { base: 'GBP', quote: 'USD' },
-  'USD/JPY': { base: 'USD', quote: 'JPY' },
-  'USDJPY':  { base: 'USD', quote: 'JPY' },
-  'AUD/USD': { base: 'AUD', quote: 'USD' },
-  'AUDUSD':  { base: 'AUD', quote: 'USD' },
-  'USD/CAD': { base: 'USD', quote: 'CAD' },
-  'USDCAD':  { base: 'USD', quote: 'CAD' },
-  'USD/CHF': { base: 'USD', quote: 'CHF' },
-  'USDCHF':  { base: 'USD', quote: 'CHF' },
-  'EUR/GBP': { base: 'EUR', quote: 'GBP' },
-  'EURGBP':  { base: 'EUR', quote: 'GBP' },
-  'EUR/JPY': { base: 'EUR', quote: 'JPY' },
-  'EURJPY':  { base: 'EUR', quote: 'JPY' },
-  'GBP/JPY': { base: 'GBP', quote: 'JPY' },
-  'GBPJPY':  { base: 'GBP', quote: 'JPY' },
-  'NZD/USD': { base: 'NZD', quote: 'USD' },
-  'NZDUSD':  { base: 'NZD', quote: 'USD' },
-  'EUR/CHF': { base: 'EUR', quote: 'CHF' },
-  'EURCHF':  { base: 'EUR', quote: 'CHF' },
-  'AUD/JPY': { base: 'AUD', quote: 'JPY' },
-  'AUDJPY':  { base: 'AUD', quote: 'JPY' },
-  'CAD/JPY': { base: 'CAD', quote: 'JPY' },
-  'CADJPY':  { base: 'CAD', quote: 'JPY' },
-  'EUR/CAD': { base: 'EUR', quote: 'CAD' },
-  'EURCAD':  { base: 'EUR', quote: 'CAD' },
+const FOREX_MAP: Record<string, { base: string; quote: string; symbol: string }> = {
+  'EUR/USD': { base: 'EUR', quote: 'USD', symbol: 'EUR/USD' },
+  'EURUSD': { base: 'EUR', quote: 'USD', symbol: 'EUR/USD' },
+  'GBP/USD': { base: 'GBP', quote: 'USD', symbol: 'GBP/USD' },
+  'GBPUSD': { base: 'GBP', quote: 'USD', symbol: 'GBP/USD' },
+  'USD/JPY': { base: 'USD', quote: 'JPY', symbol: 'USD/JPY' },
+  'USDJPY': { base: 'USD', quote: 'JPY', symbol: 'USD/JPY' },
+  'AUD/USD': { base: 'AUD', quote: 'USD', symbol: 'AUD/USD' },
+  'AUDUSD': { base: 'AUD', quote: 'USD', symbol: 'AUD/USD' },
+  'USD/CAD': { base: 'USD', quote: 'CAD', symbol: 'USD/CAD' },
+  'USDCAD': { base: 'USD', quote: 'CAD', symbol: 'USD/CAD' },
+  'USD/CHF': { base: 'USD', quote: 'CHF', symbol: 'USD/CHF' },
+  'USDCHF': { base: 'USD', quote: 'CHF', symbol: 'USD/CHF' },
+  'EUR/GBP': { base: 'EUR', quote: 'GBP', symbol: 'EUR/GBP' },
+  'EURGBP': { base: 'EUR', quote: 'GBP', symbol: 'EUR/GBP' },
+  'EUR/JPY': { base: 'EUR', quote: 'JPY', symbol: 'EUR/JPY' },
+  'EURJPY': { base: 'EUR', quote: 'JPY', symbol: 'EUR/JPY' },
+  'GBP/JPY': { base: 'GBP', quote: 'JPY', symbol: 'GBP/JPY' },
+  'GBPJPY': { base: 'GBP', quote: 'JPY', symbol: 'GBP/JPY' },
+  'NZD/USD': { base: 'NZD', quote: 'USD', symbol: 'NZD/USD' },
+  'NZDUSD': { base: 'NZD', quote: 'USD', symbol: 'NZD/USD' },
+  'EUR/CHF': { base: 'EUR', quote: 'CHF', symbol: 'EUR/CHF' },
+  'EURCHF': { base: 'EUR', quote: 'CHF', symbol: 'EUR/CHF' },
+  'AUD/JPY': { base: 'AUD', quote: 'JPY', symbol: 'AUD/JPY' },
+  'AUDJPY': { base: 'AUD', quote: 'JPY', symbol: 'AUD/JPY' },
+  'CAD/JPY': { base: 'CAD', quote: 'JPY', symbol: 'CAD/JPY' },
+  'CADJPY': { base: 'CAD', quote: 'JPY', symbol: 'CAD/JPY' },
+  'EUR/CAD': { base: 'EUR', quote: 'CAD', symbol: 'EUR/CAD' },
+  'EURCAD': { base: 'EUR', quote: 'CAD', symbol: 'EUR/CAD' },
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -159,9 +160,9 @@ class ExternalDataService {
 
       const candles: Candle[] = data.map(c => ({
         timestamp: Math.floor(c[0] / 1000),
-        open:  parseFloat(String(c[1])),
-        high:  parseFloat(String(c[2])),
-        low:   parseFloat(String(c[3])),
+        open: parseFloat(String(c[1])),
+        high: parseFloat(String(c[2])),
+        low: parseFloat(String(c[3])),
         close: parseFloat(String(c[4])),
         volume: parseFloat(String(c[5])),
       }));
@@ -181,18 +182,36 @@ class ExternalDataService {
   private async getForexCandles(base: string, quote: string, tf: Timeframe, limit: number): Promise<Candle[]> {
     const pairKey = `${base}/${quote}`;
     const cacheKey = `${pairKey}:${tf}`;
+    const tfInfo = FOREX_MAP[pairKey] ?? FOREX_MAP[`${base}${quote}`];
+    const symbol = tfInfo?.symbol ?? pairKey;
 
-    // Refresh the current rate if the last fetch is stale
+    // Try Twelve Data first (real OHLCV history) — cache 30s
+    const hit = this.candleCache.get(cacheKey);
+    if (hit && Date.now() - hit.fetchedAt < CANDLE_CACHE_MS) return hit.candles;
+
+    const twelveCandles = await this.getTwelveDataCandles(symbol, tf, limit);
+    if (twelveCandles.length >= 10) {
+      this.candleCache.set(cacheKey, { candles: twelveCandles, fetchedAt: Date.now() });
+      return twelveCandles;
+    }
+
+    // Fallback: refresh the current rate and build from ticks
     const lastFetch = this.forexFetchedAt.get(pairKey) ?? 0;
     if (Date.now() - lastFetch > FOREX_TICK_MS) {
       await this.refreshForexRate(base, quote, pairKey);
     }
 
-    // Build synthetic candles from tick history
     const ticks = this.forexTicks.get(pairKey) ?? [];
     if (ticks.length === 0) {
       // Return stale candles if any
-      return this.candleCache.get(cacheKey)?.candles ?? [];
+      console.warn(`[ExternalData] No ticks for ${pairKey} — returning stale cache (${hit?.candles.length ?? 0} candles)`);
+      return hit?.candles ?? [];
+    }
+
+    // Need at least 5 real ticks to build meaningful candles
+    if (ticks.length < 5) {
+      console.warn(`[ExternalData] Only ${ticks.length} tick(s) for ${pairKey} — insufficient for reliable signals. Bot will wait.`);
+      return hit?.candles ?? [];
     }
 
     const candles = this.buildCandlesFromTicks(ticks, tf, limit);
@@ -255,9 +274,10 @@ class ExternalDataService {
       buckets.set(bucketTs, arr);
     }
 
-    // If we have very few buckets, synthesise extra candles from all ticks
+    // If we have very few buckets, return stale cache instead of generating fake data
     if (buckets.size < 5) {
-      return this.synthesiseCandles(ticks, limit);
+      console.warn(`[ExternalData] Only ${buckets.size} tick bucket(s) — insufficient for candles. Waiting for more data.`);
+      return [];
     }
 
     const candles: Candle[] = [];
@@ -266,10 +286,10 @@ class ExternalDataService {
       const prices = buckets.get(ts)!;
       candles.push({
         timestamp: ts,
-        open:   prices[0],
-        high:   Math.max(...prices),
-        low:    Math.min(...prices),
-        close:  prices[prices.length - 1],
+        open: prices[0],
+        high: Math.max(...prices),
+        low: Math.min(...prices),
+        close: prices[prices.length - 1],
         volume: prices.length,
       });
     }
@@ -278,35 +298,72 @@ class ExternalDataService {
   }
 
   /**
-   * Last resort: synthesise candles by artificially splitting a price series.
-   * Uses small noise to give each candle realistic OHLCV values.
+   * Fetch real OHLCV candles from Twelve Data (free plan, no API key for basic usage).
+   * Supports forex, crypto, stocks. Returns [] on failure.
    */
-  private synthesiseCandles(ticks: { price: number; ts: number }[], limit: number): Candle[] {
-    const base = ticks[ticks.length - 1].price;
-    const tsNow = Math.floor(Date.now() / 1000);
-    const candles: Candle[] = [];
+  private async getTwelveDataCandles(symbol: string, tf: Timeframe, limit: number): Promise<Candle[]> {
+    const cacheKey = `twelvedata:${symbol}:${tf}`;
+    const hit = this.candleCache.get(cacheKey);
+    if (hit && Date.now() - hit.fetchedAt < CANDLE_CACHE_MS) return hit.candles;
 
-    // Build a 100-candle synthetic series using the real rate as anchor
-    for (let i = limit; i >= 0; i--) {
-      const noise = () => (Math.random() - 0.5) * base * 0.0003;
-      const open  = base + noise();
-      const close = base + noise();
-      const high  = Math.max(open, close) + Math.abs(noise());
-      const low   = Math.min(open, close) - Math.abs(noise());
-      candles.push({
-        timestamp: tsNow - i * 60,
-        open, high, low, close,
-        volume: Math.floor(Math.random() * 1000) + 100,
-      });
+    const interval = this.twelveDataInterval(tf);
+    // Twelve Data free endpoint — no key needed for up to 8 req/min
+    const url = `${TWELVE_DATA_BASE}/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${limit}&format=JSON`;
+
+    try {
+      console.log(`[ExternalData] Twelve Data → ${symbol} (${interval})`);
+      const res = await fetchWithTimeout(url, 8000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      if (data.status === 'error' || !Array.isArray(data.values)) {
+        console.warn(`[ExternalData] Twelve Data error for ${symbol}: ${data.message ?? 'unknown'}`);
+        return [];
+      }
+
+      const candles: Candle[] = (data.values as Record<string, string>[])
+        .map(v => ({
+          timestamp: Math.floor(new Date(v.datetime).getTime() / 1000),
+          open: parseFloat(v.open),
+          high: parseFloat(v.high),
+          low: parseFloat(v.low),
+          close: parseFloat(v.close),
+          volume: parseFloat(v.volume ?? '0') || 0,
+        }))
+        .filter(c => c.timestamp > 0 && c.close > 0)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      console.log(`[ExternalData] Twelve Data: ${candles.length} candles for ${symbol}`);
+      this.candleCache.set(cacheKey, { candles, fetchedAt: Date.now() });
+      return candles;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[ExternalData] Twelve Data failed (${symbol}): ${msg}`);
+      return [];
     }
+  }
 
-    // Ensure last candle uses the true current rate
-    if (candles.length > 0) {
-      candles[candles.length - 1].close = base;
-    }
+  private twelveDataInterval(tf: Timeframe): string {
+    const t = tf as string;
+    if (t === '5s' || t === '10s' || t === '15s' || t === '30s') return '1min';
+    if (t === '1m') return '1min';
+    if (t === '3m') return '3min';
+    if (t === '5m') return '5min';
+    if (t === '15m') return '15min';
+    if (t === '30m') return '30min';
+    if (t === '1h') return '1h';
+    return '1min';
+  }
 
-    console.log(`[ExternalData] Synthesised ${candles.length} candles from ${ticks.length} tick(s)`);
-    return candles;
+  /**
+   * Last resort: synthesise candles by artificially splitting a price series.
+   * ⚠️  DISABLED — we no longer generate fictional data.
+   * Kept for reference only. Returns [] to force the bot to wait for real data.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private _synthesiseCandles_DISABLED(ticks: { price: number; ts: number }[], limit: number): Candle[] {
+    console.warn('[ExternalData] synthesiseCandles called — DISABLED. Returning empty array.');
+    return [];
   }
 }
 

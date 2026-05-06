@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: golite-elite-bot
+    name: botofficielgolite
     env: node
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: "npm install && npm run build && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static"
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -15,9 +15,12 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: SSID_ENCRYPTION_KEY
-        generateValue: true
+        # ⚠️ CRITIQUE: NE PAS utiliser generateValue ici
+        # Cette clé doit être FIXE dans Render Dashboard → Environment Variables
+        # Une clé aléatoire à chaque déploiement rendrait tous les SSID en DB illisibles
+        sync: false
       - key: NEXTAUTH_URL
-        value: https://golite-elite-bot.onrender.com
+        value: https://botofficielgolite.onrender.com
       - key: ADMIN_EMAIL
         sync: false
       - key: ADMIN_PASSWORD
@@ -30,7 +33,6 @@ services:
         sync: false
       - key: POCKET_OPTION_SSID
         sync: false
-        placeholder: "Optionnel: SSID de l'admin pour le bot partagé"
 
 databases:
   - name: golite-db

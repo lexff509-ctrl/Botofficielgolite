@@ -45,9 +45,24 @@ class CandleCache {
   private unsubFns = new Map<string, () => void>();
   private subRefCount = new Map<string, number>();
   private clientRef: { onCandle: (asset: string, cb: (c: CandleData) => void) => () => void } | null = null;
+  // Subscriptions requested before the client was set — activated on setClient()
+  private pendingSubscriptions = new Map<string, { asset: string; size: number }>();
 
   setClient(client: { onCandle: (asset: string, cb: (c: CandleData) => void) => () => void }): void {
     this.clientRef = client;
+    // Activate all subscriptions that were registered before the client was available
+    if (this.pendingSubscriptions.size > 0) {
+      console.log(`[CandleCache] Activating ${this.pendingSubscriptions.size} pending subscription(s) after client connected`);
+      for (const [key, { asset }] of this.pendingSubscriptions) {
+        if (!this.unsubFns.has(key)) {
+          const unsub = this.clientRef.onCandle(asset, (candle: CandleData) => {
+            this.handleCandle(key, candle);
+          });
+          this.unsubFns.set(key, unsub);
+        }
+      }
+      this.pendingSubscriptions.clear();
+    }
   }
 
   clear(): void {
@@ -69,10 +84,15 @@ class CandleCache {
       this.store.set(key, []);
     }
     if (this.clientRef) {
+      // Client is available — subscribe immediately
       const unsub = this.clientRef.onCandle(asset, (candle: CandleData) => {
         this.handleCandle(key, candle);
       });
       this.unsubFns.set(key, unsub);
+    } else {
+      // Client not yet connected — queue for later activation in setClient()
+      console.log(`[CandleCache] Client not ready, queuing subscription for ${key}`);
+      this.pendingSubscriptions.set(key, { asset, size });
     }
   }
 
