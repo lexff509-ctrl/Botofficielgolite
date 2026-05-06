@@ -1,9 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Required for Render.com deployment (non-Vercel)
-  output: "standalone",
-  // Silence build warnings about server-only packages (ws, node crypto, etc.)
+  // Silence build warnings about server-only packages used by the bot
   serverExternalPackages: ["ws", "pg", "bcryptjs"],
 };
 
