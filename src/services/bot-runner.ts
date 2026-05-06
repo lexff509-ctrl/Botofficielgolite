@@ -219,6 +219,11 @@ export class BotRunner {
   start(): void {
     if (this.intervalHandle) return;
 
+    // Reset signal gate: ensure bot processes the NEXT candle immediately
+    // Without this, a restarted runner uses stale timestamps and waits silently
+    this.lastProcessedTimestamp = 0;
+    this.lastSignalGeneratedAt = 0;
+
     // Load today's trade stats from DB for risk management
     this.loadDailyStats().catch(() => {});
 
