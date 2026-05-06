@@ -575,7 +575,7 @@ export class BotRunner {
       
       // Internal/Legacy fields for compatibility
       direction: strategy.signal === "BUY" ? "CALL" : "PUT",
-      confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 40,
+      confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 45,
       indicators: {
         rsi: calculateRSI(analysisCandles.map(c => c.close)),
         macd: calculateMACD(analysisCandles.map(c => c.close)).macd,
@@ -608,8 +608,7 @@ export class BotRunner {
       diagnostic: strategy.reason
     };
 
-    // Update state before execution
-    this.lastProcessedTimestamp = lastClosedCandle.timestamp;
+    // Update state before execution (lastProcessedTimestamp already set at line 538)
     this.lastSignalGeneratedAt = Date.now();
     this.signalsGenerated++;
     this.lastSignalAt = Date.now();
@@ -635,9 +634,17 @@ export class BotRunner {
     if (this.botType === "auto") {
       if (!poClient || !poClient.isConnected) return;
 
+      // Check confidence threshold before executing
+      const threshold = this.confidenceMode === "high" ? HIGH_CONFIDENCE_THRESHOLD : AUTO_TRADE_CONFIDENCE_THRESHOLD;
+      if (signal.confidence_score < threshold) {
+        console.log(`[BotRunner] Signal confidence ${signal.confidence_score}% < threshold ${threshold}% — skipping trade (${signal.confidence})`);
+        await this.updateSessionStats();
+        return;
+      }
+
       // Lock position until trade is finished
       this.isInPosition = true;
-      console.log(`[BotRunner] Entrée en position: ${signal.direction} $${this.tradeAmount}`);
+      console.log(`[BotRunner] Entrée en position: ${signal.direction} $${this.tradeAmount} (confidence: ${signal.confidence_score}%)`);  
 
       try {
         // executeAutoTrade calls executeTrade which calls poClient.placeTrade (which waits for expiry)
