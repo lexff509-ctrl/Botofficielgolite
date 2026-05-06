@@ -394,8 +394,23 @@ export class BotRunner {
       return;
     }
 
-    // Check if SSID has expired
-    const poClient = getPocketOptionClient(this.userId);
+    // === Auto-Reconnect: if PO client is missing or disconnected, force reconnect ===
+    let poClient = getPocketOptionClient(this.userId);
+    if (!poClient || !poClient.isConnected) {
+      console.warn(`[BotRunner] PocketOption not connected for user ${this.userId} — forcing reconnect...`);
+      try {
+        const { connectPocketOption } = await import("@/services/trading.service");
+        const isDemo = this.mode === "DEMO";
+        // We try with an empty SSID — the service will pull from DB/global/env
+        connectPocketOption(this.userId, "", isDemo).then(r => {
+          if (r.success) console.log(`[BotRunner] Auto-reconnect succeeded for user ${this.userId}`);
+          else console.warn(`[BotRunner] Auto-reconnect failed: ${r.error}`);
+        }).catch(() => {});
+      } catch { /* non-blocking */ }
+    }
+
+    // Check if SSID has expired (only block if explicitly expired)
+    poClient = getPocketOptionClient(this.userId);
     if (poClient && poClient.isSsidExpired) {
       this.pause("SSID_EXPIRED");
       return;
@@ -462,19 +477,26 @@ export class BotRunner {
       }
     }
 
-    if (candles.length < 20) {
-      console.warn(`[BotRunner] Not enough data for ${this.asset}: ${candles.length}/20. Waiting...`);
+    // === If still no candles at all, wait one tick then continue — never block permanently ===
+    if (candles.length === 0) {
+      console.warn(`[BotRunner] Zero candles for ${this.asset}. Will retry next tick.`);
       this.consecutiveErrors++;
       return;
     }
     this.consecutiveErrors = 0;
+    // Log data quality
+    if (candles.length < 20) {
+      console.log(`[BotRunner] Low data (${candles.length} candles) — using lightweight signal engine.`);
+    }
 
     // === 3. Trigger only on Candle Close ===
-    // Analysis should trigger when a candle is FINISHED.
-    // candles[length - 1] is the current moving candle.
-    // candles[length - 2] is the last completed candle.
-    const lastClosedCandle = candles[candles.length - 2];
-    
+    // candles[length - 1] is the current live candle.
+    // candles[length - 2] is the last confirmed closed candle.
+    // If we have only 1 candle, treat it as the closed one.
+    const lastClosedCandle = candles.length >= 2
+      ? candles[candles.length - 2]
+      : candles[candles.length - 1];
+
     // Check if we already processed this closed candle
     if (lastClosedCandle.timestamp <= this.lastProcessedTimestamp) {
       return;
@@ -482,17 +504,13 @@ export class BotRunner {
 
     this.lastProcessedTimestamp = lastClosedCandle.timestamp;
 
-    // We analyze using all candles up to the closed one
-    const analysisCandles = candles.slice(0, -1);
+    // Use all closed candles for analysis (exclude the live candle if we have > 1)
+    const analysisCandles = candles.length >= 2 ? candles.slice(0, -1) : candles;
 
-    // === 4. Indicator Engine & Signal Generator (Bollinger + Stoch) ===
+    // === 4. Indicator Engine & Signal Generator ===
+    // Engine ALWAYS returns BUY or SELL — never WAIT
     const strategy = evaluateBollingerStochSignal(analysisCandles);
-    
-    if (strategy.signal === "WAIT") {
-      // Mark as processed even if no signal to wait for next candle
-      this.lastProcessedTimestamp = lastClosedCandle.timestamp;
-      return;
-    }
+    console.log(`[BotRunner] Signal: ${strategy.signal} (${strategy.confidence}) — ${strategy.reason}`);
 
     // Prepare Signal Object
     const signal: Signal = {

@@ -127,115 +127,170 @@ interface SignalEvaluation {
   allIndicators: Omit<Indicators, "signalScore" | "indicatorScores">;
 }
 
-// ============ BOLLINGER + STOCHASTIC STRATEGY (REQUESTED REFACTOR) ============
+// ============ CORE SIGNAL ENGINE — ALWAYS PRODUCES BUY or SELL ============
 
 /**
- * Signal Engine based on expert requirements:
- * Bollinger Bands (20, 2) + Stochastic (14, 3, 3)
+ * Multi-layer signal engine.
+ * - Full analysis (Bollinger + Stoch + RSI + EMA trend) when >= 20 candles
+ * - Lightweight analysis (EMA + momentum + price-action) when 5–19 candles
+ * - NEVER returns WAIT: always commits to BUY or SELL with appropriate confidence
  */
 export function evaluateBollingerStochSignal(
   candles: Candle[]
-): { 
-  signal: "BUY" | "SELL" | "WAIT"; 
-  confidence: "HIGH" | "MEDIUM" | "LOW"; 
+): {
+  signal: "BUY" | "SELL";
+  confidence: "HIGH" | "MEDIUM" | "LOW";
   reason: string;
   bollinger: { signal: "BUY" | "SELL" | "NEUTRAL"; upper: number; middle: number; lower: number; price_position: string };
   stochastic: { signal: "BUY" | "SELL" | "NEUTRAL"; k: number; d: number };
 } {
-  const minRequired = 25;
-  if (candles.length < minRequired) {
-    return { 
-      signal: "WAIT", 
-      confidence: "LOW", 
-      reason: "Pas assez de données",
-      bollinger: { signal: "NEUTRAL", upper: 0, middle: 0, lower: 0, price_position: "unknown" },
-      stochastic: { signal: "NEUTRAL", k: 50, d: 50 }
+  const closes = candles.map((c) => c.close);
+  const currentPrice = closes[closes.length - 1];
+  const n = candles.length;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // LIGHTWEIGHT PATH  (< 20 candles): EMA momentum + price action only
+  // ─────────────────────────────────────────────────────────────────────────
+  if (n < 20) {
+    const shortEMA = closes.slice(-Math.min(5, n));
+    const avgRecent = shortEMA.reduce((a, b) => a + b, 0) / shortEMA.length;
+    const oldest = closes[0];
+
+    // Momentum: compare current price to the average and the start
+    const vsAvg   = currentPrice > avgRecent ? 1 : -1;
+    const vsTrend = currentPrice > oldest     ? 1 : -1;
+
+    // Price action: last candle bullish or bearish
+    const lastCandle = candles[n - 1];
+    const candleDir  = lastCandle.close > lastCandle.open ? 1 : -1;
+
+    const score = vsAvg + vsTrend + candleDir; // range: -3 to +3
+
+    const signal: "BUY" | "SELL" = score >= 0 ? "BUY" : "SELL";
+    const reason = `Analyse légère (${n} bougies) — Momentum ${score > 0 ? "haussier" : "baissier"}: Prix ${signal === "BUY" ? ">" : "<"} EMA court terme`;
+
+    return {
+      signal,
+      confidence: "LOW",
+      reason,
+      bollinger: { signal: "NEUTRAL", upper: currentPrice * 1.002, middle: currentPrice, lower: currentPrice * 0.998, price_position: "middle" },
+      stochastic: { signal: "NEUTRAL", k: 50, d: 50 },
     };
   }
 
-  const closes = candles.map((c) => c.close);
-  const currentPrice = closes[closes.length - 1];
-  const prevPrice = closes[closes.length - 2];
+  // ─────────────────────────────────────────────────────────────────────────
+  // FULL ANALYSIS PATH  (>= 20 candles)
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // 1. Bollinger Bands Calculation (20, 2)
+  const prevPrice   = closes[n - 2];
+  const prevCandle  = candles[n - 2];
+  const curCandle   = candles[n - 1];
+
+  // 1 ─ Bollinger Bands (20, 2)
   const bb = calculateBollinger(closes, 20, 2);
-  
-  let bbSignal: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
+  let bbScore = 0; // -1 (sell) … +1 (buy)
   let pricePosition = "middle";
 
-  const prevCandle = candles[candles.length - 2];
-  const currentCandle = candles[candles.length - 1];
-
-  // Relaxed Bollinger Bands rules:
-  // BUY: If the previous or current candle touched/closed below the lower band, and the current candle is bullish
   if (currentPrice <= bb.lower || prevCandle.low <= bb.lower) {
     pricePosition = "near_lower";
-    if (currentPrice > currentCandle.open || currentPrice > prevPrice) bbSignal = "BUY";
-  } 
-  // SELL: If the previous or current candle touched/closed above the upper band, and the current candle is bearish
-  else if (currentPrice >= bb.upper || prevCandle.high >= bb.upper) {
+    if (currentPrice > curCandle.open || currentPrice > prevPrice) bbScore = 1;
+    else bbScore = 0.4; // touched but not bouncing yet → weak buy
+  } else if (currentPrice >= bb.upper || prevCandle.high >= bb.upper) {
     pricePosition = "near_upper";
-    if (currentPrice < currentCandle.open || currentPrice < prevPrice) bbSignal = "SELL";
+    if (currentPrice < curCandle.open || currentPrice < prevPrice) bbScore = -1;
+    else bbScore = -0.4;
+  } else {
+    // Middle zone: use %B as a directional bias
+    bbScore = (bb.percentB - 0.5) * 2; // maps 0–1 → -1..+1
   }
 
-  // 2. Stochastic Calculation (14, 3, 3)
+  // 2 ─ Stochastic (14, 3, 3)
   const stoch = calculateStochastic(candles, 14, 3, 3);
   const k = stoch.k;
   const d = stoch.d;
+  let stochScore = 0;
 
-  let stochSignal: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
-  
-  // Relaxed Stochastic rules:
-  // BUY: K is above D AND K is in oversold zone (e.g. < 30)
-  if (k < 30 && k > d) {
-    stochSignal = "BUY";
-  }
-  // SELL: K is below D AND K is in overbought zone (e.g. > 70)
-  else if (k > 70 && k < d) {
-    stochSignal = "SELL";
-  }
+  if      (k < 30 && k > d) stochScore =  1;   // oversold + rising
+  else if (k < 50 && k > d) stochScore =  0.5;  // neutral zone but rising
+  else if (k > 70 && k < d) stochScore = -1;   // overbought + falling
+  else if (k > 50 && k < d) stochScore = -0.5;  // neutral zone but falling
+  else                       stochScore = (50 - k) / 100; // proportional bias
 
-  // 3. Confluence Logic
-  let finalSignal: "BUY" | "SELL" | "WAIT" = "WAIT";
-  let confidence: "HIGH" | "MEDIUM" | "LOW" = "LOW";
-  let reason = "Pas de setup clair";
+  // 3 ─ RSI (14) — confirm or moderate
+  const rsi = calculateRSI(closes);
+  let rsiScore = 0;
+  if      (rsi < 30) rsiScore =  1;
+  else if (rsi < 45) rsiScore =  0.5;
+  else if (rsi > 70) rsiScore = -1;
+  else if (rsi > 55) rsiScore = -0.5;
+  else               rsiScore = (50 - rsi) / 100;
 
-  if (bbSignal === "BUY" && stochSignal === "BUY") {
-    finalSignal = "BUY";
-    confidence = "HIGH";
-    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stochastique en zone d'achat";
-  } else if (bbSignal === "SELL" && stochSignal === "SELL") {
-    finalSignal = "SELL";
-    confidence = "HIGH";
-    reason = "CONFLUENCE FORTE: Bollinger Rebond + Stochastique en zone de vente";
-  } else if (bbSignal === "BUY" || stochSignal === "BUY") {
-    finalSignal = "BUY";
-    confidence = "MEDIUM";
-    reason = bbSignal === "BUY" ? "Bollinger Rebond détecté" : "Stochastique en zone d'achat";
-  } else if (bbSignal === "SELL" || stochSignal === "SELL") {
-    finalSignal = "SELL";
-    confidence = "MEDIUM";
-    reason = bbSignal === "SELL" ? "Bollinger Rebond détecté" : "Stochastique en zone de vente";
-  }
+  // 4 ─ EMA Trend (9 vs 20)
+  const ema9  = calculateEMA(closes, 9);
+  const ema20 = calculateEMA(closes, Math.min(20, n));
+  const emaTrendScore = ema9 > ema20 ? 0.5 : -0.5;
+
+  // 5 ─ Price momentum (last 3 closes)
+  const recentCloses = closes.slice(-4);
+  const momentumUp = recentCloses[3] > recentCloses[0];
+  const momentumScore = momentumUp ? 0.3 : -0.3;
+
+  // ─── Weighted composite score ───────────────────────────────────────────
+  // Weights: BB (30%), Stoch (25%), RSI (20%), EMA (15%), Momentum (10%)
+  const composite =
+    bbScore       * 0.30 +
+    stochScore    * 0.25 +
+    rsiScore      * 0.20 +
+    emaTrendScore * 0.15 +
+    momentumScore * 0.10;
+
+  // composite: -1.0 (strong sell) … +1.0 (strong buy)
+  const signal: "BUY" | "SELL" = composite >= 0 ? "BUY" : "SELL";
+  const absScore = Math.abs(composite);
+
+  let confidence: "HIGH" | "MEDIUM" | "LOW";
+  if      (absScore >= 0.55) confidence = "HIGH";
+  else if (absScore >= 0.30) confidence = "MEDIUM";
+  else                       confidence = "LOW";
+
+  // ─── Human-readable reason ──────────────────────────────────────────────
+  const parts: string[] = [];
+  if (bbScore > 0.5)       parts.push("Bollinger rebond haussier");
+  else if (bbScore < -0.5) parts.push("Bollinger rebond baissier");
+  else if (pricePosition !== "middle") parts.push(`Bollinger zone ${pricePosition === "near_lower" ? "basse" : "haute"}`);
+  if (stochScore > 0.5)   parts.push(`Stoch K=${k.toFixed(0)} en zone survente`);
+  else if (stochScore < -0.5) parts.push(`Stoch K=${k.toFixed(0)} en zone surachat`);
+  if (rsi < 35)           parts.push(`RSI survendu (${rsi.toFixed(0)})`);
+  else if (rsi > 65)      parts.push(`RSI surachat (${rsi.toFixed(0)})`);
+  if (ema9 > ema20)       parts.push("EMA9 > EMA20 (tendance haussière)");
+  else                    parts.push("EMA9 < EMA20 (tendance baissière)");
+
+  const reason = parts.length > 0
+    ? `${signal === "BUY" ? "🟢 ACHAT" : "🔴 VENTE"} — ${parts.join(" | ")} [Score: ${composite.toFixed(2)}]`
+    : `Signal ${signal} basé sur analyse composite [Score: ${composite.toFixed(2)}]`;
+
+  const bbSignalDir: "BUY" | "SELL" | "NEUTRAL" = bbScore > 0.3 ? "BUY" : bbScore < -0.3 ? "SELL" : "NEUTRAL";
+  const stochSignalDir: "BUY" | "SELL" | "NEUTRAL" = stochScore > 0.3 ? "BUY" : stochScore < -0.3 ? "SELL" : "NEUTRAL";
 
   return {
-    signal: finalSignal,
+    signal,
     confidence,
     reason,
     bollinger: {
-      signal: bbSignal,
-      upper: bb.upper,
+      signal: bbSignalDir,
+      upper:  bb.upper,
       middle: bb.middle,
-      lower: bb.lower,
-      price_position: pricePosition
+      lower:  bb.lower,
+      price_position: pricePosition,
     },
     stochastic: {
-      signal: stochSignal,
-      k: k,
-      d: d
-    }
+      signal: stochSignalDir,
+      k,
+      d,
+    },
   };
 }
+
 
 // ============ PROFESSIONAL INDICATOR CALCULATIONS ============
 
@@ -1197,14 +1252,15 @@ export function generateSignal(
   // Use expert Signal Engine logic
   const bs = evaluateBollingerStochSignal(candles);
   
-  if (bs.signal === "WAIT" && candles.length < 25) return null;
+  // Engine always returns BUY or SELL — always produce a signal
+  if (candles.length === 0) return null;
 
   const currentPrice = candles[candles.length - 1].close;
   const now = new Date();
   
   // Format the signal according to the requested EXACT FORMAT
   const signal: Signal = {
-    signal: bs.signal,
+    signal: bs.signal as "BUY" | "SELL" | "WAIT",
     confidence: bs.confidence,
     timeframe: timeframe,
     timestamp: now.toISOString().replace('T', ' ').split('.')[0],

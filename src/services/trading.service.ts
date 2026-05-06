@@ -3,6 +3,10 @@ import { signals, trades, users, platformSettings } from "@/db/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import {
   generateSignal,
+  evaluateBollingerStochSignal,
+  calculateRSI,
+  calculateMACD,
+  calculateEMA,
   type Timeframe,
   type Signal,
   type Candle,
@@ -55,136 +59,167 @@ export async function generateAndSaveSignal(
 ): Promise<{ signal: Signal | null; saved: unknown | null; error?: string }> {
   const selectedAsset = asset || ALL_ASSETS[Math.floor(Math.random() * ALL_ASSETS.length)];
   const selectedTimeframe = timeframe || "1m";
-  // Minimum candles for indicators: Bollinger(20) and Stoch(14) need at least 20
-  const minRequired = 20;
 
   if (!TIMEFRAMES.includes(selectedTimeframe as Timeframe)) {
     return { signal: null, saved: null, error: "Timeframe invalide" };
   }
 
-  // Use real candle data from CandleCache or External API
+  // ─── Data Collection (all sources, best-effort) ───────────────────────────
   let candles: Candle[] = [];
   const isOTC = selectedAsset.toUpperCase().includes("(OTC)");
+  const tfSeconds = parseTimeframe(selectedTimeframe);
 
+  // 1) Binance (non-OTC assets only)
   if (!isOTC) {
-    // Try external API for regular assets to bypass PO history issues
     candles = await externalDataService.getExternalCandles(selectedAsset, selectedTimeframe as Timeframe, 100);
     if (candles.length > 0) {
-      // Sync to cache for consistency
-      candleCache.seedCandles(selectedAsset, parseTimeframe(selectedTimeframe), candles.map(c => ({
-        ...c,
-        asset: selectedAsset
-      })));
+      candleCache.seedCandles(selectedAsset, tfSeconds, candles.map(c => ({ ...c, asset: selectedAsset })));
     }
   }
 
+  // 2) PO cache
   if (candles.length === 0) {
-    candles = candleCache.getCandlesForTimeframe(
-      selectedAsset,
-      selectedTimeframe as Timeframe,
-      100
-    );
+    candles = candleCache.getCandlesForTimeframe(selectedAsset, selectedTimeframe as Timeframe, 100);
   }
 
-  // If cache is empty and not external, fetch historical candles directly from PocketOption
-  if (candles.length < minRequired) {
+  // 3) PO live history (OTC or if cache still empty)
+  if (candles.length < 20) {
     const client = activeConnections.get(userId);
     if (client && client.isConnected) {
-      console.log(`[Signal] Cache low (${candles.length}/${minRequired}), forcing historical fetch for ${selectedAsset}...`);
+      console.log(`[Signal] Fetching PO history for ${selectedAsset} (${candles.length} candles in cache)...`);
       try {
-        const tfToSeconds = (tf: string): number => {
-          if (tf.endsWith("s")) return parseInt(tf);
-          if (tf.endsWith("m")) return parseInt(tf) * 60;
-          return 60;
-        };
-        const sizeSeconds = tfToSeconds(selectedTimeframe);
-        
-        // Force a subscription change first to wake up the stream
-        client.changeSymbol(selectedAsset, sizeSeconds);
-        await new Promise(r => setTimeout(r, 1500));
-
-        const historicalCandles = await client.requestCandleHistory(
-          selectedAsset,
-          sizeSeconds,
-          200
-        );
-        if (historicalCandles.length > 0) {
-          candleCache.seedCandles(selectedAsset, sizeSeconds, historicalCandles);
-          candles = candleCache.getCandlesForTimeframe(
-            selectedAsset,
-            selectedTimeframe as Timeframe,
-            100
-          );
+        client.changeSymbol(selectedAsset, tfSeconds);
+        await new Promise(r => setTimeout(r, 1200));
+        const hist = await client.requestCandleHistory(selectedAsset, tfSeconds, 200);
+        if (hist.length > 0) {
+          candleCache.seedCandles(selectedAsset, tfSeconds, hist);
+          candles = candleCache.getCandlesForTimeframe(selectedAsset, selectedTimeframe as Timeframe, 100);
         }
       } catch (err) {
-        console.error("[Signal] Failed to fetch candle history:", err);
+        console.error("[Signal] PO history fetch failed:", err);
       }
     }
   }
 
-  if (candles.length < minRequired) {
-    return { 
-      signal: null, 
-      saved: null, 
-      error: `Données insuffisantes pour ${selectedAsset} (${candles.length}/${minRequired}). Si c'est un marché OTC, attendez 10s. Si c'est un marché réel, Binance est en cours de synchronisation.` 
-    };
+  // ─── Signal Engine ────────────────────────────────────────────────────────
+  // If we have absolutely no data, we cannot generate a meaningful signal
+  if (candles.length === 0) {
+    console.warn(`[Signal] No candle data at all for ${selectedAsset} — skipping this tick.`);
+    return { signal: null, saved: null, error: `Connexion en cours pour ${selectedAsset}. Le signal arrivera dans quelques secondes.` };
   }
 
-  const signal = generateSignal(
-    candles,
-    selectedAsset,
-    selectedTimeframe as Timeframe
-  );
+  // evaluateBollingerStochSignal ALWAYS returns BUY or SELL
+  const strategy = evaluateBollingerStochSignal(candles);
 
-  if (!signal) {
-    return { signal: null, saved: null, error: "Pas assez de données pour générer un signal" };
-  }
-
-  const [savedSignal] = await db
-    .insert(signals)
-    .values({
-      userId,
-      asset: signal.asset,
-      direction: signal.direction,
-      timeframe: signal.timeframe,
-      confidence: signal.confidence_score.toFixed(2),
-      // Legacy indicators
-      rsi: signal.indicators.rsi.toFixed(4),
-      macd: signal.indicators.macd.toFixed(8),
-      ema: signal.indicators.ema9.toFixed(8),
-      bollinger: {
-        upper: signal.bollinger.upper,
-        middle: signal.bollinger.middle,
-        lower: signal.bollinger.lower,
-      },
-      stochastic: signal.stochastic.k_value.toFixed(4),
-      // Strategy indicators
-      ema20: signal.indicators.ema20.toFixed(8),
-      ema50: signal.indicators.ema50.toFixed(8),
-      stochK: signal.stochastic.k_value.toFixed(4),
-      stochD: signal.stochastic.d_value.toFixed(4),
+  const lastCandle = candles[candles.length - 1];
+  const signalObj: Signal = {
+    signal: strategy.signal,
+    confidence: strategy.confidence,
+    timeframe: selectedTimeframe as Timeframe,
+    timestamp: new Date().toISOString().replace("T", " ").split(".")[0],
+    price_current: lastCandle.close,
+    asset: selectedAsset,
+    bollinger: {
+      signal: strategy.bollinger.signal,
+      upper: strategy.bollinger.upper,
+      middle: strategy.bollinger.middle,
+      lower: strategy.bollinger.lower,
+      price_position: strategy.bollinger.price_position,
+    },
+    stochastic: {
+      signal: strategy.stochastic.signal,
+      k_value: strategy.stochastic.k,
+      d_value: strategy.stochastic.d,
+      zone: strategy.stochastic.k < 30 ? "oversold" : strategy.stochastic.k > 70 ? "overbought" : "neutral",
+      crossover: strategy.stochastic.signal !== "NEUTRAL",
+    },
+    reason: strategy.reason,
+    action: strategy.confidence === "HIGH" ? "ENTRER MAINTENANT" : strategy.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
+    direction: strategy.signal === "BUY" ? "CALL" : "PUT",
+    confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 45,
+    indicators: {
+      rsi: calculateRSI(candles.map(c => c.close)),
+      macd: calculateMACD(candles.map(c => c.close)).macd,
+      ema9: calculateEMA(candles.map(c => c.close), 9),
+      bollingerUpper: strategy.bollinger.upper,
+      bollingerMiddle: strategy.bollinger.middle,
+      bollingerLower: strategy.bollinger.lower,
+      stochastic: strategy.stochastic.k,
+      stochasticSignal: strategy.stochastic.d,
+      ema20: strategy.bollinger.middle,
+      ema50: calculateEMA(candles.map(c => c.close), 50),
+      stochK: strategy.stochastic.k,
+      stochD: strategy.stochastic.d,
       lowFractal: false,
       highFractal: false,
-      dojiFiltered: false,
-      multiTimeframeConfirmation: {},
-      // Scoring system indicators
-      supportLevel: null,
-      resistanceLevel: null,
-      nearSupport: signal.bollinger.price_position === "near_lower",
-      nearResistance: signal.bollinger.price_position === "near_upper",
+      dojiRejected: false,
+      atr: 0,
+      bollingerPercentB: 0,
+      bollingerWidth: 0,
+      supportLevel: 0,
+      resistanceLevel: 0,
+      nearSupport: strategy.bollinger.price_position === "near_lower",
+      nearResistance: strategy.bollinger.price_position === "near_upper",
       marketStructure: "NEUTRAL",
       structureBreak: "NONE",
-      signalScore: signal.indicators.signalScore?.toFixed(4) || null,
-      bollingerPercentB: null,
-      bollingerWidth: null,
-      indicatorScores: signal.indicators.indicatorScores || null,
-      diagnostic: signal.reason,
-      isActive: true,
-    })
-    .returning();
+      signalScore: strategy.confidence === "HIGH" ? 1.0 : 0.5,
+      indicatorScores: {
+        bollinger: strategy.bollinger.signal !== "NEUTRAL" ? 1 : 0,
+        stochastic: strategy.stochastic.signal !== "NEUTRAL" ? 1 : 0,
+      },
+    },
+    multiTimeframeConfirmation: {},
+    diagnostic: strategy.reason,
+  };
 
-  return { signal, saved: savedSignal };
+  // ─── Persist to DB ────────────────────────────────────────────────────────
+  try {
+    const [savedSignal] = await db
+      .insert(signals)
+      .values({
+        userId,
+        asset: signalObj.asset,
+        direction: signalObj.direction,
+        timeframe: signalObj.timeframe,
+        confidence: signalObj.confidence_score.toFixed(2),
+        rsi: signalObj.indicators.rsi.toFixed(4),
+        macd: signalObj.indicators.macd.toFixed(8),
+        ema: signalObj.indicators.ema9.toFixed(8),
+        bollinger: {
+          upper: strategy.bollinger.upper,
+          middle: strategy.bollinger.middle,
+          lower: strategy.bollinger.lower,
+        },
+        stochastic: signalObj.stochastic.k_value.toFixed(4),
+        ema20: signalObj.indicators.ema20.toFixed(8),
+        ema50: signalObj.indicators.ema50.toFixed(8),
+        stochK: signalObj.stochastic.k_value.toFixed(4),
+        stochD: signalObj.stochastic.d_value.toFixed(4),
+        lowFractal: false,
+        highFractal: false,
+        dojiFiltered: false,
+        multiTimeframeConfirmation: {},
+        supportLevel: null,
+        resistanceLevel: null,
+        nearSupport: strategy.bollinger.price_position === "near_lower",
+        nearResistance: strategy.bollinger.price_position === "near_upper",
+        marketStructure: "NEUTRAL",
+        structureBreak: "NONE",
+        signalScore: (strategy.confidence === "HIGH" ? 1.0 : 0.5).toFixed(4),
+        bollingerPercentB: null,
+        bollingerWidth: null,
+        indicatorScores: signalObj.indicators.indicatorScores,
+        diagnostic: strategy.reason,
+        isActive: true,
+      })
+      .returning();
+    return { signal: signalObj, saved: savedSignal };
+  } catch (dbErr) {
+    console.error("[Signal] DB save failed:", dbErr);
+    return { signal: signalObj, saved: null };
+  }
 }
+
 
 export async function getRecentSignals(userId: number, limit = 20) {
   return db
