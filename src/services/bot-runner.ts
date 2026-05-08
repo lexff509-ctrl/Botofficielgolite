@@ -544,9 +544,14 @@ export class BotRunner {
     // Engine ALWAYS returns BUY or SELL — never WAIT
     const strategy = evaluateBollingerStochSignal(analysisCandles);
     
-    // Extract probability from reason string if possible, or use confidence
+    // Safety Filter: If probability is too low, skip this tick
     const probaMatch = strategy.reason.match(/Probabilité: (\d+)%/);
     const probaValue = probaMatch ? parseInt(probaMatch[1]) : (strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 75 : 45);
+
+    if (probaValue < 55 && strategy.confidence === "LOW") {
+      console.log(`[BotRunner] Signal ignoré (Proba ${probaValue}% trop faible) pour ${this.asset}`);
+      return;
+    }
 
     console.log(`[BotRunner] Signal: ${strategy.signal} (${strategy.confidence}) — ${strategy.reason}`);
 
@@ -619,7 +624,8 @@ export class BotRunner {
     this.lastSignalAt = Date.now();
     this.lastTradeDirection = signal.direction;
 
-    console.log(`[BotRunner] NOUVEAU SIGNAL DETECTE: ${signal.signal} (${signal.confidence}) sur ${this.asset} (${this.timeframe})`);
+    const displayDirection = signal.direction === "CALL" ? "CALL (HAUT)" : "PUT (BAS)";
+    console.log(`[BotRunner] NOUVEAU SIGNAL DETECTE: ${displayDirection} [Confiance: ${signal.confidence}] sur ${this.asset} (${this.timeframe})`);
     console.log(`[BotRunner] Raison: ${signal.reason}`);
 
     // Track signal for traceability

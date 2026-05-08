@@ -184,7 +184,7 @@ export class PocketOptionClient {
 
       // Check for timeout
       const elapsed = Date.now() - this.lastPongAt;
-      if (elapsed > this.pingInterval * 3) {
+      if (elapsed > this.pingInterval * 2) { // More aggressive: 30s max without pong
         console.warn(`[PO] Pong timeout (${Math.round(elapsed/1000)}s), forcing reconnect...`);
         this.handleDisconnect();
         return;
@@ -192,9 +192,12 @@ export class PocketOptionClient {
 
       // Send Socket.IO Ping (2)
       try {
+        // Send Engine.IO ping
         this.ws.send("2");
-        // Also send Socket.IO keep-alive (some PO versions use 42["ps"])
+        // Send Socket.IO keep-alive (essential for PO stability)
         this.ws.send('42["ps"]');
+        // Force a small tick message to keep connection warm
+        this.ws.send('42["tick"]');
       } catch (err) {
         console.error("[PO] Failed to send heartbeat:", err);
         this.handleDisconnect();

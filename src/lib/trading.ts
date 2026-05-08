@@ -295,9 +295,11 @@ export function evaluateBollingerStochSignal(
   else                    parts.push("Tendance BAISSIÈRE (EMA9 < EMA20)");
 
   const probaPercent = Math.min(99, Math.round((agreementCount / 5) * 100 + (absScore * 10)));
+  const directionLabel = signal === "BUY" ? "CALL (HAUT)" : "PUT (BAS)";
+  
   const reason = parts.length > 0
-    ? `${signal === "BUY" ? "🟢 CALL (ACHAT)" : "🔴 PUT (VENTE)"} — Probabilité: ${probaPercent}% | ${parts.join(" | ")}`
-    : `Signal ${signal === "BUY" ? "CALL" : "PUT"} [Proba: ${probaPercent}%]`;
+    ? `${signal === "BUY" ? "🟢 ACHAT" : "🔴 VENTE"} — ${directionLabel} | Probabilité: ${probaPercent}% | ${parts.join(" | ")}`
+    : `Signal ${directionLabel} [Proba: ${probaPercent}%]`;
 
   const bbSignalDir: "BUY" | "SELL" | "NEUTRAL" = bbScore > 0.3 ? "BUY" : bbScore < -0.3 ? "SELL" : "NEUTRAL";
   const stochSignalDir: "BUY" | "SELL" | "NEUTRAL" = stochScore > 0.3 ? "BUY" : stochScore < -0.3 ? "SELL" : "NEUTRAL";

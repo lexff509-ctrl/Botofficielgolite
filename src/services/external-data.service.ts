@@ -81,6 +81,10 @@ const FOREX_MAP: Record<string, { base: string; quote: string; symbol: string }>
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function normalize(asset: string): string {
+  if (asset.toUpperCase().includes("OTC")) {
+    // Return a special token that will not match any mapping
+    return "INTERNAL_OTC_ASSET";
+  }
   return asset.replace(/\s*\(OTC\)/i, '').toUpperCase().trim();
 }
 
