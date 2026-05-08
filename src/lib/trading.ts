@@ -229,7 +229,7 @@ export function evaluateBollingerStochSignal(
   const ema9  = calculateEMA(closes, 9);
   const ema20 = calculateEMA(closes, Math.min(20, n));
   const trendDir = ema9 > ema20 ? 1 : -1; // 1 = Bullish, -1 = Bearish
-  const emaTrendScore = trendDir * 1.5; // High weight: +1.5 or -1.5
+  const emaTrendScore = trendDir * 1.5;
 
   // 5 ─ Price momentum (last 3 closes)
   const recentCloses = closes.slice(-4);
@@ -237,9 +237,6 @@ export function evaluateBollingerStochSignal(
   const momentumScore = momentumUp ? 0.5 : -0.5;
 
   // ─── Weighted composite score ───────────────────────────────────────────
-  // MISSION 3: CORRECT SIGNAL DIRECTION LOGIC
-  // A positive composite score MUST mean CALL (BUY)
-  // A negative composite score MUST mean PUT (SELL)
   const composite =
     bbScore       * 0.25 +
     stochScore    * 0.20 +
@@ -247,25 +244,33 @@ export function evaluateBollingerStochSignal(
     emaTrendScore * 0.30 +
     momentumScore * 0.10;
 
-  // Final signal decision
-  const signal: "BUY" | "SELL" = composite >= 0 ? "BUY" : "SELL";
+  // RE-CALCUL DIRECTION LOGIC (ACTION 1)
+  // Tendance Haussière (ema9 > ema20) + Survente (rsiScore > 0) = BUY (CALL)
+  // Tendance Baissière (ema9 < ema20) + Surachat (rsiScore < 0) = SELL (PUT)
+  let signal: "BUY" | "SELL";
+  if (ema9 > ema20) {
+    // Dans une tendance haussière, on cherche des achats sur replis (survente)
+    signal = composite >= -0.2 ? "BUY" : "SELL";
+  } else {
+    // Dans une tendance baissière, on cherche des ventes sur rebonds (surachat)
+    signal = composite <= 0.2 ? "SELL" : "BUY";
+  }
+  
   const absScore = Math.abs(composite);
 
-  // Confidence based on confluence (Market Probability)
+  // Confidence based on confluence
   let agreementCount = 0;
   if (signal === "BUY") {
-    // Condition Haussière = CALL (BUY)
     if (bbScore > 0.3) agreementCount++;
     if (stochScore > 0.3) agreementCount++;
     if (rsiScore > 0.3) agreementCount++;
-    if (emaTrendScore > 0) agreementCount++;
+    if (ema9 > ema20) agreementCount++;
     if (momentumScore > 0) agreementCount++;
   } else {
-    // Condition Baissière = PUT (SELL)
     if (bbScore < -0.3) agreementCount++;
     if (stochScore < -0.3) agreementCount++;
     if (rsiScore < -0.3) agreementCount++;
-    if (emaTrendScore < 0) agreementCount++;
+    if (ema9 < ema20) agreementCount++;
     if (momentumScore < 0) agreementCount++;
   }
 

@@ -342,6 +342,9 @@ export class PocketOptionClient {
         this.ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
           handshakeTimeout: 10000,
+          // ACTION 3: WebSocket Options
+          perMessageDeflate: true,
+          followRedirects: true
         } as WebSocket.ClientOptions);
 
         this.upgradeResolve = resolve;
