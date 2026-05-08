@@ -26,6 +26,7 @@ import { getPocketOptionClient, executeTrade } from "@/services/trading.service"
 import { hasActiveSubscription } from "@/services/payment.service";
 
 import { DataOrchestrator, NonOtcSignalGenerator } from "@/services/data-orchestrator.service";
+import { signalTracker } from "@/services/signal-tracker";
 
 // ============ CONFIG ============
 
