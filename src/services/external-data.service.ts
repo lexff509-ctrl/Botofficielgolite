@@ -21,7 +21,8 @@ const CANDLE_CACHE_MS = 30_000;   // 30 s cache between real fetches
 const FETCH_TIMEOUT_MS = 10_000;   // 10 s hard timeout
 const FOREX_TICK_MS = 20_000;   // Store a new forex tick every 20 s
 const FOREX_MAX_TICKS = 300;      // Keep up to 300 ticks (≈ 100 min)
-const TWELVE_DATA_BASE = 'https://api.twelvedata.com'; // Free: 800 req/day, no key needed for basic
+const TWELVE_DATA_BASE = 'https://api.twelvedata.com';
+const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY;
 
 // ─── Asset maps ──────────────────────────────────────────────────────────────
 
@@ -81,9 +82,10 @@ const FOREX_MAP: Record<string, { base: string; quote: string; symbol: string }>
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function normalize(asset: string): string {
-  if (asset.toUpperCase().includes("OTC")) {
-    // Return a special token that will not match any mapping
-    return "INTERNAL_OTC_ASSET";
+  // MISSION 2: STRICT OTC ROUTING
+  if (asset.toUpperCase().includes("OTC") || asset.toLowerCase().includes("_otc")) {
+    console.log(`[ExternalData] OTC detected for ${asset} — Routing to internal WebSocket only.`);
+    throw new Error("OTC_ASSET_DETECTED"); 
   }
   return asset.replace(/\s*\(OTC\)/i, '').toUpperCase().trim();
 }
@@ -131,25 +133,26 @@ class ExternalDataService {
    * Never throws — returns [] only if the asset is completely unknown.
    */
   async getExternalCandles(asset: string, tf: Timeframe, limit = 100): Promise<Candle[]> {
-    // ⚠️ BLOCK EXTERNAL API FOR OTC ASSETS
-    if (asset.toUpperCase().includes("OTC")) {
-      console.log(`[ExternalData] Asset "${asset}" is OTC — blocking external API call.`);
+    try {
+      const key = normalize(asset);
+
+      if (CRYPTO_MAP[key]) {
+        return this.getCryptoCandles(CRYPTO_MAP[key], tf, limit);
+      }
+
+      if (FOREX_MAP[key]) {
+        const { base, quote } = FOREX_MAP[key];
+        return this.getForexCandles(base, quote, tf, limit);
+      }
+
+      console.log(`[ExternalData] No mapping for "${asset}"`);
       return [];
+    } catch (err) {
+      if (err instanceof Error && err.message === "OTC_ASSET_DETECTED") {
+        return []; // Silently fallback to WebSocket for OTC
+      }
+      throw err;
     }
-
-    const key = normalize(asset);
-
-    if (CRYPTO_MAP[key]) {
-      return this.getCryptoCandles(CRYPTO_MAP[key], tf, limit);
-    }
-
-    if (FOREX_MAP[key]) {
-      const { base, quote } = FOREX_MAP[key];
-      return this.getForexCandles(base, quote, tf, limit);
-    }
-
-    console.log(`[ExternalData] No mapping for "${asset}"`);
-    return [];
   }
 
   // ─── Crypto via Binance REST ──────────────────────────────────────────────
@@ -308,17 +311,22 @@ class ExternalDataService {
   }
 
   /**
-   * Fetch real OHLCV candles from Twelve Data (free plan, no API key for basic usage).
+   * Fetch real OHLCV candles from Twelve Data using an API key.
    * Supports forex, crypto, stocks. Returns [] on failure.
    */
   private async getTwelveDataCandles(symbol: string, tf: Timeframe, limit: number): Promise<Candle[]> {
+    // MISSION 1: API KEY VALIDATION
+    if (!TWELVE_DATA_API_KEY) {
+      console.error("[ExternalData] CRITICAL: TWELVE_DATA_API_KEY is missing in .env");
+      return [];
+    }
+
     const cacheKey = `twelvedata:${symbol}:${tf}`;
     const hit = this.candleCache.get(cacheKey);
     if (hit && Date.now() - hit.fetchedAt < CANDLE_CACHE_MS) return hit.candles;
 
     const interval = this.twelveDataInterval(tf);
-    // Twelve Data free endpoint — no key needed for up to 8 req/min
-    const url = `${TWELVE_DATA_BASE}/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${limit}&format=JSON`;
+    const url = `${TWELVE_DATA_BASE}/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${limit}&apikey=${TWELVE_DATA_API_KEY}&format=JSON`;
 
     try {
       console.log(`[ExternalData] Twelve Data → ${symbol} (${interval})`);
