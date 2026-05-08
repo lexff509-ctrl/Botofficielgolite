@@ -133,9 +133,9 @@ class ExternalDataService {
    * Never throws — returns [] only if the asset is completely unknown.
    */
   async getExternalCandles(asset: string, tf: Timeframe, limit = 100): Promise<Candle[]> {
-    // ACTION 2: COUPE-CIRCUIT OTC
+    // ACTION 2: COUPE-CIRCUIT OTC (LOG RENFORCÉ)
     if (asset.toUpperCase().includes('OTC')) {
-      console.log(`[ExternalData] OTC detected for ${asset} — Bypassing external APIs.`);
+      console.log(`[ExternalData] 🚀 BYPASS OTC : ${asset} détecté. Utilisation exclusive du WebSocket PO.`);
       return []; // Return empty to force fallback to Pocket Option WebSocket data
     }
 

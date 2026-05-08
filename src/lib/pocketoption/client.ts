@@ -339,6 +339,9 @@ export class PocketOptionClient {
           wsHeaders["Cookie"] = this.prefetchedCookies.join("; ");
         }
 
+        // DEBUG HEADERS (ACTION REQUÉRUE)
+        console.log("[PO] Headers utilisés pour la connexion :", JSON.stringify(wsHeaders, null, 2));
+
         this.ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
           handshakeTimeout: 10000,
