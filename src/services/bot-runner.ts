@@ -543,6 +543,11 @@ export class BotRunner {
     // === 4. Indicator Engine & Signal Generator ===
     // Engine ALWAYS returns BUY or SELL — never WAIT
     const strategy = evaluateBollingerStochSignal(analysisCandles);
+    
+    // Extract probability from reason string if possible, or use confidence
+    const probaMatch = strategy.reason.match(/Probabilité: (\d+)%/);
+    const probaValue = probaMatch ? parseInt(probaMatch[1]) : (strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 75 : 45);
+
     console.log(`[BotRunner] Signal: ${strategy.signal} (${strategy.confidence}) — ${strategy.reason}`);
 
     // Prepare Signal Object
@@ -575,7 +580,7 @@ export class BotRunner {
       
       // Internal/Legacy fields for compatibility
       direction: strategy.signal === "BUY" ? "CALL" : "PUT",
-      confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 45,
+      confidence_score: probaValue,
       indicators: {
         rsi: calculateRSI(analysisCandles.map(c => c.close)),
         macd: calculateMACD(analysisCandles.map(c => c.close)).macd,

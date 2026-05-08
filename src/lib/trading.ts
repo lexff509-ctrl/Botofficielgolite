@@ -225,49 +225,79 @@ export function evaluateBollingerStochSignal(
   else if (rsi > 55) rsiScore = -0.5;
   else               rsiScore = (50 - rsi) / 100;
 
-  // 4 ─ EMA Trend (9 vs 20)
+  // 4 ─ EMA Trend (9 vs 20) — CRITICAL WEIGHT
   const ema9  = calculateEMA(closes, 9);
   const ema20 = calculateEMA(closes, Math.min(20, n));
-  const emaTrendScore = ema9 > ema20 ? 0.5 : -0.5;
+  const trendDir = ema9 > ema20 ? 1 : -1;
+  const emaTrendScore = trendDir * 1.5; // High weight: +1.5 or -1.5
 
   // 5 ─ Price momentum (last 3 closes)
   const recentCloses = closes.slice(-4);
   const momentumUp = recentCloses[3] > recentCloses[0];
-  const momentumScore = momentumUp ? 0.3 : -0.3;
+  const momentumScore = momentumUp ? 0.5 : -0.5;
 
   // ─── Weighted composite score ───────────────────────────────────────────
-  // Weights: BB (30%), Stoch (25%), RSI (20%), EMA (15%), Momentum (10%)
+  // Weights (normalized later): BB (25%), Stoch (20%), RSI (15%), Trend (30%), Momentum (10%)
   const composite =
-    bbScore       * 0.30 +
-    stochScore    * 0.25 +
-    rsiScore      * 0.20 +
-    emaTrendScore * 0.15 +
+    bbScore       * 0.25 +
+    stochScore    * 0.20 +
+    rsiScore      * 0.15 +
+    emaTrendScore * 0.30 +
     momentumScore * 0.10;
 
-  // composite: -1.0 (strong sell) … +1.0 (strong buy)
+  // composite: range approx -1.5 to +1.5
+  // Final signal must align with trend unless indicators are extremely strong
   const signal: "BUY" | "SELL" = composite >= 0 ? "BUY" : "SELL";
   const absScore = Math.abs(composite);
 
+  // Confidence based on confluence (Market Probability)
+  // We want at least 3 indicators in agreement for MEDIUM, and 4+ for HIGH
+  let agreementCount = 0;
+  if (signal === "BUY") {
+    if (bbScore > 0.3) agreementCount++;
+    if (stochScore > 0.3) agreementCount++;
+    if (rsiScore > 0.3) agreementCount++;
+    if (emaTrendScore > 0) agreementCount++;
+    if (momentumScore > 0) agreementCount++;
+  } else {
+    if (bbScore < -0.3) agreementCount++;
+    if (stochScore < -0.3) agreementCount++;
+    if (rsiScore < -0.3) agreementCount++;
+    if (emaTrendScore < 0) agreementCount++;
+    if (momentumScore < 0) agreementCount++;
+  }
+
   let confidence: "HIGH" | "MEDIUM" | "LOW";
-  if      (absScore >= 0.55) confidence = "HIGH";
-  else if (absScore >= 0.30) confidence = "MEDIUM";
-  else                       confidence = "LOW";
+  if (agreementCount >= 4 && absScore >= 0.50) confidence = "HIGH";
+  else if (agreementCount >= 3 && absScore >= 0.25) confidence = "MEDIUM";
+  else confidence = "LOW";
 
   // ─── Human-readable reason ──────────────────────────────────────────────
   const parts: string[] = [];
-  if (bbScore > 0.5)       parts.push("Bollinger rebond haussier");
-  else if (bbScore < -0.5) parts.push("Bollinger rebond baissier");
-  else if (pricePosition !== "middle") parts.push(`Bollinger zone ${pricePosition === "near_lower" ? "basse" : "haute"}`);
-  if (stochScore > 0.5)   parts.push(`Stoch K=${k.toFixed(0)} en zone survente`);
-  else if (stochScore < -0.5) parts.push(`Stoch K=${k.toFixed(0)} en zone surachat`);
+  if (pricePosition === "near_lower") {
+    if (bbScore > 0.5) parts.push("Rebond Haussier (Bandes Bas)");
+    else parts.push("Zone Bollinger Basse");
+  } else if (pricePosition === "near_upper") {
+    if (bbScore < -0.5) parts.push("Rebond Baissier (Bandes Haut)");
+    else parts.push("Zone Bollinger Haute");
+  } else {
+    if (bbScore > 0.5) parts.push("Pression Acheteuse (Haut BB)");
+    else if (bbScore < -0.5) parts.push("Pression Vendeuse (Bas BB)");
+  }
+  
+  if (stochScore > 0.5)   parts.push(`Stoch K=${k.toFixed(0)} (Survente)`);
+  else if (stochScore < -0.5) parts.push(`Stoch K=${k.toFixed(0)} (Surachat)`);
+  
   if (rsi < 35)           parts.push(`RSI survendu (${rsi.toFixed(0)})`);
   else if (rsi > 65)      parts.push(`RSI surachat (${rsi.toFixed(0)})`);
-  if (ema9 > ema20)       parts.push("EMA9 > EMA20 (tendance haussière)");
-  else                    parts.push("EMA9 < EMA20 (tendance baissière)");
+  
+  if (ema9 > ema20)       parts.push("Tendance HAUSSIÈRE (EMA9 > EMA20)");
+  else                    parts.push("Tendance BAISSIÈRE (EMA9 < EMA20)");
 
+  const probaPercent = Math.min(99, Math.round((agreementCount / 5) * 100 + (absScore * 10)));
   const reason = parts.length > 0
-    ? `${signal === "BUY" ? "🟢 ACHAT" : "🔴 VENTE"} — ${parts.join(" | ")} [Score: ${composite.toFixed(2)}]`
-    : `Signal ${signal} basé sur analyse composite [Score: ${composite.toFixed(2)}]`;
+    ? `${signal === "BUY" ? "🟢 CALL (ACHAT)" : "🔴 PUT (VENTE)"} — Probabilité: ${probaPercent}% | ${parts.join(" | ")}`
+    : `Signal ${signal === "BUY" ? "CALL" : "PUT"} [Proba: ${probaPercent}%]`;
 
   const bbSignalDir: "BUY" | "SELL" | "NEUTRAL" = bbScore > 0.3 ? "BUY" : bbScore < -0.3 ? "SELL" : "NEUTRAL";
   const stochSignalDir: "BUY" | "SELL" | "NEUTRAL" = stochScore > 0.3 ? "BUY" : stochScore < -0.3 ? "SELL" : "NEUTRAL";

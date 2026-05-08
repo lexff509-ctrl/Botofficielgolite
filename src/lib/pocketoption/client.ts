@@ -132,11 +132,11 @@ export class PocketOptionClient {
   // Heartbeat
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
   private lastPongAt = Date.now();
-  private pingInterval = 25000;
+  private pingInterval = 15000; // Reduced to 15s for better stability
 
   // Reconnection
   private reconnectAttempts = 0;
-  private maxReconnectDelay = 60000;
+  private maxReconnectDelay = 30000; // Reduced to 30s
   private intentionallyClosed = false;
 
   // SSID expiration tracking
@@ -180,11 +180,12 @@ export class PocketOptionClient {
     this.lastPongAt = Date.now();
     
     this.socketIoHeartbeat = setInterval(() => {
-      if (!this.connected || !this.ws) return;
+      if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
       // Check for timeout
-      if (Date.now() - this.lastPongAt > this.pingInterval * 2) {
-        console.warn("[PO] Pong timeout, reconnecting...");
+      const elapsed = Date.now() - this.lastPongAt;
+      if (elapsed > this.pingInterval * 3) {
+        console.warn(`[PO] Pong timeout (${Math.round(elapsed/1000)}s), forcing reconnect...`);
         this.handleDisconnect();
         return;
       }
@@ -195,6 +196,7 @@ export class PocketOptionClient {
         // Also send Socket.IO keep-alive (some PO versions use 42["ps"])
         this.ws.send('42["ps"]');
       } catch (err) {
+        console.error("[PO] Failed to send heartbeat:", err);
         this.handleDisconnect();
       }
     }, this.pingInterval);

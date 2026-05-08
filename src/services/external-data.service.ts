@@ -127,6 +127,12 @@ class ExternalDataService {
    * Never throws — returns [] only if the asset is completely unknown.
    */
   async getExternalCandles(asset: string, tf: Timeframe, limit = 100): Promise<Candle[]> {
+    // ⚠️ BLOCK EXTERNAL API FOR OTC ASSETS
+    if (asset.toUpperCase().includes("OTC")) {
+      console.log(`[ExternalData] Asset "${asset}" is OTC — blocking external API call.`);
+      return [];
+    }
+
     const key = normalize(asset);
 
     if (CRYPTO_MAP[key]) {
