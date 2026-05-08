@@ -228,7 +228,7 @@ export function evaluateBollingerStochSignal(
   // 4 ─ EMA Trend (9 vs 20) — CRITICAL WEIGHT
   const ema9  = calculateEMA(closes, 9);
   const ema20 = calculateEMA(closes, Math.min(20, n));
-  const trendDir = ema9 > ema20 ? 1 : -1;
+  const trendDir = ema9 > ema20 ? 1 : -1; // 1 = Bullish, -1 = Bearish
   const emaTrendScore = trendDir * 1.5; // High weight: +1.5 or -1.5
 
   // 5 ─ Price momentum (last 3 closes)
@@ -237,7 +237,9 @@ export function evaluateBollingerStochSignal(
   const momentumScore = momentumUp ? 0.5 : -0.5;
 
   // ─── Weighted composite score ───────────────────────────────────────────
-  // Weights (normalized later): BB (25%), Stoch (20%), RSI (15%), Trend (30%), Momentum (10%)
+  // MISSION 3: CORRECT SIGNAL DIRECTION LOGIC
+  // A positive composite score MUST mean CALL (BUY)
+  // A negative composite score MUST mean PUT (SELL)
   const composite =
     bbScore       * 0.25 +
     stochScore    * 0.20 +
@@ -245,21 +247,21 @@ export function evaluateBollingerStochSignal(
     emaTrendScore * 0.30 +
     momentumScore * 0.10;
 
-  // composite: range approx -1.5 to +1.5
-  // Final signal must align with trend unless indicators are extremely strong
+  // Final signal decision
   const signal: "BUY" | "SELL" = composite >= 0 ? "BUY" : "SELL";
   const absScore = Math.abs(composite);
 
   // Confidence based on confluence (Market Probability)
-  // We want at least 3 indicators in agreement for MEDIUM, and 4+ for HIGH
   let agreementCount = 0;
   if (signal === "BUY") {
+    // Condition Haussière = CALL (BUY)
     if (bbScore > 0.3) agreementCount++;
     if (stochScore > 0.3) agreementCount++;
     if (rsiScore > 0.3) agreementCount++;
     if (emaTrendScore > 0) agreementCount++;
     if (momentumScore > 0) agreementCount++;
   } else {
+    // Condition Baissière = PUT (SELL)
     if (bbScore < -0.3) agreementCount++;
     if (stochScore < -0.3) agreementCount++;
     if (rsiScore < -0.3) agreementCount++;
