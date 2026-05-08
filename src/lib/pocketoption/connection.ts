@@ -20,7 +20,6 @@ export const HTTP_HEADERS = {
   "User-Agent": CHROME_UA,
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
-  "Accept-Encoding": "gzip, deflate, br",
   "Cache-Control": "no-cache",
   "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
   "Sec-Ch-Ua-Mobile": "?0",
@@ -204,26 +203,27 @@ export async function getBestHost(isDemo: boolean): Promise<string> {
  */
 export async function preFetchCookies(host: string): Promise<CookieResult> {
   return new Promise((resolve) => {
+    // Mission: Target main domain first as API hosts might not set full cookies
+    const targetHost = "pocketoption.com";
     const options: https.RequestOptions = {
-      hostname: host,
+      hostname: targetHost,
       path: "/",
       method: "GET",
       headers: {
         ...HTTP_HEADERS,
-        Host: host,
+        Host: targetHost,
       },
     };
 
     const req = https.get(options, (res) => {
       const setCookies = res.headers["set-cookie"] || [];
       const cookies = setCookies.map((c: string) => c.split(";")[0]);
-      const cookieHeader = cookies.join("; ");
-
-      console.log(`[PO-Cookie] Got ${cookies.length} cookies from ${host}`);
       
-      res.on("data", () => {}); // Consume data
+      console.log(`[PO-Cookie] Got ${cookies.length} cookies from ${targetHost}`);
+      
+      res.on("data", () => {}); 
       res.on("end", () => {
-        resolve({ cookies, cookieHeader });
+        resolve({ cookies, cookieHeader: cookies.join("; ") });
       });
     });
 

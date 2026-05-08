@@ -17,18 +17,33 @@ export class BollingerStochStrategy extends BaseStrategy {
     let reason = "";
 
     // Confluence Logic (Expert)
-    if (bb.signal === "BUY" && stoch.signal === "BUY") {
+    let agreementCount = 0;
+    const isBullish = bb.signal === "BUY" || stoch.signal === "BUY" || rsi.signal === "BUY";
+    const isBearish = bb.signal === "SELL" || stoch.signal === "SELL" || rsi.signal === "SELL";
+
+    if (isBullish) {
+      if (bb.signal === "BUY") agreementCount++;
+      if (stoch.signal === "BUY") agreementCount++;
+      if (rsi.signal === "BUY") agreementCount++;
+      if (rsi.value < 45) agreementCount++; // Pression acheteuse supplémentaire
+
       direction = "BUY";
-      confidence = rsi.value < 40 ? 95 : 85;
-      reason = `Bandes de Bollinger (Bas) + Stochastique (Survente) + RSI (${rsi.value.toFixed(1)})`;
-    } else if (bb.signal === "SELL" && stoch.signal === "SELL") {
+      // Probabilité réelle: 40% (base) + 15% par accord
+      confidence = Math.min(99, 40 + (agreementCount * 15));
+      reason = `Confluence HAUSSIÈRE (${agreementCount} indicateurs) | RSI: ${rsi.value.toFixed(1)}`;
+    } else if (isBearish) {
+      if (bb.signal === "SELL") agreementCount++;
+      if (stoch.signal === "SELL") agreementCount++;
+      if (rsi.signal === "SELL") agreementCount++;
+      if (rsi.value > 55) agreementCount++;
+
       direction = "SELL";
-      confidence = rsi.value > 60 ? 95 : 85;
-      reason = `Bandes de Bollinger (Haut) + Stochastique (Surachat) + RSI (${rsi.value.toFixed(1)})`;
-    } else if (bb.signal !== "WAIT" || stoch.signal !== "WAIT") {
-      direction = bb.signal !== "WAIT" ? (bb.signal as any) : (stoch.signal as any);
-      confidence = 70;
-      reason = bb.signal !== "WAIT" ? "Signal Bandes de Bollinger" : "Signal Stochastique";
+      confidence = Math.min(99, 40 + (agreementCount * 15));
+      reason = `Confluence BAISSIÈRE (${agreementCount} indicateurs) | RSI: ${rsi.value.toFixed(1)}`;
+    } else {
+      direction = "WAIT";
+      confidence = 40;
+      reason = "Marché indécis (Pas de confluence)";
     }
 
     return {

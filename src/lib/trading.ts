@@ -12,6 +12,24 @@ import {
   MACD,
   BollingerBands,
   SMA,
+  WMA,
+  TEMA,
+  CCI,
+  WilliamsR,
+  MFI,
+  OBV,
+  PSAR,
+  ROC,
+  VWAP,
+  AwesomeOscillator,
+  ChaikinMoneyFlow,
+  ADX,
+  ForceIndex,
+  TRIX,
+  KST,
+  DPO,
+  MassIndex,
+  CoppockCurve,
 } from "technicalindicators";
 
 export type Timeframe = "5s" | "10s" | "15s" | "30s" | "1m" | "3m" | "5m";
@@ -236,80 +254,134 @@ export function evaluateBollingerStochSignal(
   const momentumUp = recentCloses[3] > recentCloses[0];
   const momentumScore = momentumUp ? 0.5 : -0.5;
 
+  // ─── 20 ADDITIONAL INDICATORS (MISSION: NO NEUTRAL ZONE) ────────────────
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+  const volumes = candles.map(c => c.volume);
+  const getS = (res: any[]) => res.length > 0 ? res[res.length - 1] : 0;
+
+  const wma = getS(WMA.calculate({ period: 9, values: closes }));
+  const tema = getS(TEMA.calculate({ period: 9, values: closes }));
+  const adx = getS(ADX.calculate({ period: 14, high: highs, low: lows, close: closes }));
+  const psar = getS(PSAR.calculate({ step: 0.02, max: 0.2, high: highs, low: lows }));
+  const sma200 = getS(SMA.calculate({ period: 200, values: closes })) || currentPrice;
+  const cci = getS(CCI.calculate({ period: 20, high: highs, low: lows, close: closes }));
+  const wr = getS(WilliamsR.calculate({ period: 14, high: highs, low: lows, close: closes }));
+  const mfi = getS(MFI.calculate({ period: 14, high: highs, low: lows, close: closes, volume: volumes }));
+  const roc = getS(ROC.calculate({ period: 12, values: closes }));
+  const ao = getS(AwesomeOscillator.calculate({ fastPeriod: 5, slowPeriod: 34, high: highs, low: lows }));
+  const obv = getS(OBV.calculate({ close: closes, volume: volumes }));
+  const cmf = getS(ChaikinMoneyFlow.calculate({ period: 20, high: highs, low: lows, close: closes, volume: volumes }));
+  const fi = getS(ForceIndex.calculate({ period: 13, close: closes, volume: volumes }));
+  const vwap = getS(VWAP.calculate({ high: highs, low: lows, close: closes, volume: volumes }));
+  const trix = getS(TRIX.calculate({ period: 18, values: closes }));
+  const kst = getS(KST.calculate({ ROCW1: 10, ROCW2: 15, ROCW3: 20, ROCW4: 30, ROCS1: 10, ROCS2: 10, ROCS3: 10, ROCS4: 15, signalPeriod: 9, values: closes }));
+  const dpo = getS(DPO.calculate({ period: 21, values: closes }));
+  const mass = getS(MassIndex.calculate({ period: 25, high: highs, low: lows }));
+  const coppock = getS(CoppockCurve.calculate({ values: closes }));
+  const macdFull = getS(MACD.calculate({ fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, values: closes }));
+
+  let extraScore = 0;
+  if (currentPrice > wma) extraScore += 0.1; else extraScore -= 0.1;
+  if (currentPrice > tema) extraScore += 0.1; else extraScore -= 0.1;
+  if (adx.pdi > adx.mdi) extraScore += 0.15; else extraScore -= 0.15;
+  if (currentPrice > psar) extraScore += 0.1; else extraScore -= 0.1;
+  if (cci > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (wr < -80) extraScore += 0.1; else if (wr > -20) extraScore -= 0.1;
+  if (mfi < 20) extraScore += 0.1; else if (mfi > 80) extraScore -= 0.1;
+  if (roc > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (ao > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (cmf > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (fi > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (currentPrice > vwap) extraScore += 0.1; else extraScore -= 0.1;
+  if (trix > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (kst.kst > kst.signal) extraScore += 0.1; else extraScore -= 0.1;
+  if (dpo > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (mass > 27) extraScore -= 0.1; 
+  if (coppock > 0) extraScore += 0.1; else extraScore -= 0.1;
+  if (macdFull.histogram > 0) extraScore += 0.15; else extraScore -= 0.15;
+  if (currentPrice > sma200) extraScore += 0.2; else extraScore -= 0.2; 
+  if (closes[n-1] > closes[n-2]) extraScore += 0.1; else extraScore -= 0.1;
+
   // ─── Weighted composite score ───────────────────────────────────────────
   const composite =
-    bbScore       * 0.25 +
-    stochScore    * 0.20 +
-    rsiScore      * 0.15 +
-    emaTrendScore * 0.30 +
-    momentumScore * 0.10;
+    bbScore       * 0.20 +
+    stochScore    * 0.15 +
+    rsiScore      * 0.10 +
+    emaTrendScore * 0.25 +
+    momentumScore * 0.05 +
+    extraScore    * 0.25;
 
   // RE-CALCUL DIRECTION LOGIC (ACTION 1)
-  // Logic: 
-  // If Composite > 0.15 => BUY
-  // If Composite < -0.15 => SELL
-  // Otherwise, fallback to EMA Trend
+  // ABSOLUTELY NO NEUTRAL ZONE: Even a 0.0001 bias triggers a signal
   let signal: "BUY" | "SELL";
-  if (composite > 0.15) {
+  if (composite >= 0) {
     signal = "BUY";
-  } else if (composite < -0.15) {
-    signal = "SELL";
   } else {
-    // Neutral zone: follow the trend
-    signal = ema9 > ema20 ? "BUY" : "SELL";
+    signal = "SELL";
   }
   
   const absScore = Math.abs(composite);
 
-  // Confidence based on confluence
+  // Confidence based on confluence (Massive 25+ points check)
   let agreementCount = 0;
   if (signal === "BUY") {
     if (bbScore > 0.3) agreementCount++;
     if (stochScore > 0.3) agreementCount++;
     if (rsiScore > 0.3) agreementCount++;
     if (ema9 > ema20) agreementCount++;
-    if (momentumScore > 0) agreementCount++;
+    if (currentPrice > wma) agreementCount++;
+    if (currentPrice > tema) agreementCount++;
+    if (adx.pdi > adx.mdi) agreementCount++;
+    if (currentPrice > psar) agreementCount++;
+    if (cci > 0) agreementCount++;
+    if (wr < -50) agreementCount++;
+    if (mfi < 50) agreementCount++;
+    if (roc > 0) agreementCount++;
+    if (ao > 0) agreementCount++;
+    if (cmf > 0) agreementCount++;
+    if (currentPrice > vwap) agreementCount++;
+    if (macdFull.histogram > 0) agreementCount++;
   } else {
     if (bbScore < -0.3) agreementCount++;
     if (stochScore < -0.3) agreementCount++;
     if (rsiScore < -0.3) agreementCount++;
     if (ema9 < ema20) agreementCount++;
-    if (momentumScore < 0) agreementCount++;
+    if (currentPrice < wma) agreementCount++;
+    if (currentPrice < tema) agreementCount++;
+    if (adx.mdi > adx.pdi) agreementCount++;
+    if (currentPrice < psar) agreementCount++;
+    if (cci < 0) agreementCount++;
+    if (wr > -50) agreementCount++;
+    if (mfi > 50) agreementCount++;
+    if (roc < 0) agreementCount++;
+    if (ao < 0) agreementCount++;
+    if (cmf < 0) agreementCount++;
+    if (currentPrice < vwap) agreementCount++;
+    if (macdFull.histogram < 0) agreementCount++;
   }
 
+  // Adjusted confidence thresholds for 16 checked confluence points
   let confidence: "HIGH" | "MEDIUM" | "LOW";
-  if (agreementCount >= 4 && absScore >= 0.50) confidence = "HIGH";
-  else if (agreementCount >= 3 && absScore >= 0.25) confidence = "MEDIUM";
+  if (agreementCount >= 12) confidence = "HIGH";
+  else if (agreementCount >= 8) confidence = "MEDIUM";
   else confidence = "LOW";
 
   // ─── Human-readable reason ──────────────────────────────────────────────
   const parts: string[] = [];
-  if (pricePosition === "near_lower") {
-    if (bbScore > 0.5) parts.push("Rebond Haussier (Bandes Bas)");
-    else parts.push("Zone Bollinger Basse");
-  } else if (pricePosition === "near_upper") {
-    if (bbScore < -0.5) parts.push("Rebond Baissier (Bandes Haut)");
-    else parts.push("Zone Bollinger Haute");
-  } else {
-    if (bbScore > 0.5) parts.push("Pression Acheteuse (Haut BB)");
-    else if (bbScore < -0.5) parts.push("Pression Vendeuse (Bas BB)");
-  }
+  if (pricePosition === "near_lower") parts.push("Support Bollinger");
+  else if (pricePosition === "near_upper") parts.push("Résistance Bollinger");
   
-  if (stochScore > 0.5)   parts.push(`Stoch K=${k.toFixed(0)} (Survente)`);
-  else if (stochScore < -0.5) parts.push(`Stoch K=${k.toFixed(0)} (Surachat)`);
+  if (agreementCount > 12) parts.push(`Forte Confluence (${agreementCount}/16)`);
+  else if (agreementCount > 8) parts.push(`Confluence Modérée (${agreementCount}/16)`);
   
-  if (rsi < 35)           parts.push(`RSI survendu (${rsi.toFixed(0)})`);
-  else if (rsi > 65)      parts.push(`RSI surachat (${rsi.toFixed(0)})`);
-  
-  if (ema9 > ema20)       parts.push("Tendance HAUSSIÈRE (EMA9 > EMA20)");
-  else                    parts.push("Tendance BAISSIÈRE (EMA9 < EMA20)");
+  if (ema9 > ema20) parts.push("Trend Bull"); else parts.push("Trend Bear");
+  if (macdFull.histogram > 0) parts.push("Momentum +"); else parts.push("Momentum -");
 
-  const probaPercent = Math.min(99, Math.round((agreementCount / 5) * 100 + (absScore * 10)));
+  const probaPercent = Math.min(99, Math.round((agreementCount / 16) * 100));
   const directionLabel = signal === "BUY" ? "CALL (HAUT)" : "PUT (BAS)";
   
-  const reason = parts.length > 0
-    ? `${signal === "BUY" ? "🟢 ACHAT" : "🔴 VENTE"} — ${directionLabel} | Probabilité: ${probaPercent}% | ${parts.join(" | ")}`
-    : `Signal ${directionLabel} [Proba: ${probaPercent}%]`;
+  const reason = `${signal === "BUY" ? "🟢 ACHAT" : "🔴 VENTE"} — ${directionLabel} | Probabilité: ${probaPercent}% | ${parts.join(" | ")}`;
 
   const bbSignalDir: "BUY" | "SELL" | "NEUTRAL" = bbScore > 0.3 ? "BUY" : bbScore < -0.3 ? "SELL" : "NEUTRAL";
   const stochSignalDir: "BUY" | "SELL" | "NEUTRAL" = stochScore > 0.3 ? "BUY" : stochScore < -0.3 ? "SELL" : "NEUTRAL";

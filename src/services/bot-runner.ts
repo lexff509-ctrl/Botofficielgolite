@@ -93,6 +93,7 @@ export class BotRunner {
   private dailyProfit = 0;
   private startedAt: Date;
   private stopped = false;
+  private isReconnecting = false;
 
   // New Strategy State Management
   private lastProcessedTimestamp = 0;
@@ -405,7 +406,13 @@ export class BotRunner {
     // === Auto-Reconnect: if PO client is missing or disconnected, force reconnect ===
     let poClient = getPocketOptionClient(this.userId);
     if (!poClient || !poClient.isConnected) {
+      if (this.isReconnecting) {
+        // Déjà en train de reconnecter, on attend la fin du processus
+        return;
+      }
+
       console.warn(`[BotRunner] PocketOption not connected for user ${this.userId} — forcing reconnect...`);
+      this.isReconnecting = true;
       try {
         const { connectPocketOption, getGlobalSsid } = await import("@/services/trading.service");
         const { getUserProfile, getDecryptedSSID } = await import("@/services/auth.service");
@@ -425,13 +432,19 @@ export class BotRunner {
 
         if (!ssid) {
           console.warn(`[BotRunner] No SSID found for user ${this.userId} — cannot reconnect`);
+          this.isReconnecting = false;
         } else {
           connectPocketOption(this.userId, ssid, isDemo).then(r => {
             if (r.success) console.log(`[BotRunner] Auto-reconnect succeeded for user ${this.userId}`);
             else console.warn(`[BotRunner] Auto-reconnect failed: ${r.error}`);
-          }).catch(() => {});
+            this.isReconnecting = false;
+          }).catch(() => {
+            this.isReconnecting = false;
+          });
         }
-      } catch { /* non-blocking */ }
+      } catch { 
+        this.isReconnecting = false;
+      }
     }
 
     // Check if SSID has expired (only block if explicitly expired)
@@ -538,17 +551,14 @@ export class BotRunner {
 
     // === 4. Indicator Engine & Signal Generator ===
     // Engine ALWAYS returns BUY or SELL — never WAIT
+    // With 25+ indicators, we now have a very dense decision matrix
     const strategy = evaluateBollingerStochSignal(analysisCandles);
     
-    // Safety Filter: If probability is too low, skip this tick
+    // Extraction de la probabilité réelle (basée sur 16 points de confluence)
     const probaMatch = strategy.reason.match(/Probabilité: (\d+)%/);
     const probaValue = probaMatch ? parseInt(probaMatch[1]) : (strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 75 : 45);
 
-    if (probaValue < 55 && strategy.confidence === "LOW") {
-      console.log(`[BotRunner] Signal ignoré (Proba ${probaValue}% trop faible) pour ${this.asset}`);
-      return;
-    }
-
+    // MISSION: Toujours donner des signaux — Suppression du filtre de blocage
     console.log(`[BotRunner] Signal: ${strategy.signal} (${strategy.confidence}) — ${strategy.reason}`);
 
     // Prepare Signal Object

@@ -519,6 +519,10 @@ export class PocketOptionClient {
       const path = `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`;
       const bodyBuf = Buffer.from(body, "utf8");
 
+      // Prepare combined cookies correctly
+      const allCookies = [...this.prefetchedCookies, ...cookies];
+      const cookieHeader = allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {};
+
       const options: https.RequestOptions = {
         hostname: host,
         path,
@@ -528,8 +532,7 @@ export class PocketOptionClient {
           Host: host,
           "Content-Type": "text/plain; charset=UTF-8",
           "Content-Length": bodyBuf.length,
-          ...(cookies.length > 0 ? { Cookie: cookies.join("; ") } : {}),
-          ...(this.prefetchedCookies.length > 0 ? { Cookie: [...this.prefetchedCookies, ...cookies].join("; ") } : {}),
+          ...cookieHeader,
         },
       };
 
@@ -569,6 +572,10 @@ export class PocketOptionClient {
     return new Promise((resolve, reject) => {
       const path = `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`;
 
+      // Prepare combined cookies correctly
+      const allCookies = [...this.prefetchedCookies, ...cookies];
+      const cookieHeader = allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {};
+
       const options: https.RequestOptions = {
         hostname: host,
         path,
@@ -577,7 +584,7 @@ export class PocketOptionClient {
           ...CONN_HTTP_HEADERS,
           Host: host,
           Accept: "*/*",
-          ...(this.prefetchedCookies.length > 0 ? { Cookie: [...this.prefetchedCookies, ...cookies].join("; ") } : (cookies.length > 0 ? { Cookie: cookies.join("; ") } : {})),
+          ...cookieHeader,
         },
       };
 
