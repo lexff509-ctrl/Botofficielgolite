@@ -25,7 +25,7 @@ import { BollingerStochStrategy } from "@/strategies/bollinger-stoch.strategy";
 import { getPocketOptionClient, executeTrade } from "@/services/trading.service";
 import { hasActiveSubscription } from "@/services/payment.service";
 
-import { signalTracker } from "@/services/signal-tracker";
+import { DataOrchestrator, NonOtcSignalGenerator } from "@/services/data-orchestrator.service";
 
 // ============ CONFIG ============
 
@@ -457,29 +457,24 @@ export class BotRunner {
       return;
     }
 
-    // === 2. Data & Candle Manager: Get candles from cache or external API ===
-    const isOTC = this.asset.toUpperCase().includes("(OTC)");
+    // === 2. Data & Candle Manager: External-First Architecture ===
+    const isOTC = this.asset.toUpperCase().includes("OTC") || this.asset.toLowerCase().includes("_otc");
     let candles: Candle[] = [];
     const sizeSeconds = this.timeframeToSeconds();
 
     if (!isOTC) {
-      // Always try Binance first for real (non-OTC) assets
-      candles = await externalDataService.getExternalCandles(this.asset, this.timeframe, 100);
-      if (candles.length > 0) {
-        // Sync to PO cache for consistency
-        candleCache.seedCandles(this.asset, sizeSeconds, candles.map(c => ({
-          ...c,
-          asset: this.asset
-        })));
-        console.log(`[BotRunner] Non-OTC: Got ${candles.length} candles from Binance for ${this.asset}`);
+      // MISSION 2: Analyse stable via sources externes fiables
+      console.log(`[BotRunner] Mode External-First pour ${this.asset}. Analyse en cours...`);
+      const externalSignal = await NonOtcSignalGenerator.generateSignal(this.asset, this.timeframe);
+      
+      if (externalSignal) {
+        candles = externalSignal.candles;
+        console.log(`[BotRunner] Signal externe validé pour ${this.asset} [${externalSignal.signal}]`);
       } else {
-        // Binance failed: fallback to PO cache if it has data
+        console.warn(`[BotRunner] Échec de la récupération des données externes pour ${this.asset}. Tentative PO...`);
         candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
-        console.warn(`[BotRunner] Binance unavailable, using PO cache (${candles.length} candles) for ${this.asset}`);
       }
-    }
-
-    if (candles.length === 0) {
+    } else {
       // OTC: mandatory PO cache
       candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
     }
@@ -643,7 +638,17 @@ export class BotRunner {
 
     // === 5. Trade Execution & State Management ===
     if (this.botType === "auto") {
-      if (!poClient || !poClient.isConnected) return;
+      // MISSION 3: Vérification/Reconnexion Pocket Option AVANT le trade
+      if (!poClient || !poClient.isConnected) {
+        console.warn(`[BotRunner] Signal prêt mais PO déconnecté. Tentative de reconnexion express pour ${this.asset}...`);
+        await this.reconnectExpress();
+        poClient = getPocketOptionClient(this.userId);
+      }
+
+      if (!poClient || !poClient.isConnected) {
+        console.error(`[BotRunner] Impossible de placer le trade : PO reste déconnecté.`);
+        return;
+      }
 
       // Check confidence threshold before executing
       const threshold = this.confidenceMode === "high" ? HIGH_CONFIDENCE_THRESHOLD : AUTO_TRADE_CONFIDENCE_THRESHOLD;
@@ -825,6 +830,26 @@ export class BotRunner {
     } catch (err) {
       console.error(`[BotRunner] Trade execution failed:`, err);
       return null;
+    }
+  }
+
+  private async reconnectExpress(): Promise<void> {
+    try {
+      const { connectPocketOption, getGlobalSsid } = await import("@/services/trading.service");
+      const { getUserProfile, getDecryptedSSID } = await import("@/services/auth.service");
+      const isDemo = this.mode === "DEMO";
+
+      let ssid = "";
+      const profile = await getUserProfile(this.userId);
+      if (profile?.pocketOptionSsid) ssid = getDecryptedSSID(profile);
+      if (!ssid) ssid = await getGlobalSsid();
+
+      if (ssid) {
+        console.log(`[BotRunner] Tentative de reconnexion express pour ${this.asset}...`);
+        await connectPocketOption(this.userId, ssid, isDemo);
+      }
+    } catch (err) {
+      console.error(`[BotRunner] Échec reconnexion express:`, err);
     }
   }
 
