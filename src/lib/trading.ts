@@ -245,15 +245,18 @@ export function evaluateBollingerStochSignal(
     momentumScore * 0.10;
 
   // RE-CALCUL DIRECTION LOGIC (ACTION 1)
-  // Tendance Haussière (ema9 > ema20) + Survente (rsiScore > 0) = BUY (CALL)
-  // Tendance Baissière (ema9 < ema20) + Surachat (rsiScore < 0) = SELL (PUT)
+  // Logic: 
+  // If Composite > 0.15 => BUY
+  // If Composite < -0.15 => SELL
+  // Otherwise, fallback to EMA Trend
   let signal: "BUY" | "SELL";
-  if (ema9 > ema20) {
-    // Dans une tendance haussière, on cherche des achats sur replis (survente)
-    signal = composite >= -0.2 ? "BUY" : "SELL";
+  if (composite > 0.15) {
+    signal = "BUY";
+  } else if (composite < -0.15) {
+    signal = "SELL";
   } else {
-    // Dans une tendance baissière, on cherche des ventes sur rebonds (surachat)
-    signal = composite <= 0.2 ? "SELL" : "BUY";
+    // Neutral zone: follow the trend
+    signal = ema9 > ema20 ? "BUY" : "SELL";
   }
   
   const absScore = Math.abs(composite);
