@@ -3,7 +3,7 @@ import { getUserFromRequest, handleApiError } from "@/lib/auth";
 import { hasActiveSubscription, createPaymentRequest, getPayments, getWalletAddress, MONCASH_PLANS, MONCASH_INFO, reviewPayment } from "@/services/payment.service";
 import { db } from "@/db";
 import { promoCodes, promoCodeUsage } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 
 // Never expose wallet to frontend - only get payment info
 export async function GET(req: NextRequest) {
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
 
     if (validPromoId) {
       // Increment uses
-      await db.update(promoCodes).set({ currentUses: db.raw(`current_uses + 1`) }).where(eq(promoCodes.id, validPromoId));
+      await db.update(promoCodes).set({ currentUses: sql`${promoCodes.currentUses} + 1` }).where(eq(promoCodes.id, validPromoId));
       await db.insert(promoCodeUsage).values({ promoCodeId: validPromoId, userId: payload.userId });
     }
 
