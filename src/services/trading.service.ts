@@ -3,15 +3,13 @@ import { signals, trades, users, platformSettings } from "@/db/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import {
   generateSignal,
-  evaluateBollingerStochSignal,
-  calculateRSI,
-  calculateMACD,
   calculateEMA,
   type Timeframe,
   type Signal,
   type Candle,
   TIMEFRAMES,
 } from "@/lib/trading";
+import { AdvancedStrategyEngine } from "@/core/AdvancedStrategyEngine";
 import { candleCache } from "@/lib/candle-cache";
 import { getDecryptedSSID } from "@/services/auth.service";
 import { encryptSSID, decryptSSID as decryptAuthSSID } from "@/lib/auth";
@@ -108,10 +106,16 @@ export async function generateAndSaveSignal(
     return { signal: null, saved: null, error: `Connexion en cours pour ${selectedAsset}. Le signal arrivera dans quelques secondes.` };
   }
 
-  // evaluateBollingerStochSignal ALWAYS returns BUY or SELL
-  const strategy = evaluateBollingerStochSignal(candles);
+  const strategy = isOTC 
+    ? AdvancedStrategyEngine.evaluateOtc(candles, selectedTimeframe as Timeframe)
+    : AdvancedStrategyEngine.evaluateNonOtc(candles, selectedTimeframe as Timeframe, true);
 
   const lastCandle = candles[candles.length - 1];
+  
+  // Dummy data for legacy fields to avoid breaking the frontend
+  const dummyBollinger = { signal: "NEUTRAL" as any, upper: strategy.metrics.bb?.upper || 0, middle: strategy.metrics.bb?.middle || 0, lower: strategy.metrics.bb?.lower || 0, price_position: "neutral" };
+  const dummyStoch = { signal: "NEUTRAL" as any, k: strategy.metrics.stochData?.k || 50, d: strategy.metrics.stochData?.d || 50 };
+
   const signalObj: Signal = {
     signal: strategy.signal,
     confidence: strategy.confidence,
@@ -119,53 +123,41 @@ export async function generateAndSaveSignal(
     timestamp: new Date().toISOString().replace("T", " ").split(".")[0],
     price_current: lastCandle.close,
     asset: selectedAsset,
-    bollinger: {
-      signal: strategy.bollinger.signal,
-      upper: strategy.bollinger.upper,
-      middle: strategy.bollinger.middle,
-      lower: strategy.bollinger.lower,
-      price_position: strategy.bollinger.price_position,
-    },
-    stochastic: {
-      signal: strategy.stochastic.signal,
-      k_value: strategy.stochastic.k,
-      d_value: strategy.stochastic.d,
-      zone: strategy.stochastic.k < 30 ? "oversold" : strategy.stochastic.k > 70 ? "overbought" : "neutral",
-      crossover: strategy.stochastic.signal !== "NEUTRAL",
-    },
+    bollinger: dummyBollinger as any,
+    stochastic: dummyStoch as any,
     reason: strategy.reason,
     action: strategy.confidence === "HIGH" ? "ENTRER MAINTENANT" : strategy.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
     direction: strategy.signal === "BUY" ? "CALL" : "PUT",
     confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 45,
     indicators: {
-      rsi: calculateRSI(candles.map(c => c.close)),
-      macd: calculateMACD(candles.map(c => c.close)).macd,
-      ema9: calculateEMA(candles.map(c => c.close), 9),
-      bollingerUpper: strategy.bollinger.upper,
-      bollingerMiddle: strategy.bollinger.middle,
-      bollingerLower: strategy.bollinger.lower,
-      stochastic: strategy.stochastic.k,
-      stochasticSignal: strategy.stochastic.d,
-      ema20: strategy.bollinger.middle,
-      ema50: calculateEMA(candles.map(c => c.close), 50),
-      stochK: strategy.stochastic.k,
-      stochD: strategy.stochastic.d,
+      rsi: strategy.metrics.rsi || 50,
+      macd: strategy.metrics.macdData?.MACD || 0,
+      ema9: strategy.metrics.ema || 0,
+      bollingerUpper: strategy.metrics.bb?.upper || 0,
+      bollingerMiddle: strategy.metrics.bb?.middle || 0,
+      bollingerLower: strategy.metrics.bb?.lower || 0,
+      stochastic: strategy.metrics.stochData?.k || 50,
+      stochasticSignal: strategy.metrics.stochData?.d || 50,
+      ema20: strategy.metrics.bb?.middle || 0,
+      ema50: strategy.metrics.sma || 0,
+      stochK: strategy.metrics.stochData?.k || 50,
+      stochD: strategy.metrics.stochData?.d || 50,
       lowFractal: false,
       highFractal: false,
       dojiRejected: false,
-      atr: 0,
+      atr: strategy.metrics.atr || 0,
       bollingerPercentB: 0,
       bollingerWidth: 0,
       supportLevel: 0,
       resistanceLevel: 0,
-      nearSupport: strategy.bollinger.price_position === "near_lower",
-      nearResistance: strategy.bollinger.price_position === "near_upper",
+      nearSupport: false,
+      nearResistance: false,
       marketStructure: "NEUTRAL",
       structureBreak: "NONE",
-      signalScore: strategy.confidence === "HIGH" ? 1.0 : 0.5,
+      signalScore: strategy.score,
       indicatorScores: {
-        bollinger: strategy.bollinger.signal !== "NEUTRAL" ? 1 : 0,
-        stochastic: strategy.stochastic.signal !== "NEUTRAL" ? 1 : 0,
+        bollinger: 0,
+        stochastic: 0,
       },
     },
     multiTimeframeConfirmation: {},

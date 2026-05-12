@@ -707,10 +707,11 @@ export class PocketOptionClient {
     // Socket.IO CONNECT ACK: "40{sid:...}"
     if (message.startsWith("40")) {
       console.log("[PO] Socket.IO CONNECT ACK received, sending auth...");
-      // Auto-wrap SSID if it's just the token
-      const authMessage = this.ssid.startsWith('42["auth"')
-        ? this.ssid
-        : `42["auth","${this.ssid}"]`;
+      // Auto-wrap SSID
+      let authMessage = this.ssid;
+      if (!this.ssid.startsWith('42["auth"')) {
+        authMessage = `42["auth",{"session":"${this.ssid}","isDemo":${this.isDemo ? 1 : 0},"uid":0,"platform":2,"isFastHistory":true,"isOptimized":true}]`;
+      }
       this.ws?.send(authMessage);
       return;
     }

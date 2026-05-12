@@ -188,10 +188,18 @@ export class AdvancedStrategyEngine {
     let signal: "BUY" | "SELL" | "WAIT" = "WAIT";
     let confidence: "HIGH" | "MEDIUM" | "LOW" = "LOW";
 
-    if (proba >= 70) {
-      signal = buyPoints > sellPoints ? "BUY" : "SELL";
-      confidence = proba >= 85 ? "HIGH" : "MEDIUM";
+    if (buyPoints > sellPoints) {
+      signal = "BUY";
+    } else if (sellPoints > buyPoints) {
+      signal = "SELL";
+    } else {
+      // Tie breaker using EMA trend
+      signal = currentPrice > ema ? "BUY" : "SELL";
     }
+
+    if (proba >= 80) confidence = "HIGH";
+    else if (proba >= 60) confidence = "MEDIUM";
+    else confidence = "LOW";
 
     const directionLabel = signal === "BUY" ? "CALL (HAUT)" : "PUT (BAS)";
     const strategyName = isMicroScalping ? "⚡ MICRO-REVERSAL ENGINE" : "🟢 MACRO TREND ENGINE";
@@ -246,18 +254,32 @@ export class AdvancedStrategyEngine {
     
     // Strict neutral zone rejection for OTC
     if (rsi > 45 && rsi < 55) {
-      return { signal: "WAIT", confidence: "LOW", score: 0, reason: "🟡 OTC Choppy Zone (Fakeouts probables)", isReversal: false, metrics: {} };
+      // Choppy zone reduces confidence, but we still pick a side
+      buyScore += currentPrice > ema9 ? 0.5 : 0;
+      sellScore += currentPrice < ema9 ? 0.5 : 0;
     }
 
     const total = buyScore + sellScore;
     const proba = Math.round((Math.max(buyScore, sellScore) / (total || 1)) * 100);
 
     let signal: "BUY" | "SELL" | "WAIT" = "WAIT";
-    if (proba >= 70) signal = buyScore > sellScore ? "BUY" : "SELL";
+    
+    if (buyScore > sellScore) {
+      signal = "BUY";
+    } else if (sellScore > buyScore) {
+      signal = "SELL";
+    } else {
+      signal = currentPrice > ema9 ? "BUY" : "SELL";
+    }
+
+    let confidence: "HIGH" | "MEDIUM" | "LOW" = "LOW";
+    if (proba >= 80) confidence = "HIGH";
+    else if (proba >= 60) confidence = "MEDIUM";
+    else confidence = "LOW";
 
     return {
       signal,
-      confidence: proba > 80 ? "HIGH" : "MEDIUM",
+      confidence,
       score: proba,
       reason: signal !== "WAIT" ? `🔥 OTC ENGINE — ${signal} | Prob: ${proba}%` : "🟡 WAIT OTC",
       isReversal: false,

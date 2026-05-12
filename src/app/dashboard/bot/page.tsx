@@ -386,6 +386,7 @@ export default function BotPage() {
                   onClick={() => {
                     setMarketType("REAL");
                     setAsset("EUR/USD");
+                    if (!["1m", "3m", "5m"].includes(timeframe)) setTimeframe("1m");
                   }}
                   disabled={isRunning}
                   className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all border-2 ${
@@ -471,7 +472,7 @@ export default function BotPage() {
                 disabled={isRunning}
                 className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50"
               >
-                {TIMEFRAMES.map((tf) => (
+                {TIMEFRAMES.filter(tf => marketType === "OTC" || ["1m", "3m", "5m"].includes(tf.value)).map((tf) => (
                   <option key={tf.value} value={tf.value} className="bg-slate-900">{tf.label}</option>
                 ))}
               </select>

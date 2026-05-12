@@ -177,6 +177,7 @@ export default function SignalsPage() {
                   onClick={() => {
                     setMarketType("REAL");
                     setAsset("EUR/USD");
+                    if (!["1m", "3m", "5m"].includes(timeframe)) setTimeframe("1m");
                   }}
                   disabled={generating}
                   className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
@@ -229,7 +230,7 @@ export default function SignalsPage() {
               <div>
                 <label className="block text-slate-500 text-[10px] font-black uppercase tracking-widest mb-3 ml-1">Unité de Temps</label>
                 <div className="grid grid-cols-4 gap-2">
-                  {TIMEFRAMES.map((tf) => (
+                  {TIMEFRAMES.filter(tf => marketType === "OTC" || ["1m", "3m", "5m"].includes(tf)).map((tf) => (
                     <button
                       key={tf}
                       onClick={() => setTimeframe(tf)}
