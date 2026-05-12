@@ -168,7 +168,7 @@ export class PocketOptionClient {
       if (sessionToken && !this.prefetchedCookies.some(c => c.includes("PHPSESSID"))) {
         this.prefetchedCookies.push(`PHPSESSID=${sessionToken}`);
       }
-    } catch(err) {
+    } catch (err) {
       // Ignore parse errors
     }
   }
@@ -179,14 +179,14 @@ export class PocketOptionClient {
     if (this.socketIoHeartbeat) clearInterval(this.socketIoHeartbeat);
     this.lastPongAt = Date.now();
     let tickCounter = 0;
-    
+
     this.socketIoHeartbeat = setInterval(() => {
       if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
       // Check for timeout
       const elapsed = Date.now() - this.lastPongAt;
       if (elapsed > 40000) { // 40s max without pong
-        console.warn(`[PO] Pong timeout (${Math.round(elapsed/1000)}s), forcing reconnect...`);
+        console.warn(`[PO] Pong timeout (${Math.round(elapsed / 1000)}s), forcing reconnect...`);
         this.handleDisconnect();
         return;
       }
@@ -195,11 +195,11 @@ export class PocketOptionClient {
       try {
         // Send Engine.IO ping
         this.ws.send("2");
-        
+
         // Send Socket.IO keep-alive (essential for PO stability)
         // Sending too frequently causes 1-min drops. Send every 20s.
         if (tickCounter % 2 === 0) {
-           this.ws.send('42["ps"]');
+          this.ws.send('42["ps"]');
         }
         tickCounter++;
       } catch (err) {
@@ -708,8 +708,8 @@ export class PocketOptionClient {
     if (message.startsWith("40")) {
       console.log("[PO] Socket.IO CONNECT ACK received, sending auth...");
       // Auto-wrap SSID if it's just the token
-      const authMessage = this.ssid.startsWith('42["auth"') 
-        ? this.ssid 
+      const authMessage = this.ssid.startsWith('42["auth"')
+        ? this.ssid
         : `42["auth","${this.ssid}"]`;
       this.ws?.send(authMessage);
       return;
@@ -728,7 +728,7 @@ export class PocketOptionClient {
             this.intentionallyClosed = true;
             this.authenticated = false;
             this.onSsidExpiredCallbacks.forEach((cb) => {
-              try { cb(); } catch {}
+              try { cb(); } catch { }
             });
             if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
             if (this.upgradeReject) this.upgradeReject(new Error("NotAuthorized: SSID invalide"));
@@ -739,7 +739,7 @@ export class PocketOptionClient {
           // Handle other Socket.IO events inline
           this.handleSocketIOEvent(eventName, data[1]);
         }
-      } catch {}
+      } catch { }
       return;
     }
 
@@ -860,10 +860,10 @@ export class PocketOptionClient {
       this.connectionTimeout = null;
     }
     this.cleanup();
-    
+
     // Explicitly terminate socket to avoid lingering connections
     if (this.ws) {
-      try { this.ws.terminate(); } catch {}
+      try { this.ws.terminate(); } catch { }
       this.ws = null;
     }
 
@@ -905,7 +905,7 @@ export class PocketOptionClient {
       // First try to parse as regular UTF-8 JSON (PocketOption often wraps JSON in binary)
       const raw = buffer.toString("utf8");
       let message: unknown;
-      
+
       // If it's a binary attachment (not raw JSON), it might be msgpack or similar
       // but PocketOption usually uses JSON even in binary frames
       try {
@@ -1051,8 +1051,8 @@ export class PocketOptionClient {
 
       if (
         (typeof message === "object" &&
-        message !== null &&
-        "requestId" in (message as Record<string, unknown>))
+          message !== null &&
+          "requestId" in (message as Record<string, unknown>))
       ) {
         this.orderData = message as Record<string, unknown>;
         return;
@@ -1224,7 +1224,7 @@ export class PocketOptionClient {
   ): void {
     const poAsset = PocketOptionClient.toPOSymbol(asset);
     console.log(`[PO] Sending openOrder: ${poAsset} $${amount} ${action} (demo=${isDemo}, time=${time})`);
-    
+
     // Ensure data types are correct for the PocketOption protocol
     const orderData = {
       asset: poAsset,
@@ -1445,9 +1445,9 @@ export class PocketOptionClient {
       releaseMutex = resolve;
     });
     const prevMutex = this.tradeMutex;
-    this.tradeMutex = this.tradeMutex.catch(() => {}).then(() => mutexPromise);
+    this.tradeMutex = this.tradeMutex.catch(() => { }).then(() => mutexPromise);
 
-    await prevMutex.catch(() => {});
+    await prevMutex.catch(() => { });
 
     try {
       // Reset all trade state before placing
@@ -1620,7 +1620,7 @@ export class PocketOptionClient {
   private emitCandle(asset: string, candle: CandleData): void {
     const listeners = this.candleListeners.get(asset) || [];
     for (const listener of listeners) {
-      try { listener(candle); } catch {}
+      try { listener(candle); } catch { }
     }
   }
 
@@ -1647,7 +1647,7 @@ export class PocketOptionClient {
     try {
       const match = this.ssid.match(/"isDemo"\s*:\s*(\d)/);
       if (match) return match[1] === "1";
-    } catch {}
+    } catch { }
     return true;
   }
 }

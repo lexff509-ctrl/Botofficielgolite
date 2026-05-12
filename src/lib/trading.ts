@@ -269,80 +269,65 @@ export function evaluateBollingerStochSignal(
   const trix = getS(TRIX.calculate({ period: 18, values: closes }));
   const macdFull = getS(MACD.calculate({ fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, values: closes, SimpleMAOscillator: false, SimpleMASignal: false }));
 
-  let extraScore = 0;
-  if (currentPrice > wma) extraScore += 0.1; else extraScore -= 0.1;
-  if (adx.pdi > adx.mdi) extraScore += 0.15; else extraScore -= 0.15;
-  if (currentPrice > psar) extraScore += 0.1; else extraScore -= 0.1;
-  if (cci > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (wr < -80) extraScore += 0.1; else if (wr > -20) extraScore -= 0.1;
-  if (mfi < 20) extraScore += 0.1; else if (mfi > 80) extraScore -= 0.1;
-  if (roc > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (ao > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (fi > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (currentPrice > vwap) extraScore += 0.1; else extraScore -= 0.1;
-  if (trix > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (macdFull.histogram > 0) extraScore += 0.15; else extraScore -= 0.15;
-  if (currentPrice > sma200) extraScore += 0.2; else extraScore -= 0.2; 
-  if (closes[n-1] > closes[n-2]) extraScore += 0.1; else extraScore -= 0.1;
+  const sma50Period = Math.min(50, n);
+  const sma50 = closes.slice(-sma50Period).reduce((a, b) => a + b, 0) / sma50Period;
 
-  // ─── Weighted composite score ───────────────────────────────────────────
-  const composite =
-    bbScore       * 0.20 +
-    stochScore    * 0.15 +
-    rsiScore      * 0.10 +
-    emaTrendScore * 0.25 +
-    momentumScore * 0.05 +
-    extraScore    * 0.25;
+  let bullishPoints = 0;
+  let bearishPoints = 0;
 
-  // RE-CALCUL DIRECTION LOGIC (ACTION 1)
-  // ABSOLUTELY NO NEUTRAL ZONE: Even a 0.0001 bias triggers a signal
-  let signal: "BUY" | "SELL";
-  if (composite >= 0) {
-    signal = "BUY";
-  } else {
-    signal = "SELL";
-  }
-  
-  const absScore = Math.abs(composite);
+  const check = (buyCond: boolean, sellCond: boolean) => {
+    if (buyCond) bullishPoints++;
+    else if (sellCond) bearishPoints++;
+  };
 
-  // Confidence based on confluence (Massive 25+ points check)
-  let agreementCount = 0;
-  if (signal === "BUY") {
-    if (bbScore > 0.3) agreementCount++;
-    if (stochScore > 0.3) agreementCount++;
-    if (rsiScore > 0.3) agreementCount++;
-    if (ema9 > ema20) agreementCount++;
-    if (currentPrice > wma) agreementCount++;
-    if (adx.pdi > adx.mdi) agreementCount++;
-    if (currentPrice > psar) agreementCount++;
-    if (cci > 0) agreementCount++;
-    if (wr < -50) agreementCount++;
-    if (mfi < 50) agreementCount++;
-    if (roc > 0) agreementCount++;
-    if (ao > 0) agreementCount++;
-    if (currentPrice > vwap) agreementCount++;
-    if (macdFull.histogram > 0) agreementCount++;
-  } else {
-    if (bbScore < -0.3) agreementCount++;
-    if (stochScore < -0.3) agreementCount++;
-    if (rsiScore < -0.3) agreementCount++;
-    if (ema9 < ema20) agreementCount++;
-    if (currentPrice < wma) agreementCount++;
-    if (adx.mdi > adx.pdi) agreementCount++;
-    if (currentPrice < psar) agreementCount++;
-    if (cci < 0) agreementCount++;
-    if (wr > -50) agreementCount++;
-    if (mfi > 50) agreementCount++;
-    if (roc < 0) agreementCount++;
-    if (ao < 0) agreementCount++;
-    if (currentPrice < vwap) agreementCount++;
-    if (macdFull.histogram < 0) agreementCount++;
-  }
+  // 1-10: Trend & Price Action
+  check(currentPrice > ema9, currentPrice < ema9);
+  check(currentPrice > ema20, currentPrice < ema20);
+  check(ema9 > ema20, ema9 < ema20);
+  check(currentPrice > sma50, currentPrice < sma50);
+  check(currentPrice > prevPrice, currentPrice < prevPrice);
+  check(prevPrice > closes[n - 3], prevPrice < closes[n - 3]);
+  check(curCandle.close > curCandle.open, curCandle.close < curCandle.open);
+  check(prevCandle.close > prevCandle.open, prevCandle.close < prevCandle.open);
+  check(highs[n - 1] > highs[n - 2], highs[n - 1] < highs[n - 2]);
+  check(lows[n - 1] > lows[n - 2], lows[n - 1] < lows[n - 2]);
 
-  // Adjusted confidence thresholds for 14 checked confluence points
+  // 11-20: Momentum & Oscillators
+  check(rsi > 50, rsi < 50);
+  check(k > d, k < d);
+  check(k > 50, k < 50);
+  check(bb.percentB > 0.5, bb.percentB < 0.5);
+  check(macdFull.histogram > 0, macdFull.histogram < 0);
+  check(macdFull.macd > (macdFull.signal || 0), macdFull.macd < (macdFull.signal || 0));
+  check(cci > 0, cci < 0);
+  check(wr > -50, wr < -50);
+  check(ao > 0, ao < 0);
+  check(roc > 0, roc < 0);
+
+  // 21-30: Volume, Volatility & Advanced
+  check(wma > 0 && currentPrice > wma, wma > 0 && currentPrice < wma);
+  check(adx && adx.pdi > adx.mdi, adx && adx.pdi < adx.mdi);
+  check(psar > 0 && currentPrice > psar, psar > 0 && currentPrice < psar);
+  check(mfi > 50, mfi < 50);
+  check(fi > 0, fi < 0);
+  check(vwap > 0 && currentPrice > vwap, vwap > 0 && currentPrice < vwap);
+  check(trix > 0, trix < 0);
+  check(currentPrice > (highs[n - 1] + lows[n - 1]) / 2, currentPrice < (highs[n - 1] + lows[n - 1]) / 2);
+  check(volumes[n - 1] > volumes[n - 2] && curCandle.close > curCandle.open, volumes[n - 1] > volumes[n - 2] && curCandle.close < curCandle.open);
+  check(currentPrice > bb.middle, currentPrice < bb.middle);
+
+  // ABSOLUTELY NO NEUTRAL ZONE
+  let signal: "BUY" | "SELL" = "BUY";
+  if (bullishPoints > bearishPoints) signal = "BUY";
+  else if (bearishPoints > bullishPoints) signal = "SELL";
+  else signal = currentPrice > ema9 ? "BUY" : "SELL";
+
+  const totalEvaluated = bullishPoints + bearishPoints;
+  const probaPercent = Math.min(99, Math.round((Math.max(bullishPoints, bearishPoints) / (totalEvaluated || 1)) * 100));
+
   let confidence: "HIGH" | "MEDIUM" | "LOW";
-  if (agreementCount >= 10) confidence = "HIGH";
-  else if (agreementCount >= 7) confidence = "MEDIUM";
+  if (probaPercent >= 75) confidence = "HIGH";
+  else if (probaPercent >= 60) confidence = "MEDIUM";
   else confidence = "LOW";
 
   // ─── Human-readable reason ──────────────────────────────────────────────
@@ -350,13 +335,13 @@ export function evaluateBollingerStochSignal(
   if (pricePosition === "near_lower") parts.push("Support Bollinger");
   else if (pricePosition === "near_upper") parts.push("Résistance Bollinger");
   
-  if (agreementCount >= 10) parts.push(`Forte Confluence (${agreementCount}/14)`);
-  else if (agreementCount >= 7) parts.push(`Confluence Modérée (${agreementCount}/14)`);
+  if (probaPercent >= 75) parts.push(`Forte Confluence (${Math.max(bullishPoints, bearishPoints)}/30)`);
+  else if (probaPercent >= 60) parts.push(`Confluence Modérée (${Math.max(bullishPoints, bearishPoints)}/30)`);
+  else parts.push(`Confluence Faible (${Math.max(bullishPoints, bearishPoints)}/30)`);
   
   if (ema9 > ema20) parts.push("Trend Bull"); else parts.push("Trend Bear");
   if (macdFull.histogram > 0) parts.push("Momentum +"); else parts.push("Momentum -");
 
-  const probaPercent = Math.min(99, Math.round((agreementCount / 14) * 100));
   const directionLabel = signal === "BUY" ? "CALL (HAUT)" : "PUT (BAS)";
   
   const reason = `${signal === "BUY" ? "🟢 ACHAT" : "🔴 VENTE"} — ${directionLabel} | Probabilité: ${probaPercent}% | ${parts.join(" | ")}`;
