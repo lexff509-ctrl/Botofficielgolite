@@ -60,7 +60,7 @@ export class SignalEngine {
             signalScore: confidence / 100,
             diagnostic,
             action,
-            isValid: direction !== "WAIT"
+            isValid: true
         };
     }
 }

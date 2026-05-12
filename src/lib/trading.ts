@@ -13,7 +13,6 @@ import {
   BollingerBands,
   SMA,
   WMA,
-  TEMA,
   CCI,
   WilliamsR,
   MFI,
@@ -22,14 +21,9 @@ import {
   ROC,
   VWAP,
   AwesomeOscillator,
-  ChaikinMoneyFlow,
   ADX,
   ForceIndex,
   TRIX,
-  KST,
-  DPO,
-  MassIndex,
-  CoppockCurve,
 } from "technicalindicators";
 
 export type Timeframe = "5s" | "10s" | "15s" | "30s" | "1m" | "3m" | "5m";
@@ -261,7 +255,6 @@ export function evaluateBollingerStochSignal(
   const getS = (res: any[]) => res.length > 0 ? res[res.length - 1] : 0;
 
   const wma = getS(WMA.calculate({ period: 9, values: closes }));
-  const tema = getS(TEMA.calculate({ period: 9, values: closes }));
   const adx = getS(ADX.calculate({ period: 14, high: highs, low: lows, close: closes }));
   const psar = getS(PSAR.calculate({ step: 0.02, max: 0.2, high: highs, low: lows }));
   const sma200 = getS(SMA.calculate({ period: 200, values: closes })) || currentPrice;
@@ -271,19 +264,13 @@ export function evaluateBollingerStochSignal(
   const roc = getS(ROC.calculate({ period: 12, values: closes }));
   const ao = getS(AwesomeOscillator.calculate({ fastPeriod: 5, slowPeriod: 34, high: highs, low: lows }));
   const obv = getS(OBV.calculate({ close: closes, volume: volumes }));
-  const cmf = getS(ChaikinMoneyFlow.calculate({ period: 20, high: highs, low: lows, close: closes, volume: volumes }));
   const fi = getS(ForceIndex.calculate({ period: 13, close: closes, volume: volumes }));
   const vwap = getS(VWAP.calculate({ high: highs, low: lows, close: closes, volume: volumes }));
   const trix = getS(TRIX.calculate({ period: 18, values: closes }));
-  const kst = getS(KST.calculate({ ROCW1: 10, ROCW2: 15, ROCW3: 20, ROCW4: 30, ROCS1: 10, ROCS2: 10, ROCS3: 10, ROCS4: 15, signalPeriod: 9, values: closes }));
-  const dpo = getS(DPO.calculate({ period: 21, values: closes }));
-  const mass = getS(MassIndex.calculate({ period: 25, high: highs, low: lows }));
-  const coppock = getS(CoppockCurve.calculate({ values: closes }));
-  const macdFull = getS(MACD.calculate({ fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, values: closes }));
+  const macdFull = getS(MACD.calculate({ fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, values: closes, SimpleMAOscillator: false, SimpleMASignal: false }));
 
   let extraScore = 0;
   if (currentPrice > wma) extraScore += 0.1; else extraScore -= 0.1;
-  if (currentPrice > tema) extraScore += 0.1; else extraScore -= 0.1;
   if (adx.pdi > adx.mdi) extraScore += 0.15; else extraScore -= 0.15;
   if (currentPrice > psar) extraScore += 0.1; else extraScore -= 0.1;
   if (cci > 0) extraScore += 0.1; else extraScore -= 0.1;
@@ -291,14 +278,9 @@ export function evaluateBollingerStochSignal(
   if (mfi < 20) extraScore += 0.1; else if (mfi > 80) extraScore -= 0.1;
   if (roc > 0) extraScore += 0.1; else extraScore -= 0.1;
   if (ao > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (cmf > 0) extraScore += 0.1; else extraScore -= 0.1;
   if (fi > 0) extraScore += 0.1; else extraScore -= 0.1;
   if (currentPrice > vwap) extraScore += 0.1; else extraScore -= 0.1;
   if (trix > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (kst.kst > kst.signal) extraScore += 0.1; else extraScore -= 0.1;
-  if (dpo > 0) extraScore += 0.1; else extraScore -= 0.1;
-  if (mass > 27) extraScore -= 0.1; 
-  if (coppock > 0) extraScore += 0.1; else extraScore -= 0.1;
   if (macdFull.histogram > 0) extraScore += 0.15; else extraScore -= 0.15;
   if (currentPrice > sma200) extraScore += 0.2; else extraScore -= 0.2; 
   if (closes[n-1] > closes[n-2]) extraScore += 0.1; else extraScore -= 0.1;
@@ -331,7 +313,6 @@ export function evaluateBollingerStochSignal(
     if (rsiScore > 0.3) agreementCount++;
     if (ema9 > ema20) agreementCount++;
     if (currentPrice > wma) agreementCount++;
-    if (currentPrice > tema) agreementCount++;
     if (adx.pdi > adx.mdi) agreementCount++;
     if (currentPrice > psar) agreementCount++;
     if (cci > 0) agreementCount++;
@@ -339,7 +320,6 @@ export function evaluateBollingerStochSignal(
     if (mfi < 50) agreementCount++;
     if (roc > 0) agreementCount++;
     if (ao > 0) agreementCount++;
-    if (cmf > 0) agreementCount++;
     if (currentPrice > vwap) agreementCount++;
     if (macdFull.histogram > 0) agreementCount++;
   } else {
@@ -348,7 +328,6 @@ export function evaluateBollingerStochSignal(
     if (rsiScore < -0.3) agreementCount++;
     if (ema9 < ema20) agreementCount++;
     if (currentPrice < wma) agreementCount++;
-    if (currentPrice < tema) agreementCount++;
     if (adx.mdi > adx.pdi) agreementCount++;
     if (currentPrice < psar) agreementCount++;
     if (cci < 0) agreementCount++;
@@ -356,15 +335,14 @@ export function evaluateBollingerStochSignal(
     if (mfi > 50) agreementCount++;
     if (roc < 0) agreementCount++;
     if (ao < 0) agreementCount++;
-    if (cmf < 0) agreementCount++;
     if (currentPrice < vwap) agreementCount++;
     if (macdFull.histogram < 0) agreementCount++;
   }
 
-  // Adjusted confidence thresholds for 16 checked confluence points
+  // Adjusted confidence thresholds for 14 checked confluence points
   let confidence: "HIGH" | "MEDIUM" | "LOW";
-  if (agreementCount >= 12) confidence = "HIGH";
-  else if (agreementCount >= 8) confidence = "MEDIUM";
+  if (agreementCount >= 10) confidence = "HIGH";
+  else if (agreementCount >= 7) confidence = "MEDIUM";
   else confidence = "LOW";
 
   // ─── Human-readable reason ──────────────────────────────────────────────
@@ -372,13 +350,13 @@ export function evaluateBollingerStochSignal(
   if (pricePosition === "near_lower") parts.push("Support Bollinger");
   else if (pricePosition === "near_upper") parts.push("Résistance Bollinger");
   
-  if (agreementCount > 12) parts.push(`Forte Confluence (${agreementCount}/16)`);
-  else if (agreementCount > 8) parts.push(`Confluence Modérée (${agreementCount}/16)`);
+  if (agreementCount >= 10) parts.push(`Forte Confluence (${agreementCount}/14)`);
+  else if (agreementCount >= 7) parts.push(`Confluence Modérée (${agreementCount}/14)`);
   
   if (ema9 > ema20) parts.push("Trend Bull"); else parts.push("Trend Bear");
   if (macdFull.histogram > 0) parts.push("Momentum +"); else parts.push("Momentum -");
 
-  const probaPercent = Math.min(99, Math.round((agreementCount / 16) * 100));
+  const probaPercent = Math.min(99, Math.round((agreementCount / 14) * 100));
   const directionLabel = signal === "BUY" ? "CALL (HAUT)" : "PUT (BAS)";
   
   const reason = `${signal === "BUY" ? "🟢 ACHAT" : "🔴 VENTE"} — ${directionLabel} | Probabilité: ${probaPercent}% | ${parts.join(" | ")}`;
