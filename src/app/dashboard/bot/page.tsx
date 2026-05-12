@@ -97,6 +97,7 @@ export default function BotPage() {
   const [ssid, setSsid] = useState("");
   const [user, setUser] = useState<Record<string, unknown> | null>(null);
   const [botType, setBotType] = useState<"signal" | "auto">("signal");
+  const [marketType, setMarketType] = useState<"REAL" | "OTC">("REAL");
   const [asset, setAsset] = useState("EUR/USD");
   const [timeframe, setTimeframe] = useState("1m");
   const [tradeAmount, setTradeAmount] = useState<number | "">(1);
@@ -173,7 +174,7 @@ export default function BotPage() {
     return () => clearInterval(interval);
   }, [activeSession, fetchSessions]);
 
-  const handleBotAction = async (action: "START" | "STOP" | "RESET_COMPOUND") => {
+  const handleBotAction = async (action: "START" | "STOP" | "RESET_COMPOUND" | "CLEAR_HISTORY") => {
     setLoading(true);
     setError("");
     setSuccess("");
@@ -221,6 +222,9 @@ export default function BotPage() {
           setSuccess(`Bot demarre avec succes!${ssidSource}`);
         } else if (action === "RESET_COMPOUND") {
           setSuccess("Interet compose reinitialise!");
+        } else if (action === "CLEAR_HISTORY") {
+          setSuccess("Historique supprimé.");
+          setSessions([]);
         } else {
           setSuccess("Bot arrete.");
         }
@@ -374,6 +378,41 @@ export default function BotPage() {
         <div className="glass-card rounded-xl p-5">
           <div className="text-slate-400 text-xs font-medium mb-4">CONFIGURATION</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Market Type Selector */}
+            <div className="col-span-1 md:col-span-2 mb-2">
+              <label className="block text-slate-400 text-xs mb-1.5">Type de Marché</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setMarketType("REAL");
+                    setAsset("EUR/USD");
+                  }}
+                  disabled={isRunning}
+                  className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all border-2 ${
+                    marketType === "REAL"
+                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  } disabled:opacity-50`}
+                >
+                  🟢 Marché Réel (Binance/Forex)
+                </button>
+                <button
+                  onClick={() => {
+                    setMarketType("OTC");
+                    setAsset("EUR/USD (OTC)");
+                  }}
+                  disabled={isRunning}
+                  className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all border-2 ${
+                    marketType === "OTC"
+                      ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  } disabled:opacity-50`}
+                >
+                  🔥 Marché OTC (PocketOption)
+                </button>
+              </div>
+            </div>
+
             {/* Asset */}
             <div>
               <label className="block text-slate-400 text-xs mb-1.5">Actif</label>
@@ -384,28 +423,31 @@ export default function BotPage() {
                   disabled={isRunning}
                   className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition-colors text-sm disabled:opacity-50 appearance-none pr-10"
                 >
-                  <optgroup label="Marché Régulier" className="bg-slate-900">
-                    {REGULAR_ASSETS.map((a) => {
-                      const poSymbol = a.replace("/", "").replace(" (OTC)", "_otc");
-                      const payout = poAssets[poSymbol]?.payout;
-                      return (
-                        <option key={a} value={a} className="bg-slate-900">
-                          {a} {payout ? `(${Math.round(payout * 100)}%)` : ""}
-                        </option>
-                      );
-                    })}
-                  </optgroup>
-                  <optgroup label="Marché OTC" className="bg-slate-900">
-                    {OTC_ASSETS.map((a) => {
-                      const poSymbol = a.replace("/", "").replace(" (OTC)", "_otc");
-                      const payout = poAssets[poSymbol]?.payout;
-                      return (
-                        <option key={a} value={a} className="bg-slate-900">
-                          {a} {payout ? `(${Math.round(payout * 100)}%)` : ""}
-                        </option>
-                      );
-                    })}
-                  </optgroup>
+                  {marketType === "REAL" ? (
+                    <optgroup label="Marché Réel" className="bg-slate-900">
+                      {REGULAR_ASSETS.map((a) => {
+                        const poSymbol = a.replace("/", "").replace(" (OTC)", "_otc");
+                        const payout = poAssets[poSymbol]?.payout;
+                        return (
+                          <option key={a} value={a} className="bg-slate-900">
+                            {a} {payout ? `(${Math.round(payout * 100)}%)` : ""}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  ) : (
+                    <optgroup label="Marché OTC" className="bg-slate-900">
+                      {OTC_ASSETS.map((a) => {
+                        const poSymbol = a.replace("/", "").replace(" (OTC)", "_otc");
+                        const payout = poAssets[poSymbol]?.payout;
+                        return (
+                          <option key={a} value={a} className="bg-slate-900">
+                            {a} {payout ? `(${Math.round(payout * 100)}%)` : ""}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  )}
                 </select>
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none flex items-center gap-2">
                    {runnerStatus?.running && (
@@ -780,8 +822,15 @@ export default function BotPage() {
 
         {/* Session History */}
         <div className="glass-card rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-slate-800">
+          <div className="p-4 border-b border-slate-800 flex justify-between items-center">
             <div className="font-semibold text-white">Historique des Sessions</div>
+            <button
+              onClick={() => handleBotAction("CLEAR_HISTORY")}
+              disabled={loading || sessions.length === 0}
+              className="text-xs bg-red-500/10 hover:bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg border border-red-500/30 transition-all disabled:opacity-50"
+            >
+              Vider l'historique
+            </button>
           </div>
           {sessions.length === 0 ? (
             <div className="p-12 text-center text-slate-500">

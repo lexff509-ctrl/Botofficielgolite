@@ -142,6 +142,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // ============ CLEAR_HISTORY ACTION ============
+    if (action === "CLEAR_HISTORY") {
+      await db.delete(botSessions).where(eq(botSessions.userId, payload.userId));
+      
+      // Also delete trades if requested (optional, but requested by user)
+      // await db.delete(trades).where(eq(trades.userId, payload.userId)); 
+
+      return NextResponse.json({ success: true, action: "HISTORY_CLEARED" });
+    }
+
     // ============ START ACTION ============
     if (action === "START") {
       // Validate timeframe

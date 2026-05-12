@@ -8,7 +8,6 @@ import { botSessions, signals, trades, users } from "@/db/schema";
 import { eq, desc, and, gte } from "drizzle-orm";
 import {
   generateSignal,
-  evaluateBollingerStochSignal,
   calculateRSI,
   calculateEMA,
   calculateMACD,
@@ -17,6 +16,7 @@ import {
   type Candle,
   TIMEFRAMES,
 } from "@/lib/trading";
+import { AdvancedStrategyEngine } from "../core/AdvancedStrategyEngine";
 import { candleCache } from "@/lib/candle-cache";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { externalDataService } from "@/services/external-data.service";
@@ -551,15 +551,20 @@ export class BotRunner {
 
     // === 4. Indicator Engine & Signal Generator ===
     // Engine ALWAYS returns BUY or SELL — never WAIT
-    // With 25+ indicators, we now have a very dense decision matrix
-    const strategy = evaluateBollingerStochSignal(analysisCandles);
+    // Engine ALWAYS returns BUY, SELL or WAIT
+    const isOtc = this.asset.toUpperCase().includes("OTC");
+    const strategy = isOtc ? AdvancedStrategyEngine.evaluateOtc(analysisCandles, this.timeframe) : AdvancedStrategyEngine.evaluateNonOtc(analysisCandles, this.timeframe, !isOtc);
     
-    // Extraction de la probabilité réelle (basée sur 16 points de confluence)
-    const probaMatch = strategy.reason.match(/Probabilité: (\d+)%/);
-    const probaValue = probaMatch ? parseInt(probaMatch[1]) : (strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 75 : 45);
+    // Extraction de la probabilité réelle
+    const probaValue = strategy.score;
 
-    // MISSION: Toujours donner des signaux — Suppression du filtre de blocage
+    // Log the generated signal
     console.log(`[BotRunner] Signal: ${strategy.signal} (${strategy.confidence}) — ${strategy.reason}`);
+
+    // If signal is WAIT, do not execute
+    if (strategy.signal === "WAIT") {
+      return;
+    }
 
     // Prepare Signal Object
     const signal: Signal = {
@@ -571,18 +576,18 @@ export class BotRunner {
       asset: this.asset,
       
       bollinger: {
-        signal: strategy.bollinger.signal,
-        upper: strategy.bollinger.upper,
-        middle: strategy.bollinger.middle,
-        lower: strategy.bollinger.lower,
-        price_position: strategy.bollinger.price_position
+        signal: strategy.signal,
+        upper: lastClosedCandle.close, // Fallback for legacy format
+        middle: lastClosedCandle.close,
+        lower: lastClosedCandle.close,
+        price_position: "middle"
       },
 
       stochastic: {
-        signal: strategy.stochastic.signal,
-        k_value: strategy.stochastic.k,
-        d_value: strategy.stochastic.d,
-        zone: strategy.stochastic.k < 20 ? "oversold" : strategy.stochastic.k > 80 ? "overbought" : "neutral",
+        signal: strategy.signal,
+        k_value: 50,
+        d_value: 50,
+        zone: "neutral",
         crossover: strategy.stochastic.signal !== "NEUTRAL"
       },
 

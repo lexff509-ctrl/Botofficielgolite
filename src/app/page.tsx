@@ -328,8 +328,8 @@ export default function HomePage() {
               },
               {
                 title: "3 Mois",
-                price: "280",
-                period: "USDT (Économisez 20$)",
+                price: "125",
+                period: "USDT (Économisez 25$)",
                 features: ["Tout du plan 1 mois", "Priorité support", "Analyses avancées"],
                 cta: "Meilleur rapport",
                 featured: true,
@@ -337,8 +337,8 @@ export default function HomePage() {
               },
               {
                 title: "1 An",
-                price: "1250",
-                period: "USDT (Économisez 350$)",
+                price: "580",
+                period: "USDT (Économisez 20$)",
                 features: ["Tout inclus", "Backtesting illimité", "Support prioritaire"],
                 cta: "Économisez max",
                 featured: false,

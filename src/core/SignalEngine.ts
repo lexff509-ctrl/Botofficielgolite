@@ -3,7 +3,7 @@ import { Signal, Timeframe } from '../types/Signal';
 import { calculateBollingerBands } from '../indicators/BollingerBands';
 import { calculateStochasticOscillator } from '../indicators/Stochastic';
 import { calculateRSIIndicator } from '../indicators/RSI';
-import { evaluateBollingerStochSignal } from '../lib/trading';
+import { AdvancedStrategyEngine } from './AdvancedStrategyEngine';
 
 export class SignalEngine {
     private candleBuffer: Map<string, Candle[]> = new Map();
@@ -22,28 +22,30 @@ export class SignalEngine {
         const stoch = calculateStochasticOscillator(candles);
         const rsi = calculateRSIIndicator(closes);
 
-        // 2. Confluence Logic using the 20-indicator engine
-        const advancedEval = evaluateBollingerStochSignal(candles);
+        // Determine if asset is OTC (PocketOption usually appends _OTC)
+        const isOtc = asset.toUpperCase().includes("OTC");
+        const isBinance = !isOtc; // Simplified: If not OTC, we treat it as Binance/External for the strict reversal rules
+
+        // 2. Confluence Logic using the Advanced Strategy Engine
+        const advancedEval = isOtc 
+          ? AdvancedStrategyEngine.evaluateOtc(candles, timeframe)
+          : AdvancedStrategyEngine.evaluateNonOtc(candles, timeframe, isBinance);
 
         const direction = advancedEval.signal;
         const confidenceLabel = advancedEval.confidence;
         const diagnostic = advancedEval.reason;
-
-        // Map confidence label to numerical score
-        let confidence = 50;
-        if (confidenceLabel === "HIGH") confidence = 95;
-        else if (confidenceLabel === "MEDIUM") confidence = 75;
-        else confidence = 55;
+        const confidence = advancedEval.score;
 
         // Re-adjust BB and Stoch signals based on advanced evaluation
-        if (advancedEval.bollinger.signal !== "NEUTRAL") {
-            bb.signal = advancedEval.bollinger.signal;
-        }
-        if (advancedEval.stochastic.signal !== "NEUTRAL") {
-            stoch.signal = advancedEval.stochastic.signal as any;
+        if (direction === "BUY") {
+            bb.signal = "BUY";
+            stoch.signal = "BUY" as any;
+        } else if (direction === "SELL") {
+            bb.signal = "SELL";
+            stoch.signal = "SELL" as any;
         }
 
-        const action = confidence >= 90 ? "ENTRER MAINTENANT" : confidence >= 70 ? "ATTENDRE" : "ÉVITER";
+        const action = confidence >= 85 ? "ENTRER MAINTENANT" : confidence >= 70 ? "ATTENDRE" : "ÉVITER";
 
         return {
             id: `sig_${Date.now()}`,

@@ -45,6 +45,7 @@ export default function SignalsPage() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [marketType, setMarketType] = useState<"REAL" | "OTC">("OTC");
   const [asset, setAsset] = useState("EUR/USD (OTC)");
   const [timeframe, setTimeframe] = useState("1m");
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -170,6 +171,38 @@ export default function SignalsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-6">
             <div className="glass-card rounded-3xl p-6 border-white/5 space-y-4">
+              {/* Market Type Selector */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setMarketType("REAL");
+                    setAsset("EUR/USD");
+                  }}
+                  disabled={generating}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
+                    marketType === "REAL"
+                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  } disabled:opacity-50`}
+                >
+                  🟢 Réel
+                </button>
+                <button
+                  onClick={() => {
+                    setMarketType("OTC");
+                    setAsset("EUR/USD (OTC)");
+                  }}
+                  disabled={generating}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
+                    marketType === "OTC"
+                      ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
+                      : "border-slate-700 text-slate-400 hover:border-slate-600"
+                  } disabled:opacity-50`}
+                >
+                  🔥 OTC
+                </button>
+              </div>
+
               <div>
                 <label className="block text-slate-500 text-[10px] font-black uppercase tracking-widest mb-3 ml-1">Configuration de l'Actif</label>
                 <select
@@ -177,16 +210,19 @@ export default function SignalsPage() {
                   onChange={(e) => setAsset(e.target.value)}
                   className="w-full bg-[#0a0f1e] border border-white/10 rounded-2xl px-5 py-4 text-white text-sm focus:outline-none focus:border-cyan-500 transition-all font-black"
                 >
-                  <optgroup label="Marché Régulier" className="bg-slate-900">
-                    {REGULAR_ASSETS.map((a) => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Marché OTC" className="bg-slate-900">
-                    {OTC_ASSETS.map((a) => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </optgroup>
+                  {marketType === "REAL" ? (
+                    <optgroup label="Marché Réel" className="bg-slate-900">
+                      {REGULAR_ASSETS.map((a) => (
+                        <option key={a} value={a}>{a}</option>
+                      ))}
+                    </optgroup>
+                  ) : (
+                    <optgroup label="Marché OTC" className="bg-slate-900">
+                      {OTC_ASSETS.map((a) => (
+                        <option key={a} value={a}>{a}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
               
