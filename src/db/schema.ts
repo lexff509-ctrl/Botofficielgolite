@@ -221,3 +221,24 @@ export const platformSettings = pgTable("platform_settings", {
   value: text("value").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// Promo Codes
+export const promoCodes = pgTable("promo_codes", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 50 }).notNull().unique(),
+  discountPercent: integer("discount_percent").notNull(), // e.g. 100 for 100% free
+  maxUses: integer("max_uses"), // null means unlimited
+  currentUses: integer("current_uses").default(0).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  expiresAt: timestamp("expires_at"),
+  createdBy: integer("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Promo Code Usage (track who used what to prevent multi-use if needed)
+export const promoCodeUsage = pgTable("promo_code_usage", {
+  id: serial("id").primaryKey(),
+  promoCodeId: integer("promo_code_id").references(() => promoCodes.id).notNull(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  usedAt: timestamp("used_at").defaultNow().notNull(),
+});

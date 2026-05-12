@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest, handleApiError } from "@/lib/auth";
-import { hasActiveSubscription, createPaymentRequest, getPayments, getWalletAddress, MONCASH_PLANS, MONCASH_INFO } from "@/services/payment.service";
+import { hasActiveSubscription, createPaymentRequest, getPayments, getWalletAddress, MONCASH_PLANS, MONCASH_INFO, reviewPayment } from "@/services/payment.service";
+import { db } from "@/db";
+import { promoCodes, promoCodeUsage } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 
 // Never expose wallet to frontend - only get payment info
 export async function GET(req: NextRequest) {
@@ -36,32 +39,63 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { amount, planMonths, txHash, proofFilePath, currency, moncashSenderPhone, moncashValidationName } = body;
+    const { amount, planMonths, txHash, proofFilePath, currency, moncashSenderPhone, moncashValidationName, promoCode } = body;
 
-    if (!amount || parseFloat(amount) <= 0) {
+    let appliedAmount = parseFloat(amount);
+    let isAutoApprove = false;
+    let validPromoId: number | null = null;
+
+    // Check Promo Code if provided
+    if (promoCode) {
+      const [promo] = await db.select().from(promoCodes).where(and(eq(promoCodes.code, promoCode.toUpperCase()), eq(promoCodes.isActive, true)));
+      if (promo) {
+        if (promo.maxUses === null || promo.currentUses < promo.maxUses) {
+          validPromoId = promo.id;
+          if (promo.discountPercent >= 100) {
+            isAutoApprove = true;
+            appliedAmount = 0; // Free
+          } else {
+            appliedAmount = appliedAmount * (1 - promo.discountPercent / 100);
+          }
+        }
+      }
+    }
+
+    if (!isAutoApprove && appliedAmount <= 0) {
       return NextResponse.json({ error: "Montant invalide" }, { status: 400 });
     }
 
     // For USDT: require txHash or proof
     // For MonCash: require sender phone
     const isMoncash = currency === "MONCASH";
-    if (!isMoncash && !txHash && !proofFilePath) {
+    if (!isAutoApprove && !isMoncash && !txHash && !proofFilePath) {
       return NextResponse.json({ error: "Hash de transaction ou preuve image requis" }, { status: 400 });
     }
-    if (isMoncash && !moncashSenderPhone) {
+    if (!isAutoApprove && isMoncash && !moncashSenderPhone) {
       return NextResponse.json({ error: "Numéro de téléphone MonCash requis" }, { status: 400 });
     }
 
     const payment = await createPaymentRequest(
       payload.userId,
-      parseFloat(amount),
+      appliedAmount,
       planMonths || 1,
-      txHash || "",
+      txHash || (isAutoApprove ? "PROMO_CODE_100%" : ""),
       proofFilePath,
       currency || "USDT",
       isMoncash ? moncashSenderPhone : undefined,
       isMoncash ? moncashValidationName : undefined,
     );
+
+    if (validPromoId) {
+      // Increment uses
+      await db.update(promoCodes).set({ currentUses: db.raw(`current_uses + 1`) }).where(eq(promoCodes.id, validPromoId));
+      await db.insert(promoCodeUsage).values({ promoCodeId: validPromoId, userId: payload.userId });
+    }
+
+    if (isAutoApprove) {
+      await reviewPayment(payload.userId, payment.id, "APPROVED", `Auto-approuvé via code promo: ${promoCode}`);
+      return NextResponse.json({ success: true, payment, autoApproved: true });
+    }
 
     return NextResponse.json({ success: true, payment });
   } catch (error) {

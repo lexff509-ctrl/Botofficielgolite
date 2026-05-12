@@ -11,12 +11,38 @@ interface SettingsData {
   payoutRate: number;
 }
 
+interface PromoCode {
+  id: number;
+  code: string;
+  discountPercent: number;
+  maxUses: number | null;
+  currentUses: number;
+  isActive: boolean;
+  createdAt: string;
+}
+
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [ssidInput, setSsidInput] = useState("");
   const [payoutRate, setPayoutRate] = useState(92);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Promo Code State
+  const [promos, setPromos] = useState<PromoCode[]>([]);
+  const [newPromoCode, setNewPromoCode] = useState("");
+  const [newPromoDiscount, setNewPromoDiscount] = useState(100);
+  const [newPromoMaxUses, setNewPromoMaxUses] = useState<number | "">("");
+
+  const fetchPromos = async () => {
+    try {
+      const res = await fetch("/api/admin/promos");
+      const data = await res.json();
+      if (res.ok && data.promos) {
+        setPromos(data.promos);
+      }
+    } catch {}
+  };
 
   const fetchSettings = async () => {
     try {
@@ -31,6 +57,7 @@ export default function AdminSettingsPage() {
 
   useEffect(() => {
     fetchSettings();
+    fetchPromos();
   }, []);
 
   const handleSetSsid = async () => {
@@ -96,6 +123,51 @@ export default function AdminSettingsPage() {
       }
     } catch {
       setMessage({ type: "error", text: "Erreur de connexion" });
+    }
+    setLoading(false);
+  };
+
+  const handleCreatePromo = async () => {
+    if (!newPromoCode) return;
+    setLoading(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/admin/promos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: newPromoCode,
+          discountPercent: newPromoDiscount,
+          maxUses: newPromoMaxUses === "" ? null : newPromoMaxUses
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({ type: "success", text: "Code promo créé" });
+        setNewPromoCode("");
+        setNewPromoDiscount(100);
+        setNewPromoMaxUses("");
+        fetchPromos();
+      } else {
+        setMessage({ type: "error", text: data.error || "Erreur" });
+      }
+    } catch {
+      setMessage({ type: "error", text: "Erreur de connexion" });
+    }
+    setLoading(false);
+  };
+
+  const handleDeletePromo = async (id: number) => {
+    if (!confirm("Voulez-vous vraiment désactiver ce code promo ?")) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/promos?id=${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setMessage({ type: "success", text: "Code promo désactivé" });
+        fetchPromos();
+      }
+    } catch {
+      setMessage({ type: "error", text: "Erreur" });
     }
     setLoading(false);
   };
@@ -231,6 +303,99 @@ export default function AdminSettingsPage() {
               Sauvegarder
             </button>
           </div>
+        </div>
+
+        {/* Promo Codes Management */}
+        <div className="glass-card rounded-xl p-5">
+          <div className="text-slate-400 text-xs font-medium mb-4">CODES PROMO</div>
+          
+          <div className="bg-white/5 rounded-xl p-4 mb-4 grid grid-cols-4 gap-3 items-end">
+            <div className="col-span-1">
+              <label className="block text-slate-400 text-xs mb-1.5">Code</label>
+              <input
+                type="text"
+                value={newPromoCode}
+                onChange={(e) => setNewPromoCode(e.target.value.toUpperCase())}
+                placeholder="FREE100"
+                className="w-full bg-black/20 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm uppercase"
+              />
+            </div>
+            <div className="col-span-1">
+              <label className="block text-slate-400 text-xs mb-1.5">Réduction %</label>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={newPromoDiscount}
+                onChange={(e) => setNewPromoDiscount(parseInt(e.target.value) || 100)}
+                className="w-full bg-black/20 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm"
+              />
+            </div>
+            <div className="col-span-1">
+              <label className="block text-slate-400 text-xs mb-1.5">Max Utilisations</label>
+              <input
+                type="number"
+                min="1"
+                value={newPromoMaxUses}
+                onChange={(e) => setNewPromoMaxUses(e.target.value === "" ? "" : parseInt(e.target.value))}
+                placeholder="Illimité"
+                className="w-full bg-black/20 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm"
+              />
+            </div>
+            <div className="col-span-1">
+              <button
+                onClick={handleCreatePromo}
+                disabled={loading || !newPromoCode}
+                className="w-full bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30 px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50"
+              >
+                Créer
+              </button>
+            </div>
+          </div>
+
+          {promos.length > 0 && (
+            <div className="border border-slate-700 rounded-xl overflow-hidden">
+              <table className="w-full text-left text-sm text-slate-300">
+                <thead className="bg-slate-800/50 text-xs uppercase text-slate-400">
+                  <tr>
+                    <th className="px-4 py-3">Code</th>
+                    <th className="px-4 py-3">Réduction</th>
+                    <th className="px-4 py-3">Utilisations</th>
+                    <th className="px-4 py-3">Statut</th>
+                    <th className="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {promos.map((promo) => (
+                    <tr key={promo.id} className="bg-white/5">
+                      <td className="px-4 py-3 font-mono font-bold text-cyan-400">{promo.code}</td>
+                      <td className="px-4 py-3 text-emerald-400">-{promo.discountPercent}%</td>
+                      <td className="px-4 py-3">
+                        {promo.currentUses} / {promo.maxUses === null ? "∞" : promo.maxUses}
+                      </td>
+                      <td className="px-4 py-3">
+                        {promo.isActive ? (
+                          <span className="bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-xs">Actif</span>
+                        ) : (
+                          <span className="bg-red-500/20 text-red-400 px-2 py-1 rounded text-xs">Désactivé</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {promo.isActive && (
+                          <button
+                            onClick={() => handleDeletePromo(promo.id)}
+                            className="text-red-400 hover:text-red-300 text-xs font-bold"
+                          >
+                            Désactiver
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Info Box */}

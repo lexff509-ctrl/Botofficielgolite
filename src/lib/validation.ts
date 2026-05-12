@@ -60,12 +60,13 @@ export const tradeCreateSchema = z.object({
 
 // Payment
 export const paymentCreateSchema = z.object({
-  amount: z.number().positive(),
+  amount: z.number().nonnegative(),
   currency: z.enum(["USDT", "MONCASH"]).default("USDT"),
   txHash: z.string().optional(),
   planMonths: z.number().int().min(1).max(12).default(1),
   moncashSenderPhone: z.string().optional(),
   moncashValidationName: z.string().optional(),
+  promoCode: z.string().optional(),
 });
 
 export const paymentReviewSchema = z.object({
