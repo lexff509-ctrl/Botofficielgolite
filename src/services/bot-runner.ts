@@ -588,7 +588,7 @@ export class BotRunner {
         k_value: 50,
         d_value: 50,
         zone: "neutral",
-        crossover: strategy.stochastic.signal !== "NEUTRAL"
+        crossover: false
       },
 
       reason: strategy.reason,
