@@ -214,106 +214,11 @@ class ExternalDataService {
       return twelveCandles;
     }
 
-    // Fallback: refresh the current rate and build from ticks
-    const lastFetch = this.forexFetchedAt.get(pairKey) ?? 0;
-    if (Date.now() - lastFetch > FOREX_TICK_MS) {
-      await this.refreshForexRate(base, quote, pairKey);
-    }
-
-    const ticks = this.forexTicks.get(pairKey) ?? [];
-    if (ticks.length === 0) {
-      // Return stale candles if any
-      console.warn(`[ExternalData] No ticks for ${pairKey} — returning stale cache (${hit?.candles.length ?? 0} candles)`);
-      return hit?.candles ?? [];
-    }
-
-    // Need at least 5 real ticks to build meaningful candles
-    if (ticks.length < 5) {
-      console.warn(`[ExternalData] Only ${ticks.length} tick(s) for ${pairKey} — insufficient for reliable signals. Bot will wait.`);
-      return hit?.candles ?? [];
-    }
-
-    const candles = this.buildCandlesFromTicks(ticks, tf, limit);
-    this.candleCache.set(cacheKey, { candles, fetchedAt: Date.now() });
-    return candles;
-  }
-
-  private async refreshForexRate(base: string, quote: string, pairKey: string): Promise<void> {
-    // Use open.er-api.com — free, no API key, reliable
-    const url = `https://open.er-api.com/v6/latest/${base}`;
-    try {
-      console.log(`[ExternalData] Forex rate → ${pairKey}`);
-      const res = await fetchWithTimeout(url, 6000);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      const rate: number | undefined = data?.rates?.[quote];
-      if (!rate) throw new Error(`Quote "${quote}" not in response`);
-
-      // Add tick
-      const ticks = this.forexTicks.get(pairKey) ?? [];
-      ticks.push({ price: rate, ts: Math.floor(Date.now() / 1000) });
-      if (ticks.length > FOREX_MAX_TICKS) ticks.shift();
-      this.forexTicks.set(pairKey, ticks);
-      this.forexFetchedAt.set(pairKey, Date.now());
-
-      console.log(`[ExternalData] ${pairKey} rate: ${rate} (${ticks.length} ticks)`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[ExternalData] Forex fetch failed (${pairKey}): ${msg}`);
-      this.forexFetchedAt.set(pairKey, Date.now()); // avoid tight retry loop
-    }
-  }
-
-  /**
-   * Aggregate tick history into OHLCV candles.
-   * If fewer ticks than needed, synthesises micro-candles from the available data.
-   */
-  private buildCandlesFromTicks(ticks: { price: number; ts: number }[], tf: Timeframe, limit: number): Candle[] {
-    if (ticks.length === 0) return [];
-
-    // Determine candle duration in seconds
-    const tfSec = (() => {
-      if (tf.endsWith('s')) return parseInt(tf);
-      if (tf.endsWith('m')) return parseInt(tf) * 60;
-      if (tf.endsWith('h')) return parseInt(tf) * 3600;
-      return 60;
-    })();
-
-    const now = Math.floor(Date.now() / 1000);
-    const earliest = now - limit * tfSec;
-
-    // Group ticks into time buckets
-    const buckets = new Map<number, number[]>();
-    for (const t of ticks) {
-      const bucketTs = Math.floor(t.ts / tfSec) * tfSec;
-      if (bucketTs < earliest) continue;
-      const arr = buckets.get(bucketTs) ?? [];
-      arr.push(t.price);
-      buckets.set(bucketTs, arr);
-    }
-
-    // If we have very few buckets, return stale cache instead of generating fake data
-    if (buckets.size < 5) {
-      console.warn(`[ExternalData] Only ${buckets.size} tick bucket(s) — insufficient for candles. Waiting for more data.`);
-      return [];
-    }
-
-    const candles: Candle[] = [];
-    const sortedKeys = [...buckets.keys()].sort();
-    for (const ts of sortedKeys) {
-      const prices = buckets.get(ts)!;
-      candles.push({
-        timestamp: ts,
-        open: prices[0],
-        high: Math.max(...prices),
-        low: Math.min(...prices),
-        close: prices[prices.length - 1],
-        volume: prices.length,
-      });
-    }
-
-    return candles.slice(-limit);
+    // If Twelve Data fails or no API key, return empty array immediately.
+    // This forces trading.service.ts to fallback to PocketOption's own reliable WebSocket history,
+    // guaranteeing 100% real data and eliminating fake/flat candles from slow tick polling.
+    console.warn(`[ExternalData] TwelveData unavailable for ${pairKey}. Bot will safely fallback to PocketOption native WebSocket data.`);
+    return [];
   }
 
   /**

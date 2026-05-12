@@ -132,7 +132,7 @@ export class PocketOptionClient {
   // Heartbeat
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
   private lastPongAt = Date.now();
-  private pingInterval = 15000; // Reduced to 15s for better stability
+  private pingInterval = 10000; // Reduced to 10s for better stability
 
   // Reconnection
   private reconnectAttempts = 0;
@@ -178,13 +178,14 @@ export class PocketOptionClient {
   private startHeartbeats(): void {
     if (this.socketIoHeartbeat) clearInterval(this.socketIoHeartbeat);
     this.lastPongAt = Date.now();
+    let tickCounter = 0;
     
     this.socketIoHeartbeat = setInterval(() => {
       if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
       // Check for timeout
       const elapsed = Date.now() - this.lastPongAt;
-      if (elapsed > this.pingInterval * 2) { // More aggressive: 30s max without pong
+      if (elapsed > 40000) { // 40s max without pong
         console.warn(`[PO] Pong timeout (${Math.round(elapsed/1000)}s), forcing reconnect...`);
         this.handleDisconnect();
         return;
@@ -194,10 +195,13 @@ export class PocketOptionClient {
       try {
         // Send Engine.IO ping
         this.ws.send("2");
+        
         // Send Socket.IO keep-alive (essential for PO stability)
-        this.ws.send('42["ps"]');
-        // Force a small tick message to keep connection warm
-        this.ws.send('42["tick"]');
+        // Sending too frequently causes 1-min drops. Send every 20s.
+        if (tickCounter % 2 === 0) {
+           this.ws.send('42["ps"]');
+        }
+        tickCounter++;
       } catch (err) {
         console.error("[PO] Failed to send heartbeat:", err);
         this.handleDisconnect();
@@ -856,6 +860,12 @@ export class PocketOptionClient {
       this.connectionTimeout = null;
     }
     this.cleanup();
+    
+    // Explicitly terminate socket to avoid lingering connections
+    if (this.ws) {
+      try { this.ws.terminate(); } catch {}
+      this.ws = null;
+    }
 
     if (!this.intentionallyClosed) {
       const delay = getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);

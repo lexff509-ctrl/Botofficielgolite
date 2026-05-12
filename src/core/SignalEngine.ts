@@ -1,9 +1,9 @@
-
 import { Candle } from '../types/Candle';
 import { Signal, Timeframe } from '../types/Signal';
 import { calculateBollingerBands } from '../indicators/BollingerBands';
 import { calculateStochasticOscillator } from '../indicators/Stochastic';
 import { calculateRSIIndicator } from '../indicators/RSI';
+import { evaluateBollingerStochSignal } from '../lib/trading';
 
 export class SignalEngine {
     private candleBuffer: Map<string, Candle[]> = new Map();
@@ -17,42 +17,33 @@ export class SignalEngine {
         const closes = candles.map(c => c.close);
         const lastPrice = closes[closes.length - 1];
 
-        // 1. Calculate Indicators
+        // 1. Calculate basic indicators for compatibility with the Signal interface
         const bb = calculateBollingerBands(closes);
         const stoch = calculateStochasticOscillator(candles);
         const rsi = calculateRSIIndicator(closes);
 
-        // 2. Confluence Logic
-        let direction: "BUY" | "SELL" | "WAIT" = "WAIT";
-        let confidence = 0;
-        let diagnostic = "";
+        // 2. Confluence Logic using the 20-indicator engine
+        const advancedEval = evaluateBollingerStochSignal(candles);
 
-        // BUY Setup: BB BUY + STOCH BUY
-        if (bb.signal === "BUY" && stoch.signal === "BUY") {
-            direction = "BUY";
-            confidence = 95;
-            diagnostic = "CONFLUENCE FORTE: Rebond BB Bas + Croisement Stoch Survente";
-        } 
-        // SELL Setup: BB SELL + STOCH SELL
-        else if (bb.signal === "SELL" && stoch.signal === "SELL") {
-            direction = "SELL";
-            confidence = 95;
-            diagnostic = "CONFLUENCE FORTE: Rebond BB Haut + Croisement Stoch Surachat";
+        const direction = advancedEval.signal;
+        const confidenceLabel = advancedEval.confidence;
+        const diagnostic = advancedEval.reason;
+
+        // Map confidence label to numerical score
+        let confidence = 50;
+        if (confidenceLabel === "HIGH") confidence = 95;
+        else if (confidenceLabel === "MEDIUM") confidence = 75;
+        else confidence = 55;
+
+        // Re-adjust BB and Stoch signals based on advanced evaluation
+        if (advancedEval.bollinger.signal !== "NEUTRAL") {
+            bb.signal = advancedEval.bollinger.signal;
         }
-        // Medium Confidence
-        else if (bb.signal === "BUY" || stoch.signal === "BUY") {
-            direction = "BUY";
-            confidence = 70;
-            diagnostic = bb.signal === "BUY" ? "BB Rebond détecté" : "Stochastique Cross détecté";
-        }
-        else if (bb.signal === "SELL" || stoch.signal === "SELL") {
-            direction = "SELL";
-            confidence = 70;
-            diagnostic = bb.signal === "SELL" ? "BB Rebond détecté" : "Stochastique Cross détecté";
+        if (advancedEval.stochastic.signal !== "NEUTRAL") {
+            stoch.signal = advancedEval.stochastic.signal as any;
         }
 
-        const confidenceLabel = confidence >= 90 ? "HIGH" : confidence >= 60 ? "MEDIUM" : "LOW";
-        const action = confidence >= 90 ? "ENTRER MAINTENANT" : confidence >= 60 ? "ATTENDRE" : "ÉVITER";
+        const action = confidence >= 90 ? "ENTRER MAINTENANT" : confidence >= 70 ? "ATTENDRE" : "ÉVITER";
 
         return {
             id: `sig_${Date.now()}`,
