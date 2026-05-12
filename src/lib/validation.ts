@@ -17,7 +17,7 @@ export const registerSchema = z.object({
 
 // Bot
 export const botActionSchema = z.object({
-  action: z.enum(["START", "STOP", "RESET_COMPOUND"]),
+  action: z.enum(["START", "STOP", "RESET_COMPOUND", "CLEAR_HISTORY"]),
   mode: z.enum(["DEMO", "LIVE"]).optional(),
   botType: z.enum(["signal", "auto"]).optional(),
   ssid: z.string().optional(),
