@@ -898,7 +898,7 @@ export class PocketOptionClient {
     try {
       const historyNew = await this.waitForEvent<any>("historyNew", 3000);
       const candles = this.parseCandleData(asset, historyNew);
-      if (candles.length >= 10) return candles;
+      if (candles.length >= count) return candles;
     } catch (e) {}
 
     const endTime = Math.floor(Date.now() / 1000);

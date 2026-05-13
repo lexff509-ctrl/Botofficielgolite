@@ -324,8 +324,8 @@ export class BotRunner {
 
   private async loadDailyStats(): Promise<void> {
     try {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
+      // Compter uniquement les trades depuis le lancement de la session courante
+      const sessionStart = this.startedAt;
 
       const todayTrades = await db
         .select()
@@ -334,7 +334,7 @@ export class BotRunner {
           and(
             eq(trades.userId, this.userId),
             eq(trades.isAutomatic, true),
-            gte(trades.openedAt, todayStart)
+            gte(trades.openedAt, sessionStart)
           )
         );
 
@@ -490,11 +490,11 @@ export class BotRunner {
         console.log(`[BotRunner] Signal externe validé pour ${this.asset} [${externalSignal.signal}]`);
       } else {
         console.warn(`[BotRunner] Échec de la récupération des données externes pour ${this.asset}. Tentative PO...`);
-        candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
+        candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 300);
       }
     } else {
       // OTC: mandatory PO cache
-      candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
+      candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 300);
     }
 
     console.log(`[BotRunner] Tick user ${this.userId} - ${this.asset} (${this.timeframe}) - Candles: ${candles.length} (OTC: ${isOTC})`);
@@ -506,7 +506,7 @@ export class BotRunner {
         const historical = await poClient.requestCandleHistory(this.asset, sizeSeconds, 200);
         if (historical.length > 0) {
           candleCache.seedCandles(this.asset, sizeSeconds, historical);
-          candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 100);
+          candles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 300);
           console.log(`[BotRunner] OTC seeded with ${historical.length} candles. Now: ${candles.length}`);
         }
       } catch (err) {

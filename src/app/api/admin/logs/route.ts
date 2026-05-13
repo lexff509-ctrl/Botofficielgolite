@@ -1,38 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { systemLogs, users } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
-import { cookies } from "next/headers";
-import * as jwt from "jose";
+import { systemLogs } from "@/db/schema";
+import { desc } from "drizzle-orm";
+import { getUserFromRequest } from "@/lib/auth";
 
-async function verifyAdmin() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("session")?.value;
-  if (!token) return false;
-
+export async function GET(req: NextRequest) {
   try {
-    const secret = new TextEncoder().encode(
-      process.env.JWT_SECRET || "fallback_secret_key_123"
-    );
-    const { payload } = await jwt.jwtVerify(token, secret);
-    
-    if (!payload.userId) return false;
-
-    const [user] = await db
-      .select({ role: users.role })
-      .from(users)
-      .where(eq(users.id, Number(payload.userId)));
-
-    return user?.role === "ADMIN";
-  } catch {
-    return false;
-  }
-}
-
-export async function GET() {
-  try {
-    const isAdmin = await verifyAdmin();
-    if (!isAdmin) {
+    const adminPayload = getUserFromRequest(req);
+    if (!adminPayload || adminPayload.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -52,10 +27,10 @@ export async function GET() {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
   try {
-    const isAdmin = await verifyAdmin();
-    if (!isAdmin) {
+    const adminPayload = getUserFromRequest(req);
+    if (!adminPayload || adminPayload.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
