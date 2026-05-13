@@ -427,16 +427,24 @@ export async function getSsidStatus(userId: number): Promise<string> {
   return user?.ssidStatus ?? "NOT_SET";
 }
 
+const connectionMutexes = new Map<number, Promise<{ success: boolean; error?: string; ssidExpired?: boolean }>>();
+
 export async function connectPocketOption(
   userId: number,
   ssid: string,
   isDemo: boolean = true
 ): Promise<{ success: boolean; error?: string; ssidExpired?: boolean }> {
-  // Disconnect existing
-  const existing = activeConnections.get(userId);
-  if (existing) {
-    try { existing.disconnect(); } catch {}
+  // Return existing promise if already connecting
+  if (connectionMutexes.has(userId)) {
+    return connectionMutexes.get(userId)!;
   }
+
+  const connectPromise = async () => {
+    // Disconnect existing
+    const existing = activeConnections.get(userId);
+    if (existing) {
+      try { existing.disconnect(); } catch {}
+    }
 
   // Pre-fetch cookies from PocketOption site for anti-detection
   const host = isDemo ? "demo-api-eu.po.market" : "api-eu.po.market";
@@ -458,27 +466,34 @@ export async function connectPocketOption(
     }
   });
 
-  try {
-    await client.connect(isDemo);
-    activeConnections.set(userId, client);
-    candleCache.setClient(client);
-    await updateSsidStatus(userId, "VALID");
-    return { success: true };
-  } catch (err) {
-    if (client.isSsidExpired) {
-      await updateSsidStatus(userId, "EXPIRED");
+    try {
+      await client.connect(isDemo);
+      activeConnections.set(userId, client);
+      candleCache.setClient(client);
+      await updateSsidStatus(userId, "VALID");
+      return { success: true };
+    } catch (err) {
+      if (client.isSsidExpired) {
+        await updateSsidStatus(userId, "EXPIRED");
+        return {
+          success: false,
+          error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.",
+          ssidExpired: true,
+        };
+      }
+      await updateSsidStatus(userId, "UNKNOWN");
       return {
         success: false,
-        error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.",
-        ssidExpired: true,
+        error: err instanceof Error ? err.message : "Échec de connexion à PocketOption",
       };
+    } finally {
+      connectionMutexes.delete(userId);
     }
-    await updateSsidStatus(userId, "UNKNOWN");
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Échec de connexion à PocketOption",
-    };
-  }
+  };
+
+  const promise = connectPromise();
+  connectionMutexes.set(userId, promise);
+  return promise;
 }
 
 export function disconnectPocketOption(userId: number): void {

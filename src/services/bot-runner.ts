@@ -681,25 +681,17 @@ export class BotRunner {
       this.isInPosition = true;
 
       try {
-        if (process.env.AUTO_TRADING_ENABLED === "true") {
-          console.log(`[BotRunner] Entrée en position: ${signal.direction} $${this.tradeAmount} (confidence: ${signal.confidence_score}%)`);  
-          // executeAutoTrade calls executeTrade which calls poClient.placeTrade (which waits for expiry)
-          const result = await this.executeAutoTrade(signal, analysisCandles);
-          
-          // Update signal tracker with result
-          if (result && result.trade) {
-            const res = (result as any).profit > 0 ? 'WIN' : 'LOSS';
-            // Note: signalId must be in scope from earlier code
-            if (typeof signalId !== 'undefined') {
-              await signalTracker.updateResult(signalId, res, (result as any).closePrice || 0, (result as any).profit);
-            }
+        console.log(`[BotRunner] Entrée en position: ${signal.direction} $${this.tradeAmount} (confidence: ${signal.confidence_score}%)`);  
+        // executeAutoTrade calls executeTrade which calls poClient.placeTrade (which waits for expiry)
+        const result = await this.executeAutoTrade(signal, analysisCandles);
+        
+        // Update signal tracker with result
+        if (result && result.trade) {
+          const res = (result as any).profit > 0 ? 'WIN' : 'LOSS';
+          // Note: signalId must be in scope from earlier code
+          if (typeof signalId !== 'undefined') {
+            await signalTracker.updateResult(signalId, res, (result as any).closePrice || 0, (result as any).profit);
           }
-        } else {
-          console.log(`\n=============================================================`);
-          console.log(`[LIVE SIGNAL MODE] 🟢 SIGNAL EXPLOITABLE DÉTECTÉ`);
-          console.log(`[LIVE SIGNAL MODE] Action: ${signal.direction} sur ${this.asset} | Score: ${signal.confidence_score}%`);
-          console.log(`[LIVE SIGNAL MODE] Exécution auto désactivée (AUTO_TRADING_ENABLED != "true").`);
-          console.log(`=============================================================\n`);
         }
       } catch (err) {
         console.error(`[BotRunner] Erreur lors de l'exécution du trade:`, err);
