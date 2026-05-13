@@ -349,7 +349,11 @@ export class PocketOptionClient {
         this.ws.on("close", (code: number, reason: Buffer) => this.handleDisconnect());
         this.ws.on("error", (err: Error) => {
           if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-          this.handleDisconnect();
+          if (this.ws) {
+            this.ws.removeAllListeners();
+            try { this.ws.terminate(); } catch {}
+            this.ws = null;
+          }
           reject(err);
         });
       } catch (err) {
@@ -784,14 +788,27 @@ export class PocketOptionClient {
         asset, open: Number(c[1]), close: Number(c[2]), high: Number(c[3]),
         low: Number(c[4]), volume: 0, timestamp: Number(c[0]),
       }));
+    } else if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
+      // Sometimes it just returns an array of arrays directly
+      parsed = data.map((c: any[]) => ({
+        asset, open: Number(c[1] || 0), close: Number(c[2] || 0), high: Number(c[3] || 0),
+        low: Number(c[4] || 0), volume: Number(c[5] || 0), timestamp: Number(c[0] || 0),
+      }));
+    } else {
+      console.warn(`[PO] parseCandleData received unknown format for ${asset}:`, JSON.stringify(data).substring(0, 200));
     }
 
-    return parsed.filter((c) => c && c.timestamp > 0 && c.close > 0).sort((a, b) => a.timestamp - b.timestamp);
+    const filtered = parsed.filter((c) => c && c.timestamp > 0 && c.close > 0).sort((a, b) => a.timestamp - b.timestamp);
+    if (filtered.length === 0) {
+      console.warn(`[PO] parseCandleData yielded 0 valid candles for ${asset}. Raw parsed length: ${parsed.length}`);
+    }
+    return filtered;
   }
 
   // ============ Disconnect & Cleanup ============
 
   private handleDisconnect(): void {
+    const wasConnecting = this.state !== ConnectionState.READY && this.state !== ConnectionState.WS_OPEN;
     this.state = ConnectionState.DISCONNECTED;
     this.upgradeResolve = null;
     this.upgradeReject = null;
@@ -806,7 +823,7 @@ export class PocketOptionClient {
       this.ws = null;
     }
 
-    if (!this.intentionallyClosed) {
+    if (!this.intentionallyClosed && !wasConnecting) {
       const delay = getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);
       this.reconnectAttempts++;
       setTimeout(() => {
