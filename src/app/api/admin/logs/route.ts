@@ -6,7 +6,8 @@ import { cookies } from "next/headers";
 import * as jwt from "jose";
 
 async function verifyAdmin() {
-  const token = cookies().get("session")?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get("session")?.value;
   if (!token) return false;
 
   try {
