@@ -329,22 +329,10 @@ export async function executeTrade(
       tradeId = tradeResult.tradeId;
     } catch (err) {
       console.error("[Trade] PO execution failed:", err);
-      // Fallback to simulation only for DEMO mode
-      if (tradeMode !== "DEMO") {
-        return { trade: null, profit: 0, error: "Erreur d'exécution sur PocketOption" };
-      }
-      // DEMO fallback simulation
-      const isWin = Math.random() < 0.62;
-      result = isWin ? "WIN" : "LOSS";
-      profit = isWin ? params.amount * 0.85 : -params.amount;
+      return { trade: null, profit: 0, error: "Erreur d'exécution sur PocketOption: " + (err instanceof Error ? err.message : String(err)) };
     }
-  } else if (tradeMode === "LIVE") {
-    return { trade: null, profit: 0, error: "Bot PocketOption non connecté. Démarrez le bot d'abord." };
   } else {
-    // DEMO mode without PO connection - simulation
-    const isWin = Math.random() < 0.62;
-    result = isWin ? "WIN" : "LOSS";
-    profit = isWin ? params.amount * 0.85 : -params.amount;
+    return { trade: null, profit: 0, error: "Bot PocketOption non connecté. Veuillez vérifier la connexion du bot." };
   }
 
   const closePrice = params.openPrice

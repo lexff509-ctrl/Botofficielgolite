@@ -921,10 +921,36 @@ export class PocketOptionClient {
       });
 
       const deal = match.find(d => String(d.id ?? d.deal_id) === tradeId);
-      const profit = Number(deal.profit ?? deal.win_amount ?? -request.amount);
+      let rawProfit = Number(deal.profit ?? deal.win_amount ?? 0);
       const closePrice = Number(deal.close_price ?? deal.closePrice ?? 0);
 
-      return { win: profit > 0, profit, openPrice, closePrice, tradeId };
+      // Déduction stricte du Net Profit
+      let netProfit = 0;
+      let isWin = false;
+
+      if (rawProfit < 0) {
+        // Format Net Profit direct (ex: -10)
+        netProfit = rawProfit;
+        isWin = false;
+      } else if (rawProfit === 0) {
+        // Format Payout direct (Perte = 0 payout)
+        netProfit = -request.amount;
+        isWin = false;
+      } else if (rawProfit === request.amount) {
+        // Remboursement (Tie)
+        netProfit = 0;
+        isWin = false;
+      } else if (rawProfit > request.amount) {
+        // Format Payout direct (Gain = 18.5)
+        netProfit = rawProfit - request.amount;
+        isWin = true;
+      } else {
+        // Format Net Profit direct (Gain = 8.5)
+        netProfit = rawProfit;
+        isWin = true;
+      }
+
+      return { win: isWin, profit: netProfit, openPrice, closePrice, tradeId };
     } finally {
       releaseMutex();
     }

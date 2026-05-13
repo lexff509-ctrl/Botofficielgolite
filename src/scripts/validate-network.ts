@@ -40,7 +40,7 @@ async function runValidation() {
   let ssid = "";
   
   try {
-    const adminUsers = await db.select().from(users).where(eq(users.role, "admin"));
+    const adminUsers = await db.select().from(users).where(eq(users.role, "ADMIN"));
     for (const admin of adminUsers) {
       if (admin.pocketOptionSsid) {
         ssid = decrypt(admin.pocketOptionSsid);
