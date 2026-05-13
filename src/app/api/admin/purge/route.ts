@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     let logsResult: { rowCount: number | null } = { rowCount: 0 };
     try {
       logsResult = await db.execute(
-        sql`DELETE FROM ${systemLogs} WHERE ${systemLogs.timestamp} < ${sevenDaysAgo}`
+        sql`DELETE FROM ${systemLogs} WHERE ${systemLogs.createdAt} < ${sevenDaysAgo}`
       );
     } catch (e) {
       console.log("systemLogs purge skipped (table might not exist)");
