@@ -6,7 +6,13 @@ type LogLevel = "INFO" | "WARN" | "ERROR";
 export class SystemLogger {
   private static async log(level: LogLevel, source: string, message: string, details?: any) {
     // Print to console regardless
-    if (level === "ERROR") console.error(`[${source}] ${message}`, details || "");
+    // Skip console.error if source is System/Node to prevent infinite recursion 
+    // with the console.error interceptor in instrumentation.ts
+    if (level === "ERROR") {
+      if (source !== "System/Node") {
+        console.error(`[${source}] ${message}`, details || "");
+      }
+    }
     else if (level === "WARN") console.warn(`[${source}] ${message}`, details || "");
     else console.log(`[${source}] ${message}`, details || "");
 

@@ -343,8 +343,6 @@ export class PocketOptionClient {
 
         this.ws.on("open", () => {
           this.state = ConnectionState.WS_OPEN;
-          this.ws?.send("2"); // Early Ping to satisfy heartbeat requirement immediately
-          this.startHeartbeats();
         });
 
         this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
@@ -398,7 +396,6 @@ export class PocketOptionClient {
         this.ws.on("open", () => {
           this.state = ConnectionState.WS_OPEN;
           this.ws?.send("2probe");
-          this.startHeartbeats();
         });
 
         this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
@@ -524,6 +521,8 @@ export class PocketOptionClient {
   private handleTextMessage(message: string): void {
     if (message.startsWith("0")) {
       this.ws?.send("40"); // Socket.IO CONNECT
+      // Engine.IO requires waiting for '0' before starting ping/pong
+      this.startHeartbeats();
       return;
     }
     if (message.startsWith("1")) {
