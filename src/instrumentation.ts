@@ -25,18 +25,19 @@ export async function register() {
       }
     };
 
-    try {
-      const result = await recoverActiveSessions();
-      if (result.recovered > 0 || result.failed > 0) {
-        console.log(
-          `[Bootstrap] Recovered ${result.recovered} sessions, ${result.failed} failed`
-        );
-        if (result.errors.length > 0) {
-          console.warn("[Bootstrap] Errors:", result.errors);
+    // Lancer la récupération en arrière-plan sans bloquer le démarrage du serveur Next.js
+    // Render a besoin que le serveur réponde rapidement sur le port HTTP (timeout)
+    recoverActiveSessions()
+      .then((result) => {
+        if (result.recovered > 0 || result.failed > 0) {
+          console.log(`[Bootstrap] Recovered ${result.recovered} sessions, ${result.failed} failed`);
+          if (result.errors.length > 0) {
+            console.warn("[Bootstrap] Errors:", result.errors);
+          }
         }
-      }
-    } catch (err) {
-      console.error("[Bootstrap] Failed:", err);
-    }
+      })
+      .catch((err) => {
+        console.error("[Bootstrap] Failed:", err);
+      });
   }
 }
