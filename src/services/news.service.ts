@@ -56,7 +56,7 @@ export class NewsService {
     const news = await this.getHighImpactNews();
     if (!news || news.length === 0) return { safe: true };
 
-    const currencies = asset.replace(/[^A-Z]/g, "").match(/.{1,3}/g) || []; // "EURUSD" -> ["EUR", "USD"]
+    const currencies: string[] = asset.replace(/[^A-Z]/g, "").match(/.{1,3}/g) || []; // "EURUSD" -> ["EUR", "USD"]
     
     const now = new Date();
     const DANGER_WINDOW_MS = 15 * 60 * 1000; // 15 mins before and after
