@@ -32,7 +32,7 @@ export class SignalEngine {
         const direction = advancedEval.signal === "BUY" ? "BUY" : advancedEval.signal === "SELL" ? "SELL" : "WAIT";
         const confidenceLabel = direction !== "WAIT" ? "HIGH" : "LOW";
         const diagnostic = advancedEval.reason;
-        const confidence = advancedEval.confidence;
+        const confidence = advancedEval.score;
 
         // Re-adjust BB and Stoch signals based on advanced evaluation
         if (direction === "BUY") {
