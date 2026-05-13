@@ -27,9 +27,9 @@ export class SignalEngine {
         const isBinance = !isOtc; // Simplified: If not OTC, we treat it as Binance/External for the strict reversal rules
 
         // 2. Confluence Logic using the V5 OrchestratorAgent
-        const advancedEval = await OrchestratorAgent.evaluate(candles, timeframe, isOtc);
+        const advancedEval = await OrchestratorAgent.evaluate(candles, asset, timeframe, isOtc);
 
-        const direction = advancedEval.action === "BUY" ? "BUY" : advancedEval.action === "SELL" ? "SELL" : "WAIT";
+        const direction = advancedEval.signal === "BUY" ? "BUY" : advancedEval.signal === "SELL" ? "SELL" : "WAIT";
         const confidenceLabel = direction !== "WAIT" ? "HIGH" : "LOW";
         const diagnostic = advancedEval.reason;
         const confidence = advancedEval.confidence;
