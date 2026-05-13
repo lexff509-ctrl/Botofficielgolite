@@ -204,9 +204,7 @@ export class AdvancedStrategyEngine {
     const directionLabel = signal === "BUY" ? "CALL (HAUT)" : "PUT (BAS)";
     const strategyName = isMicroScalping ? "⚡ MICRO-REVERSAL ENGINE" : "🟢 MACRO TREND ENGINE";
     const revLabel = isReversal ? " [⚠️ DÉTECTION RETOURNEMENT IMMINENT]" : "";
-    const reason = signal !== "WAIT" 
-      ? `${strategyName} — ${directionLabel} | Prob: ${proba}% | Force: ${Math.max(buyPoints, sellPoints)} pts${revLabel}`
-      : `🟡 WAIT — Marché indécis ou sans tendance claire (Prob: ${proba}%)`;
+    const reason = `${strategyName} — ${directionLabel} | Prob: ${proba}% | Force: ${Math.max(buyPoints, sellPoints)} pts${revLabel}`;
 
     return {
       signal,
@@ -281,7 +279,7 @@ export class AdvancedStrategyEngine {
       signal,
       confidence,
       score: proba,
-      reason: signal !== "WAIT" ? `🔥 OTC ENGINE — ${signal} | Prob: ${proba}%` : "🟡 WAIT OTC",
+      reason: `🔥 OTC ENGINE — ${signal} | Prob: ${proba}%`,
       isReversal: false,
       metrics: { buyScore, sellScore }
     };
