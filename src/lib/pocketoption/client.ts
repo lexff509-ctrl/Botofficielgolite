@@ -1,23 +1,6 @@
-// PocketOption WebSocket client
-// Based on real Socket.IO Engine.IO v4 protocol
-// Reference: https://github.com/Mastaaa1987/PocketOptionAPI-v2
-//
-// Connection flow (direct WebSocket - like Python reference client):
-// 1. Connect wss://host/socket.io/?EIO=4&transport=websocket
-// 2. Server sends "0{...}" (Engine.IO OPEN) → client sends "40" (Socket.IO CONNECT)
-// 3. Server sends "40{sid:...}" → client sends 42["auth",...] (SSID)
-// 4. Server sends 451-["successauth",...] → authenticated!
-//
-// Fallback: Engine.IO v4 HTTP polling upgrade flow:
-// 1. GET /socket.io/?EIO=4&transport=polling → get sid + cookies
-// 2. POST /socket.io/?EIO=4&transport=polling&sid=xxx body "40" (Socket.IO CONNECT)
-// 3. GET /socket.io/?EIO=4&transport=polling&sid=xxx → read CONNECT ACK
-// 4. WebSocket connect wss://host/socket.io/?EIO=4&transport=websocket&sid=xxx
-// 5. Send "2probe" → wait for "3probe" → send "5" (upgrade complete)
-// 6. Send auth 42["auth",...]
-
 import WebSocket from "ws";
 import https from "https";
+import { EventEmitter } from "events";
 import {
   WS_HEADERS as CONN_WS_HEADERS,
   HTTP_HEADERS as CONN_HTTP_HEADERS,
@@ -62,9 +45,43 @@ interface TradeResult {
   tradeId: string;
 }
 
-// ============ Constants ============
+export enum ConnectionState {
+  DISCONNECTED = "DISCONNECTED",
+  CONNECTING = "CONNECTING",
+  POLLING = "POLLING",
+  UPGRADING = "UPGRADING",
+  WS_OPEN = "WS_OPEN",
+  AUTHENTICATING = "AUTHENTICATING",
+  READY = "READY",
+}
 
-// Legacy - kept for reference, but actual hosts are now auto-discovered
+// ============ Mutex with Timeout (Anti-Deadlock) ============
+class AsyncMutex {
+  private promise: Promise<void> = Promise.resolve();
+
+  async acquire(timeoutMs: number = 45000): Promise<() => void> {
+    let release: () => void = () => {};
+    const nextPromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const currentPromise = this.promise;
+    this.promise = this.promise.then(() => nextPromise).catch(() => nextPromise);
+
+    await currentPromise;
+
+    const timeoutId = setTimeout(() => {
+      console.warn(`[Mutex] Auto-released after ${timeoutMs}ms to prevent deadlock!`);
+      release();
+    }, timeoutMs);
+
+    return () => {
+      clearTimeout(timeoutId);
+      release();
+    };
+  }
+}
+
+// ============ Constants ============
 const LEGACY_HOSTS = {
   demo: "demo-api-eu.po.market",
   real: "api-eu.po.market",
@@ -73,104 +90,107 @@ const LEGACY_HOSTS = {
 // ============ Client ============
 
 export class PocketOptionClient {
-  private ssid: string; // Full 42["auth",...] message
+  private ssid: string;
   private ws: WebSocket | null = null;
-  private connected = false;
-  private authenticated = false;
+  private state: ConnectionState = ConnectionState.DISCONNECTED;
   private isDemo = true;
 
-  // Connection state
-  private isUpgradeConnection = false; // true when using HTTP polling → WS upgrade
+  // Connection Phase tracking
   private upgradeResolve: ((value: void) => void) | null = null;
   private upgradeReject: ((error: Error) => void) | null = null;
   private connectionTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // Callbacks
+  // Event Driven Architecture
+  private publicEvents = new EventEmitter();
+  private internalEvents = new EventEmitter();
+
+  // Callbacks arrays kept for legacy public API compatibility
+  private candleListeners = new Map<string, ((candle: CandleData) => void)[]>();
   private onAuthCallbacks: (() => void)[] = [];
-  private candleListeners = new Map<
-    string,
-    ((candle: CandleData) => void)[]
-  >();
-  private onBalanceCallbacks: ((balance: {
-    balance: number;
-    isDemo: number;
-  }) => void)[] = [];
+  private onBalanceCallbacks: ((balance: { balance: number; isDemo: number }) => void)[] = [];
   private onErrorCallbacks: ((error: Error) => void)[] = [];
   private onSsidExpiredCallbacks: (() => void)[] = [];
 
   // Active subscriptions tracking
-  private activeSubscriptions = new Map<
-    string,
-    { asset: string; size: number }
-  >();
+  private activeSubscriptions = new Map<string, { asset: string; size: number }>();
   private currentSymbol: { asset: string; period: number } | null = null;
 
-  // State flags for binary message handling
-  private updateStreamFlag = false;
-  private updateClosedDealsFlag = false;
-  private loadHistoryPeriodFlag = false;
-  private successOpenOrderFlag = false;
+  // Tick Batching / Throttling to prevent CPU flooding
+  private pendingTicks = new Map<string, CandleData>();
+  private tickFlushInterval: ReturnType<typeof setInterval> | null = null;
+  private tickCount = 0;
 
-  // Binary attachment tracking: when a 451- event has _placeholder,
-  // the actual data arrives in the next binary WebSocket frame
-  private pendingBinaryEvent: string | null = null;
-  private pendingBinaryEventData: unknown = null;
+  // Binary attachment FIFO Queue (fixes async data race)
+  private expectedBinaryEvents: string[] = [];
 
   // Cached response data
-  private historyPeriodData: Record<string, unknown> | null = null;
-  private orderData: Record<string, unknown> | null = null;
-  private historyNewData: Record<string, unknown> | null = null;
   private closedDealsData: unknown[] = [];
   private lastBalance: { balance: number; isDemo: number } | null = null;
   private assetData: Record<string, { payout: number }> = {};
 
-  // Trade result tracking: stores confirmed trade results keyed by deal_id/id
-  private pendingTradeRequestId: number | null = null;
-  private confirmedOrderId: string | null = null;   // set after successopenOrder
-  private tradeResult: Record<string, unknown> | null = null; // set after updateClosedDeals
-
-  // Heartbeat
+  // Heartbeat & Reconnection
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
   private lastPongAt = Date.now();
-  private pingInterval = 10000; // Reduced to 10s for better stability
-
-  // Reconnection
+  private pingInterval = 10000;
   private reconnectAttempts = 0;
-  private maxReconnectDelay = 30000; // Reduced to 30s
+  private maxReconnectDelay = 30000;
   private intentionallyClosed = false;
-
-  // SSID expiration tracking
   private ssidExpired = false;
-  // Mutex for sequential trade execution per client
-  private tradeMutex: Promise<void> = Promise.resolve();
-  // Pre-fetched cookies for anti-detection
+
+  // Trade Lock
+  private tradeMutex = new AsyncMutex();
   private prefetchedCookies: string[] = [];
-  // Tick counter for throttled logging
-  private tickCount = 0;
 
   constructor(ssid: string, cookies?: string[]) {
     this.ssid = ssid;
     if (cookies) this.prefetchedCookies = [...cookies];
+
+    // Increase max listeners for multi-agent support
+    this.internalEvents.setMaxListeners(100);
+    this.publicEvents.setMaxListeners(100);
 
     try {
       let sessionToken = "";
       if (this.ssid.startsWith('42["auth"')) {
         const jsonPart = this.ssid.substring(2);
         const parsed = JSON.parse(jsonPart);
-        if (parsed && parsed.length > 1 && typeof parsed[1] === 'object' && parsed[1].session) {
+        if (parsed && parsed.length > 1 && typeof parsed[1] === "object" && parsed[1].session) {
           sessionToken = parsed[1].session;
-        } else if (parsed && parsed.length > 1 && typeof parsed[1] === 'string') {
+        } else if (parsed && parsed.length > 1 && typeof parsed[1] === "string") {
           sessionToken = parsed[1];
         }
       } else {
         sessionToken = this.ssid;
       }
-      if (sessionToken && !this.prefetchedCookies.some(c => c.includes("PHPSESSID"))) {
+      if (sessionToken && !this.prefetchedCookies.some((c) => c.includes("PHPSESSID"))) {
         this.prefetchedCookies.push(`PHPSESSID=${sessionToken}`);
       }
     } catch (err) {
       // Ignore parse errors
     }
+
+    this.startTickThrottler();
+  }
+
+  // ============ Internal Event Helpers ============
+
+  /** Promisified event listener, eliminating busy-waiting while loops */
+  private async waitForEvent<T>(eventName: string, timeoutMs: number, predicate?: (data: T) => boolean): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.internalEvents.off(eventName, listener);
+        reject(new Error(`Timeout waiting for internal event: ${eventName} (${timeoutMs}ms)`));
+      }, timeoutMs);
+
+      const listener = (data: T) => {
+        if (!predicate || predicate(data)) {
+          clearTimeout(timeout);
+          this.internalEvents.off(eventName, listener);
+          resolve(data);
+        }
+      };
+      this.internalEvents.on(eventName, listener);
+    });
   }
 
   // ============ Connection Management ============
@@ -181,25 +201,19 @@ export class PocketOptionClient {
     let tickCounter = 0;
 
     this.socketIoHeartbeat = setInterval(() => {
-      if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (this.state !== ConnectionState.READY || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-      // Check for timeout
       const elapsed = Date.now() - this.lastPongAt;
-      if (elapsed > 40000) { // 40s max without pong
+      if (elapsed > 40000) {
         console.warn(`[PO] Pong timeout (${Math.round(elapsed / 1000)}s), forcing reconnect...`);
         this.handleDisconnect();
         return;
       }
 
-      // Send Socket.IO Ping (2)
       try {
-        // Send Engine.IO ping
-        this.ws.send("2");
-
-        // Send Socket.IO keep-alive (essential for PO stability)
-        // Sending too frequently causes 1-min drops. Send every 20s.
+        this.ws.send("2"); // Engine.IO Ping
         if (tickCounter % 2 === 0) {
-          this.ws.send('42["ps"]');
+          this.ws.send('42["ps"]'); // Socket.IO keep-alive every 20s
         }
         tickCounter++;
       } catch (err) {
@@ -214,8 +228,7 @@ export class PocketOptionClient {
   }
 
   get isConnected(): boolean {
-    // A client is only truly connected if the WebSocket is open AND it's authenticated
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN && this.connected && this.authenticated;
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN && this.state === ConnectionState.READY;
   }
 
   get isSsidExpired(): boolean {
@@ -230,153 +243,107 @@ export class PocketOptionClient {
     return this.assetData;
   }
 
-  // ============ Asset Format Conversion ============
-
-  /** Convert display format to PocketOption wire format
-   *  "EUR/USD (OTC)" → "EURUSD_otc"
-   *  "EUR/USD"       → "EURUSD"
-   *  "BTC/USD"       → "BTCUSD"
-   */
   static toPOSymbol(asset: string): string {
-    if (asset.includes("(OTC)")) {
-      return asset.replace("/", "").replace(" (OTC)", "_otc");
-    }
-    if (asset.includes("/")) {
-      return asset.replace("/", "");
-    }
+    if (asset.includes("(OTC)")) return asset.replace("/", "").replace(" (OTC)", "_otc");
+    if (asset.includes("/")) return asset.replace("/", "");
     return asset;
   }
 
   // ============ Connection ============
 
   async connect(isDemo?: boolean): Promise<void> {
-    if (this.connected && this.authenticated) return;
+    if (this.state === ConnectionState.READY) return;
+    if (this.state !== ConnectionState.DISCONNECTED) {
+      console.warn(`[PO] Cannot connect, state is currently: ${this.state}`);
+      return;
+    }
 
+    this.state = ConnectionState.CONNECTING;
     this.isDemo = isDemo ?? this.parseIsDemoFromSsid();
     this.intentionallyClosed = false;
     this.ssidExpired = false;
-    this.isUpgradeConnection = false;
 
-    // Auto-discover reachable hosts
     let reachableHosts = await discoverReachableHosts(this.isDemo);
-
     if (reachableHosts.length === 0) {
-      // Fallback to legacy host if discovery fails
       const fallback = this.isDemo ? LEGACY_HOSTS.demo : LEGACY_HOSTS.real;
-      console.log(`[PO] No reachable hosts discovered, trying fallback: ${fallback}`);
       reachableHosts = [fallback];
     }
 
-    // Try each reachable host with both strategies
-    // NotAuthorized from a non-matching host (e.g., live host for demo SSID) is NOT
-    // a true expiration - it just means wrong server. Only treat as expired if
-    // we get NotAuthorized from a host that matches the SSID type.
     let gotNotAuthorizedOnMatchingHost = false;
 
     for (const host of reachableHosts) {
       console.log(`[PO] Trying host: ${host}`);
-      // Reset ssidExpired for each host attempt - it may have been set
-      // by a non-matching host (e.g., live server rejecting demo SSID)
       this.ssidExpired = false;
 
-      // Strategy 1: Direct WebSocket (like the Python reference client)
+      // Strategy 1: Direct WebSocket
       try {
         await this.connectDirect(host);
-        return; // Success!
+        return;
       } catch (directErr) {
-        const errMsg = directErr instanceof Error ? directErr.message : String(directErr);
-        console.log(`[PO] Direct WebSocket failed on ${host}: ${errMsg}`);
-
-        if (this.ssidExpired) {
-          // Check if this host matches the SSID type (demo/demo or live/live)
-          const isDemoHost = host.includes("demo") || host.includes("try-demo");
-          if (isDemoHost === this.isDemo) {
-            // NotAuthorized on matching host = truly expired
-            gotNotAuthorizedOnMatchingHost = true;
-            break;
-          }
-          // NotAuthorized on non-matching host = wrong server, skip it
-          console.log(`[PO] NotAuthorized on non-matching host ${host} (demo=${isDemoHost}, ssid demo=${this.isDemo}), trying next host...`);
-          this.ssidExpired = false;
+        if (this.checkAuthFailure(host)) {
+          gotNotAuthorizedOnMatchingHost = true;
+          break;
         }
       }
 
-      // Strategy 2: Full Engine.IO v4 polling → WebSocket upgrade
+      // Strategy 2: Full Engine.IO v4 HTTP Polling upgrade
       try {
         await this.connectWithUpgrade(host);
-        return; // Success!
+        return;
       } catch (upgradeErr) {
-        const errMsg = upgradeErr instanceof Error ? upgradeErr.message : String(upgradeErr);
-        console.log(`[PO] Upgrade failed on ${host}: ${errMsg}`);
-
-        if (this.ssidExpired) {
-          const isDemoHost = host.includes("demo") || host.includes("try-demo");
-          if (isDemoHost === this.isDemo) {
-            gotNotAuthorizedOnMatchingHost = true;
-            break;
-          }
-          console.log(`[PO] NotAuthorized on non-matching host ${host}, trying next host...`);
-          this.ssidExpired = false;
+        if (this.checkAuthFailure(host)) {
+          gotNotAuthorizedOnMatchingHost = true;
+          break;
         }
       }
     }
 
+    this.state = ConnectionState.DISCONNECTED;
     if (gotNotAuthorizedOnMatchingHost) {
       throw new Error("SSID expiré ou invalide (NotAuthorized)");
     }
-
-    throw new Error(`Failed to connect: all ${reachableHosts.length} hosts failed. Check network or SSID.`);
+    throw new Error(`Failed to connect: all hosts failed. Check network or SSID.`);
   }
 
-  /** Strategy 1: Direct WebSocket connection (Python reference client approach) */
+  private checkAuthFailure(host: string): boolean {
+    if (this.ssidExpired) {
+      const isDemoHost = host.includes("demo") || host.includes("try-demo");
+      if (isDemoHost === this.isDemo) return true;
+      this.ssidExpired = false;
+    }
+    return false;
+  }
+
   private connectDirect(host: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
-      console.log(`[PO] Direct WebSocket to ${host}...`);
-
+      
       try {
-        const wsHeaders: Record<string, string> = {
-          ...CONN_WS_HEADERS,
-          Host: host,
-        };
-        if (this.prefetchedCookies.length > 0) {
-          wsHeaders["Cookie"] = this.prefetchedCookies.join("; ");
-        }
-
-        // DEBUG HEADERS (ACTION REQUÉRUE)
-        console.log("[PO] Headers utilisés pour la connexion :", JSON.stringify(wsHeaders, null, 2));
+        const wsHeaders: Record<string, string> = { ...CONN_WS_HEADERS, Host: host };
+        if (this.prefetchedCookies.length > 0) wsHeaders["Cookie"] = this.prefetchedCookies.join("; ");
 
         this.ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
           handshakeTimeout: 10000,
-          // ACTION 3: WebSocket Options
           perMessageDeflate: true,
-          followRedirects: true
-        } as WebSocket.ClientOptions);
+          followRedirects: true,
+        });
 
         this.upgradeResolve = resolve;
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          reject(new Error("Connection timeout (10s) - possible firewall/anti-bot block"));
+          reject(new Error("Connection timeout (10s)"));
           this.ws?.close();
         }, 10000);
 
         this.ws.on("open", () => {
-          console.log("[PO] WebSocket connected, waiting for Engine.IO OPEN...");
+          this.state = ConnectionState.WS_OPEN;
         });
 
-        this.ws.on("message", (raw: WebSocket.Data) => {
-          this.handleRawMessage(raw);
-        });
-
-        this.ws.on("close", (code: number, reason: Buffer) => {
-          console.log(`[PO] WebSocket closed. Code: ${code}, Reason: ${reason.toString()}`);
-          this.handleDisconnect();
-        });
-
+        this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
+        this.ws.on("close", (code: number, reason: Buffer) => this.handleDisconnect());
         this.ws.on("error", (err: Error) => {
-          console.error(`[PO] WebSocket error: ${err.message}`);
           if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
           this.handleDisconnect();
           reject(err);
@@ -387,29 +354,18 @@ export class PocketOptionClient {
     });
   }
 
-  /** Strategy 2: Engine.IO v4 HTTP polling → WebSocket upgrade */
   private async connectWithUpgrade(host: string): Promise<void> {
-    // Step 1: HTTP GET polling → get sid + cookies
+    this.state = ConnectionState.POLLING;
     const { sid, cookies } = await this.httpPollingOpen(host);
-    if (!sid) {
-      throw new Error("Failed to get sid from HTTP polling handshake");
-    }
-    console.log(`[PO] Got sid from polling: ${sid}`);
+    if (!sid) throw new Error("Failed to get sid");
 
-    // Step 2: HTTP POST polling with Socket.IO CONNECT (40)
     await this.httpPollingPost(host, sid, "40", cookies);
-
-    // Step 3: HTTP GET polling to read CONNECT ACK
     await this.httpPollingRead(host, sid, cookies);
 
-    // Step 4: WebSocket upgrade with sid + cookies
-    this.isUpgradeConnection = true;
+    this.state = ConnectionState.UPGRADING;
     return new Promise((resolve, reject) => {
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
-      console.log(`[PO] WebSocket upgrade to ${host}...`);
-
       try {
-        // Merge pre-fetched cookies with polling cookies for best detection avoidance
         const allCookies = [...this.prefetchedCookies, ...cookies];
         const wsOptions: WebSocket.ClientOptions = {
           headers: {
@@ -425,27 +381,18 @@ export class PocketOptionClient {
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          reject(new Error("Upgrade timeout (10s) - server may be blocking this IP"));
+          reject(new Error("Upgrade timeout (10s)"));
           this.ws?.close();
         }, 10000);
 
         this.ws.on("open", () => {
-          // Engine.IO v4 upgrade probe sequence
-          console.log("[PO] WebSocket connected, sending probe...");
+          this.state = ConnectionState.WS_OPEN;
           this.ws?.send("2probe");
         });
 
-        this.ws.on("message", (raw: WebSocket.Data) => {
-          this.handleRawMessage(raw);
-        });
-
-        this.ws.on("close", (code: number, reason: Buffer) => {
-          console.log(`[PO] WebSocket closed. Code: ${code}, Reason: ${reason.toString()}`);
-          this.handleDisconnect();
-        });
-
+        this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
+        this.ws.on("close", (code: number, reason: Buffer) => this.handleDisconnect());
         this.ws.on("error", (err: Error) => {
-          console.error(`[PO] Upgrade error: ${err.message}`);
           if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
           this.handleDisconnect();
           reject(err);
@@ -456,13 +403,10 @@ export class PocketOptionClient {
     });
   }
 
-  // ============ HTTP Polling Methods ============
+  // ============ HTTP Polling Methods (Kept for strict Engine.IO compliance) ============
 
-  /** HTTP GET polling - Engine.IO OPEN handshake */
   private httpPollingOpen(host: string): Promise<{ sid: string; cookies: string[] }> {
     return new Promise((resolve, reject) => {
-      console.log(`[PO] HTTP polling handshake to ${host}...`);
-
       const req = https.get({
         hostname: host,
         path: "/socket.io/?EIO=4&transport=polling",
@@ -470,146 +414,75 @@ export class PocketOptionClient {
         headers: {
           ...CONN_HTTP_HEADERS,
           Host: host,
-          Accept: "*/*",
           ...(this.prefetchedCookies.length > 0 ? { Cookie: this.prefetchedCookies.join("; ") } : {}),
         },
       }, (res) => {
-        const cookies = (res.headers["set-cookie"] || []).map(
-          (c: string) => c.split(";")[0]
-        );
-
+        const cookies = (res.headers["set-cookie"] || []).map((c: string) => c.split(";")[0]);
         let body = "";
         res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
         res.on("end", () => {
           try {
-            console.log(`[PO] Polling response: ${body.substring(0, 200)}`);
-            // Response format: "0{"sid":"xxx","upgrades":["websocket"],...}"
             if (body.startsWith("0")) {
-              const jsonStr = body.substring(1);
-              const parsed = JSON.parse(jsonStr);
-              resolve({ sid: parsed.sid || "", cookies });
+              resolve({ sid: JSON.parse(body.substring(1)).sid || "", cookies });
             } else {
-              // Try regex fallback
               const match = body.match(/"sid"\s*:\s*"([^"]+)"/);
               resolve({ sid: match ? match[1] : "", cookies });
             }
           } catch (err) {
-            console.error("[PO] Polling parse error:", err);
             resolve({ sid: "", cookies });
           }
         });
       });
-
-      req.on("error", (err: Error) => {
-        console.error(`[PO] HTTP polling error: ${err.message}`);
-        reject(new Error(`HTTP polling failed: ${err.message}`));
-      });
-
-      req.setTimeout(10000, () => {
-        req.destroy();
-        reject(new Error("HTTP polling timeout"));
-      });
+      req.on("error", (err: Error) => reject(new Error(`HTTP polling failed: ${err.message}`)));
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error("HTTP polling timeout")); });
     });
   }
 
-  /** HTTP POST polling - send data via polling transport */
-  private httpPollingPost(
-    host: string,
-    sid: string,
-    body: string,
-    cookies: string[]
-  ): Promise<void> {
+  private httpPollingPost(host: string, sid: string, body: string, cookies: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
-      const path = `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`;
       const bodyBuf = Buffer.from(body, "utf8");
-
-      // Prepare combined cookies correctly
       const allCookies = [...this.prefetchedCookies, ...cookies];
-      const cookieHeader = allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {};
-
-      const options: https.RequestOptions = {
+      const req = https.request({
         hostname: host,
-        path,
+        path: `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`,
         method: "POST",
         headers: {
           ...CONN_HTTP_HEADERS,
           Host: host,
           "Content-Type": "text/plain; charset=UTF-8",
           "Content-Length": bodyBuf.length,
-          ...cookieHeader,
+          ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
         },
-      };
-
-      const req = https.request(options, (res) => {
-        let data = "";
-        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
-        res.on("end", () => {
-          console.log(`[PO] POST response: ${data.substring(0, 100)} (status: ${res.statusCode})`);
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve();
-          } else {
-            reject(new Error(`POST polling returned ${res.statusCode}`));
-          }
-        });
+      }, (res) => {
+        res.on("data", () => {});
+        res.on("end", () => resolve());
       });
-
-      req.on("error", (err: Error) => {
-        reject(new Error(`POST polling failed: ${err.message}`));
-      });
-
-      req.setTimeout(10000, () => {
-        req.destroy();
-        reject(new Error("POST polling timeout"));
-      });
-
+      req.on("error", (err: Error) => reject(new Error(`POST failed: ${err.message}`)));
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error("POST timeout")); });
       req.write(bodyBuf);
       req.end();
     });
   }
 
-  /** HTTP GET polling - read data from polling transport */
-  private httpPollingRead(
-    host: string,
-    sid: string,
-    cookies: string[]
-  ): Promise<string> {
+  private httpPollingRead(host: string, sid: string, cookies: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      const path = `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`;
-
-      // Prepare combined cookies correctly
       const allCookies = [...this.prefetchedCookies, ...cookies];
-      const cookieHeader = allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {};
-
-      const options: https.RequestOptions = {
+      const req = https.request({
         hostname: host,
-        path,
+        path: `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`,
         method: "GET",
         headers: {
           ...CONN_HTTP_HEADERS,
           Host: host,
-          Accept: "*/*",
-          ...cookieHeader,
+          ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
         },
-      };
-
-      const req = https.request(options, (res) => {
+      }, (res) => {
         let data = "";
         res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
-        res.on("end", () => {
-          console.log(`[PO] GET polling data: ${data.substring(0, 200)}`);
-          resolve(data);
-        });
+        res.on("end", () => resolve(data));
       });
-
-      req.on("error", (err: Error) => {
-        reject(new Error(`GET polling failed: ${err.message}`));
-      });
-
-      req.setTimeout(10000, () => {
-        req.destroy();
-        reject(new Error("GET polling timeout"));
-      });
-
+      req.on("error", (err: Error) => reject(new Error(`GET failed: ${err.message}`)));
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error("GET timeout")); });
       req.end();
     });
   }
@@ -618,33 +491,16 @@ export class PocketOptionClient {
 
   private handleRawMessage(raw: WebSocket.Data): void {
     try {
-      // PocketOption server may send text protocol messages as binary Buffers.
       let text: string;
-      if (Buffer.isBuffer(raw)) {
-        text = raw.toString("utf8");
-      } else if (typeof raw === "string") {
-        text = raw;
-      } else {
-        text = raw.toString();
-      }
+      if (Buffer.isBuffer(raw)) text = raw.toString("utf8");
+      else if (typeof raw === "string") text = raw;
+      else text = raw.toString();
 
-      // Check if this is a text protocol message (Engine.IO / Socket.IO)
       const firstChar = text.charAt(0);
-      if (
-        firstChar === "0" || // Engine.IO OPEN
-        firstChar === "1" || // Engine.IO CLOSE
-        firstChar === "2" || // Engine.IO PING
-        firstChar === "3" || // Engine.IO PONG
-        firstChar === "4" || // Socket.IO (40, 42, 451-)
-        firstChar === "5" || // Engine.IO UPGRADE
-        firstChar === "6"    // Engine.IO NOOP
-      ) {
+      if (["0", "1", "2", "3", "4", "5", "6"].includes(firstChar)) {
         this.handleTextMessage(text);
       } else {
-        // Binary data (balance, order, tick data, etc.)
-        const buf = Buffer.isBuffer(raw)
-          ? raw
-          : Buffer.from(typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer));
+        const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer));
         this.handleBinaryMessage(buf);
       }
     } catch (err) {
@@ -655,59 +511,31 @@ export class PocketOptionClient {
   // ============ Text Message Handler ============
 
   private handleTextMessage(message: string): void {
-    console.log(`[PO] << ${message.substring(0, 150)}`);
-
-    // Engine.IO OPEN: "0{sid:...}"
     if (message.startsWith("0")) {
-      console.log("[PO] Engine.IO OPEN received, sending Socket.IO CONNECT...");
       this.ws?.send("40"); // Socket.IO CONNECT
       return;
     }
-
-    // Engine.IO CLOSE: "1"
     if (message.startsWith("1")) {
-      console.log("[PO] Engine.IO CLOSE received");
       this.ws?.close();
       return;
     }
-
-    // Engine.IO PING: "2"
     if (message === "2") {
-      this.ws?.send("3"); // Engine.IO PONG
+      this.ws?.send("3"); // PONG
       return;
     }
-
-    // Engine.IO PONG with probe: "3probe"
     if (message === "3probe") {
-      console.log("[PO] Probe ACK received, sending upgrade complete...");
-      this.ws?.send("5"); // Engine.IO UPGRADE COMPLETE
-      // After upgrade, send Socket.IO CONNECT if not already sent via polling
-      if (!this.isUpgradeConnection) {
-        // Direct connection: CONNECT already sent after OPEN
-      } else {
-        // Upgrade connection: Socket.IO CONNECT was sent via polling,
-        // but we need to re-send via WebSocket to establish namespace
-        console.log("[PO] Sending Socket.IO CONNECT via WebSocket...");
-        this.ws?.send("40");
-      }
+      this.ws?.send("5");
+      if (this.state === ConnectionState.UPGRADING) this.ws?.send("40");
       return;
     }
-
-    // Engine.IO PONG: "3"
     if (message === "3") {
       this.handlePong();
       return;
     }
+    if (message === "6") return;
 
-    // Engine.IO NOOP: "6" (sent by server to close active polling GET requests)
-    if (message === "6") {
-      return;
-    }
-
-    // Socket.IO CONNECT ACK: "40{sid:...}"
     if (message.startsWith("40")) {
-      console.log("[PO] Socket.IO CONNECT ACK received, sending auth...");
-      // Auto-wrap SSID
+      this.state = ConnectionState.AUTHENTICATING;
       let authMessage = this.ssid;
       if (!this.ssid.startsWith('42["auth"')) {
         authMessage = `42["auth",{"session":"${this.ssid}","isDemo":${this.isDemo ? 1 : 0},"uid":0,"platform":2,"isFastHistory":true,"isOptimized":true}]`;
@@ -716,35 +544,21 @@ export class PocketOptionClient {
       return;
     }
 
-    // Socket.IO EVENT: "42[...]"
     if (message.startsWith("42")) {
       try {
         const data = JSON.parse(message.substring(2));
         if (Array.isArray(data) && data.length >= 1) {
           const eventName = data[0];
-
           if (eventName === "NotAuthorized") {
-            console.error("[PO] NotAuthorized - SSID expired or invalid");
-            this.ssidExpired = true;
-            this.intentionallyClosed = true;
-            this.authenticated = false;
-            this.onSsidExpiredCallbacks.forEach((cb) => {
-              try { cb(); } catch { }
-            });
-            if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-            if (this.upgradeReject) this.upgradeReject(new Error("NotAuthorized: SSID invalide"));
-            this.ws?.close();
+            this.handleNotAuthorized();
             return;
           }
-
-          // Handle other Socket.IO events inline
           this.handleSocketIOEvent(eventName, data[1]);
         }
-      } catch { }
+      } catch {}
       return;
     }
 
-    // Socket.IO BINARY EVENT: "451-[...]"
     if (message.startsWith("451-")) {
       const jsonPart = message.substring(message.indexOf("-") + 1);
       try {
@@ -753,107 +567,228 @@ export class PocketOptionClient {
           const eventName = data[0];
           const eventData = data[1];
 
-          // Check if this event has a binary placeholder (_placeholder: true)
-          // The actual data will arrive in the next binary WebSocket frame
-          if (eventData && typeof eventData === "object" && (eventData as Record<string, unknown>)._placeholder) {
-            console.log(`[PO] Binary event pending: ${eventName} (waiting for binary attachment)`);
-            this.pendingBinaryEvent = eventName;
-            this.pendingBinaryEventData = null;
+          if (eventData && typeof eventData === "object" && (eventData as any)._placeholder) {
+            // Push to queue, expect next binary to belong to this
+            this.expectedBinaryEvents.push(eventName);
           } else {
-            // No placeholder - process immediately
             this.handleSocketIOEvent(eventName, eventData);
           }
         }
-      } catch (err) {
-        console.error("[PO] Failed to parse 451- message:", err);
-      }
+      } catch (err) {}
       return;
     }
   }
 
+  private handleNotAuthorized() {
+    this.ssidExpired = true;
+    this.intentionallyClosed = true;
+    this.state = ConnectionState.DISCONNECTED;
+    this.onSsidExpiredCallbacks.forEach((cb) => cb());
+    if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
+    if (this.upgradeReject) this.upgradeReject(new Error("NotAuthorized: SSID invalide"));
+    this.ws?.close();
+  }
+
   // ============ Socket.IO Event Handler ============
 
-  private handleSocketIOEvent(
-    eventName: string,
-    eventData: unknown
-  ): void {
-    console.log(`[PO] Event: ${eventName}`);
-
+  private handleSocketIOEvent(eventName: string, eventData: any): void {
     switch (eventName) {
       case "successauth":
-        this.authenticated = true;
-        this.connected = true;
+        this.state = ConnectionState.READY;
         this.reconnectAttempts = 0;
-        console.log("[PO] Authenticated successfully!");
-
         this.startHeartbeats();
-
         if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
         if (this.upgradeResolve) this.upgradeResolve();
 
-        // Re-subscribe to previously active symbols
         for (const [, sub] of this.activeSubscriptions) {
           this.changeSymbol(sub.asset, sub.size);
         }
-
         this.onAuthCallbacks.forEach((cb) => cb());
         break;
 
-      case "successupdateBalance":
-        break;
-
       case "successopenOrder":
-        this.successOpenOrderFlag = true;
-        // Set pendingBinaryEvent so the NEXT binary frame is also captured
-        this.pendingBinaryEvent = "successopenOrder";
-        console.log("[PO] Order request accepted, waiting for binary confirmation...");
-        // Create a minimal orderData immediately in case there is no binary frame
-        // (some PO server versions send successopenOrder as plain 42 text without a binary attachment)
-        // This prevents the 15s Phase-1 timeout in placeTrade
-        if (!this.orderData) {
-          this.orderData = { _textOnly: true, requestId: this.pendingTradeRequestId ?? Date.now() };
-          console.log("[PO] Created minimal orderData from text event (no binary yet)");
-        }
+        this.internalEvents.emit("successopenOrder", eventData || { _textOnly: true });
         break;
 
       case "updateClosedDeals":
-        this.updateClosedDealsFlag = true;
-        break;
-
-      case "successcloseOrder":
+        if (Array.isArray(eventData)) {
+          this.closedDealsData = eventData;
+          this.internalEvents.emit("updateClosedDeals", eventData);
+        }
         break;
 
       case "loadHistoryPeriod":
       case "loadHistoryPeriodFast":
-        this.loadHistoryPeriodFlag = true;
-        if (eventData && typeof eventData === "object") {
-          this.historyPeriodData = eventData as Record<string, unknown>;
-        }
+        this.internalEvents.emit("history", eventData);
         break;
 
       case "updateStream":
-        this.updateStreamFlag = true;
         break;
 
       case "updateHistoryNew":
       case "updateHistoryNewFast":
-        if (eventData && typeof eventData === "object") {
-          this.historyNewData = eventData as Record<string, unknown>;
-          this.processHistoryNew(eventData as Record<string, unknown>);
-        }
+        this.processHistoryNew(eventData);
+        this.internalEvents.emit("historyNew", eventData);
         break;
-
-      default:
-        console.log(`[PO] Unhandled event: ${eventName}`);
     }
   }
 
-  // ============ Disconnect Handler ============
+  // ============ Binary Message Handler ============
+
+  private handleBinaryMessage(buffer: Buffer): void {
+    let message: any;
+    try {
+      const raw = buffer.toString("utf8");
+      message = JSON.parse(raw);
+    } catch {
+      if (buffer.length === 8) {
+        const bal = buffer.readDoubleLE(0);
+        if (bal > 0 && bal < 10000000) this.updateBalance(bal);
+      }
+      return;
+    }
+
+    if (this.expectedBinaryEvents.length > 0) {
+      const eventName = this.expectedBinaryEvents.shift()!;
+      switch (eventName) {
+        case "loadHistoryPeriod":
+        case "loadHistoryPeriodFast":
+          this.internalEvents.emit("history", message);
+          break;
+        case "updateHistoryNew":
+        case "updateHistoryNewFast":
+          this.processHistoryNew(message);
+          this.internalEvents.emit("historyNew", message);
+          break;
+        case "updateClosedDeals":
+          if (Array.isArray(message)) {
+            this.closedDealsData = message;
+            this.internalEvents.emit("updateClosedDeals", message);
+          }
+          break;
+        case "updateStream":
+          if (Array.isArray(message)) this.processStreamTick(message);
+          break;
+        case "updateAssets":
+          if (Array.isArray(message)) {
+            for (const asset of message) {
+              if (asset && asset.symbol && asset.payout) this.assetData[asset.symbol] = { payout: Number(asset.payout) / 100 };
+            }
+          }
+          break;
+        case "successauth":
+        case "successupdateBalance":
+        case "successupdatePending":
+          if (message && message.balance !== undefined) this.updateBalance(Number(message.balance), message.isDemo);
+          if (eventName === "successauth") this.handleSocketIOEvent("successauth", message);
+          break;
+        case "successopenOrder":
+          this.internalEvents.emit("successopenOrder", message);
+          break;
+      }
+      return;
+    }
+
+    // Unmapped binary JSON fallback
+    if (message && typeof message === "object") {
+      if (message.balance !== undefined) this.updateBalance(Number(message.balance), message.isDemo);
+      if (message.requestId !== undefined) this.internalEvents.emit("successopenOrder", message);
+      if (Array.isArray(message) && message.length > 0 && Array.isArray(message[0])) {
+        // Probable tick stream
+        this.processStreamTick(message);
+      }
+    }
+  }
+
+  private updateBalance(bal: number, isDemo?: any) {
+    this.lastBalance = {
+      balance: bal,
+      isDemo: Number(isDemo !== undefined ? isDemo : (this.isDemo ? 1 : 0)),
+    };
+    this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+  }
+
+  // ============ History & Tick Processing ============
+
+  private startTickThrottler() {
+    this.tickFlushInterval = setInterval(() => {
+      for (const [asset, candle] of this.pendingTicks.entries()) {
+        const listeners = this.candleListeners.get(asset) || [];
+        for (const listener of listeners) {
+          try { listener(candle); } catch {}
+        }
+      }
+      this.pendingTicks.clear();
+    }, 100); // 10 updates per second per asset max
+  }
+
+  private processStreamTick(message: any[]): void {
+    const asset = this.currentSymbol?.asset;
+    if (!asset || this.state !== ConnectionState.READY) return;
+
+    for (const entry of message) {
+      if (!Array.isArray(entry) || entry.length < 2) continue;
+      const timestamp = entry.length >= 3 ? Number(entry[0]) : Number(entry[0]);
+      const price = entry.length >= 3 ? Number(entry[2]) : Number(entry[1]);
+
+      if (price <= 0 || timestamp <= 0) continue;
+
+      const existing = this.pendingTicks.get(asset);
+      if (existing) {
+        existing.high = Math.max(existing.high, price);
+        existing.low = Math.min(existing.low, price);
+        existing.close = price;
+        existing.timestamp = timestamp;
+      } else {
+        this.pendingTicks.set(asset, {
+          asset, open: price, high: price, low: price, close: price, volume: 0, timestamp
+        });
+      }
+    }
+  }
+
+  private processHistoryNew(data: any): void {
+    const asset = this.currentSymbol?.asset;
+    if (!asset) return;
+    const candles = this.parseCandleData(asset, data);
+    for (const candle of candles) {
+      const listeners = this.candleListeners.get(asset) || [];
+      for (const listener of listeners) {
+        try { listener(candle); } catch {}
+      }
+    }
+  }
+
+  private parseCandleData(asset: string, data: any): CandleData[] {
+    if (!data) return [];
+    let parsed: CandleData[] = [];
+
+    if (Array.isArray(data.data) && data.data.length > 0) {
+      if (typeof data.data[0] === "object" && "time" in data.data[0]) {
+        parsed = data.data.map((c: any) => ({
+          asset, open: Number(c.open || 0), high: Number(c.high || 0), low: Number(c.low || 0),
+          close: Number(c.close || 0), volume: 0, timestamp: Number(c.time || 0),
+        }));
+      } else if (Array.isArray(data.data[0])) {
+        parsed = data.data.map((c: any[]) => ({
+          asset, open: Number(c[1] || 0), close: Number(c[2] || 0), high: Number(c[3] || 0),
+          low: Number(c[4] || 0), volume: Number(c[5] || 0), timestamp: Number(c[0] || 0),
+        }));
+      }
+    } else if (Array.isArray(data.candles) && data.candles.length > 0) {
+      parsed = data.candles.map((c: any[]) => ({
+        asset, open: Number(c[1]), close: Number(c[2]), high: Number(c[3]),
+        low: Number(c[4]), volume: 0, timestamp: Number(c[0]),
+      }));
+    }
+
+    return parsed.filter((c) => c && c.timestamp > 0 && c.close > 0).sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  // ============ Disconnect & Cleanup ============
 
   private handleDisconnect(): void {
-    this.connected = false;
-    this.authenticated = false;
-    this.isUpgradeConnection = false;
+    this.state = ConnectionState.DISCONNECTED;
     this.upgradeResolve = null;
     this.upgradeReject = null;
     if (this.connectionTimeout) {
@@ -862,21 +797,17 @@ export class PocketOptionClient {
     }
     this.cleanup();
 
-    // Explicitly terminate socket to avoid lingering connections
     if (this.ws) {
-      try { this.ws.terminate(); } catch { }
+      try { this.ws.terminate(); } catch {}
       this.ws = null;
     }
 
     if (!this.intentionallyClosed) {
       const delay = getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);
       this.reconnectAttempts++;
-      console.log(`[PO] Disconnected. Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts})...`);
       setTimeout(() => {
-        if (!this.connected && !this.intentionallyClosed) {
-          this.connect(this.isDemo).catch((err) => {
-            console.error(`[PO] Reconnection failed: ${err.message}`);
-          });
+        if (this.state === ConnectionState.DISCONNECTED && !this.intentionallyClosed) {
+          this.connect(this.isDemo).catch(() => {});
         }
       }, delay);
     }
@@ -884,543 +815,156 @@ export class PocketOptionClient {
 
   disconnect(): void {
     this.intentionallyClosed = true;
+    this.state = ConnectionState.DISCONNECTED;
     this.cleanup();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-    this.connected = false;
-    this.authenticated = false;
-    this.upgradeResolve = null;
-    this.upgradeReject = null;
-    if (this.connectionTimeout) {
-      clearTimeout(this.connectionTimeout);
-      this.connectionTimeout = null;
-    }
   }
 
-  // ============ Binary Message Handler ============
-
-  private handleBinaryMessage(buffer: Buffer): void {
-    try {
-      // First try to parse as regular UTF-8 JSON (PocketOption often wraps JSON in binary)
-      const raw = buffer.toString("utf8");
-      let message: unknown;
-
-      // If it's a binary attachment (not raw JSON), it might be msgpack or similar
-      // but PocketOption usually uses JSON even in binary frames
-      try {
-        message = JSON.parse(raw);
-      } catch {
-        // If not JSON, it could be a raw binary stream of ticks or balance
-        // Handle specific binary formats if known, otherwise log for debug
-        if (buffer.length === 8) {
-          // Possible 64-bit float balance update
-          const bal = buffer.readDoubleLE(0);
-          if (bal > 0 && bal < 10000000) {
-            console.log(`[PO] Detected raw binary balance: ${bal}`);
-            this.lastBalance = { balance: bal, isDemo: this.isDemo ? 1 : 0 };
-            this.onBalanceCallbacks.forEach(cb => cb(this.lastBalance!));
-          }
-        }
-        return;
-      }
-
-      // If we have a pending binary event from a 451- placeholder,
-      // match this binary data with that event
-      if (this.pendingBinaryEvent) {
-        const eventName = this.pendingBinaryEvent;
-        this.pendingBinaryEvent = null;
-        console.log(`[PO] Binary attachment for event: ${eventName}`);
-
-        switch (eventName) {
-          case "loadHistoryPeriod":
-          case "loadHistoryPeriodFast":
-            if (typeof message === "object" && message !== null && "data" in (message as Record<string, unknown>)) {
-              const msg = message as Record<string, unknown>;
-              this.loadHistoryPeriodFlag = true;
-              this.historyPeriodData = msg;
-              const dataArr = msg.data;
-              console.log(`[PO] History period data: ${Array.isArray(dataArr) ? dataArr.length + ' candles' : 'received'}`);
-            }
-            return;
-
-          case "updateHistoryNew":
-          case "updateHistoryNewFast":
-            if (typeof message === "object" && message !== null) {
-              this.historyNewData = message as Record<string, unknown>;
-              this.processHistoryNew(message as Record<string, unknown>);
-            }
-            return;
-
-          case "updateClosedDeals":
-            if (Array.isArray(message)) {
-              this.updateClosedDealsFlag = true;
-              this.closedDealsData = message;
-            }
-            return;
-
-          case "updateStream":
-            if (Array.isArray(message)) {
-              this.processStreamTick(message);
-            }
-            return;
-
-          case "updateAssets":
-            console.log("[PO] Assets data received (binary)");
-            if (Array.isArray(message)) {
-              for (const asset of message) {
-                if (asset && typeof asset === "object" && asset.symbol && asset.payout) {
-                  this.assetData[asset.symbol] = { payout: Number(asset.payout) / 100 };
-                }
-              }
-            }
-            return;
-
-          case "updateCharts":
-            console.log("[PO] Charts update received (binary)");
-            return;
-
-          case "updateOpenedDeals":
-            console.log("[PO] Opened deals update received (binary)");
-            return;
-
-          case "successauth":
-            // Authentication successful - the binary data may contain user info/balance
-            console.log("[PO] Auth success binary data received");
-            if (typeof message === "object" && message !== null) {
-              const msg = message as Record<string, any>;
-              if (msg.balance !== undefined) {
-                this.lastBalance = {
-                  balance: Number(msg.balance),
-                  isDemo: Number(msg.isDemo !== undefined ? msg.isDemo : (this.isDemo ? 1 : 0)),
-                };
-                console.log(`[PO] Balance updated from auth: ${this.lastBalance.balance}`);
-                this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
-              }
-            }
-            // Now trigger the auth success handler
-            this.handleSocketIOEvent("successauth", message);
-            return;
-
-          case "successupdateBalance":
-          case "successupdatePending":
-            if (typeof message === "object" && message !== null) {
-              const msg = message as Record<string, any>;
-              if (msg.balance !== undefined) {
-                this.lastBalance = {
-                  balance: Number(msg.balance),
-                  isDemo: Number(msg.isDemo !== undefined ? msg.isDemo : (this.isDemo ? 1 : 0)),
-                };
-                console.log(`[PO] Balance updated from event: ${this.lastBalance.balance}`);
-                this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
-              }
-            }
-            return;
-
-          case "successopenOrder": {
-            console.log("[PO] Order confirmation data received (binary)");
-            const orderMsg = message as Record<string, unknown>;
-            this.orderData = orderMsg;
-            // Extract the deal id so we can match it in closedDeals
-            const dealId = String(orderMsg.id ?? orderMsg.deal_id ?? orderMsg.requestId ?? "");
-            if (dealId) {
-              this.confirmedOrderId = dealId;
-              console.log(`[PO] Confirmed order id: ${dealId}`);
-            }
-            return;
-          }
-
-          default:
-            console.log(`[PO] Unhandled binary event: ${eventName}`);
-            return;
-        }
-      }
-
-      // No pending binary event - handle as standalone binary data
-      if (typeof message === "object" && message !== null) {
-        const msg = message as Record<string, any>;
-        if (msg.balance !== undefined) {
-          this.lastBalance = {
-            balance: Number(msg.balance),
-            isDemo: Number(msg.isDemo !== undefined ? msg.isDemo : (this.isDemo ? 1 : 0)),
-          };
-          this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
-          return;
-        }
-      }
-
-      if (
-        (typeof message === "object" &&
-          message !== null &&
-          "requestId" in (message as Record<string, unknown>))
-      ) {
-        this.orderData = message as Record<string, unknown>;
-        return;
-      }
-
-      if (
-        this.loadHistoryPeriodFlag &&
-        typeof message === "object" &&
-        message !== null &&
-        "data" in (message as Record<string, unknown>)
-      ) {
-        this.loadHistoryPeriodFlag = false;
-        this.historyPeriodData = message as Record<string, unknown>;
-        return;
-      }
-
-      if (this.updateStreamFlag && Array.isArray(message)) {
-        this.updateStreamFlag = false;
-        this.processStreamTick(message);
-        return;
-      }
-
-      if (this.updateClosedDealsFlag && Array.isArray(message)) {
-        this.updateClosedDealsFlag = false;
-        this.closedDealsData = message;
-        return;
-      }
-    } catch (err) {
-      // Ignore parse errors for non-JSON binary frames
+  private cleanup(): void {
+    if (this.socketIoHeartbeat) {
+      clearInterval(this.socketIoHeartbeat);
+      this.socketIoHeartbeat = null;
     }
-  }
-
-  // ============ History New Processing ============
-
-  private processHistoryNew(data: Record<string, unknown>): void {
-    const asset = this.currentSymbol?.asset;
-    if (!asset) return;
-
-    // Handle binary data with "data" field (from loadHistoryPeriod binary attachment)
-    if ("data" in data && Array.isArray(data.data)) {
-      const dataArr = data.data as unknown[];
-      console.log(`[PO] History data: ${dataArr.length} items for ${asset}`);
-
-      // Format: array of objects with {time, open, high, low, close}
-      for (const item of dataArr) {
-        if (typeof item === "object" && item !== null && "time" in (item as Record<string, unknown>)) {
-          const c = item as Record<string, unknown>;
-          const candle: CandleData = {
-            asset,
-            open: Number(c.open || 0),
-            close: Number(c.close || 0),
-            high: Number(c.high || 0),
-            low: Number(c.low || 0),
-            volume: 0,
-            timestamp: Number(c.time || 0),
-          };
-          if (candle.timestamp > 0 && candle.close > 0) {
-            this.emitCandle(asset, candle);
-          }
-        }
-      }
-    }
-
-    // Handle "candles" field (from updateHistoryNew binary attachment)
-    const candlesRaw = data.candles;
-    if (Array.isArray(candlesRaw) && candlesRaw.length > 0) {
-      console.log(`[PO] Received ${candlesRaw.length} candles for ${asset}`);
-      for (const can of candlesRaw) {
-        if (Array.isArray(can) && can.length >= 5) {
-          const candle: CandleData = {
-            asset,
-            open: Number(can[1]),
-            close: Number(can[2]),
-            high: Number(can[3]),
-            low: Number(can[4]),
-            volume: 0,
-            timestamp: Number(can[0]),
-          };
-          if (candle.timestamp > 0 && candle.close > 0) {
-            this.emitCandle(asset, candle);
-          }
-        }
-      }
-    }
-
-    const historyRaw = data.history;
-    if (Array.isArray(historyRaw) && historyRaw.length > 0) {
-      console.log(`[PO] Received ${historyRaw.length} ticks for ${asset}`);
-    }
-  }
-
-  // ============ Stream Tick Processing ============
-
-  /** Process real-time tick data from updateStream to update the current candle */
-  private processStreamTick(message: unknown[]): void {
-    const asset = this.currentSymbol?.asset;
-    if (!asset || !this.authenticated) return;
-
-    this.tickCount++;
-    if (this.tickCount % 100 === 0) {
-      console.log(`[PO] Stream: ${this.tickCount} ticks processed for ${asset}`);
-    }
-
-    // updateStream data format: array of [timestamp, quote_id, price] or [timestamp, price]
-    for (const entry of message) {
-      if (!Array.isArray(entry)) continue;
-
-      let timestamp: number;
-      let price: number;
-
-      if (entry.length >= 3) {
-        // Format: [timestamp, quote_id, price]
-        timestamp = Number(entry[0]);
-        price = Number(entry[2]);
-      } else if (entry.length >= 2) {
-        // Format: [timestamp, price]
-        timestamp = Number(entry[0]);
-        price = Number(entry[1]);
-      } else {
-        continue;
-      }
-
-      if (price <= 0 || timestamp <= 0) continue;
-
-      // Emit a real-time candle update for the current forming candle
-      // The cache will merge this with the existing last candle
-      const candle: CandleData = {
-        asset,
-        open: price,   // Will be overridden by cache merge if candle exists
-        high: price,
-        low: price,
-        close: price,
-        volume: 0,
-        timestamp,
-      };
-      this.emitCandle(asset, candle);
-    }
+    this.expectedBinaryEvents = [];
   }
 
   // ============ Commands ============
 
   changeSymbol(asset: string, period: number): void {
     const poAsset = PocketOptionClient.toPOSymbol(asset);
-    console.log(`[PO] changeSymbol: ${asset} (${poAsset}) @ ${period}s`);
     this.currentSymbol = { asset, period };
-    const subKey = `${asset}:${period}`;
-    this.activeSubscriptions.set(subKey, { asset, size: period });
+    this.activeSubscriptions.set(`${asset}:${period}`, { asset, size: period });
     this.sendEvent(["changeSymbol", { asset: poAsset, period }]);
   }
 
-  loadHistoryPeriod(
-    asset: string,
-    period: number,
-    endTime: number,
-    offset: number
-  ): void {
-    this.sendEvent([
-      "loadHistoryPeriod",
-      { asset: PocketOptionClient.toPOSymbol(asset), index: endTime, time: endTime, offset, period },
-    ]);
+  loadHistoryPeriod(asset: string, period: number, endTime: number, offset: number): void {
+    this.sendEvent(["loadHistoryPeriod", { asset: PocketOptionClient.toPOSymbol(asset), index: endTime, time: endTime, offset, period }]);
   }
 
-  openOrder(
-    asset: string,
-    amount: number,
-    action: "call" | "put",
-    isDemo: number,
-    time: number
-  ): void {
-    const poAsset = PocketOptionClient.toPOSymbol(asset);
-    console.log(`[PO] Sending openOrder: ${poAsset} $${amount} ${action} (demo=${isDemo}, time=${time})`);
-
-    // Ensure data types are correct for the PocketOption protocol
-    const orderData = {
-      asset: poAsset,
-      amount: Number(amount),
-      action: action.toLowerCase(),
-      isDemo: Number(isDemo),
-      requestId: Date.now(), // Unique request ID
-      optionType: 100, // Fixed for digital options
-      time: Number(time),
-    };
-
-    this.sendEvent(["openOrder", orderData]);
+  openOrder(asset: string, amount: number, action: "call" | "put", isDemo: number, time: number): void {
+    this.sendEvent(["openOrder", {
+      asset: PocketOptionClient.toPOSymbol(asset), amount: Number(amount), action: action.toLowerCase(),
+      isDemo: Number(isDemo), requestId: Date.now(), optionType: 100, time: Number(time),
+    }]);
   }
 
   getBalances(): void {
     this.sendEvent({ name: "get-balances", version: "1.0" });
   }
 
-  // ============ Async Request Methods ============
+  private sendEvent(data: unknown): void {
+    if (!this.ws || this.state !== ConnectionState.READY) return;
+    try {
+      this.ws.send(`42${JSON.stringify(data)}`);
+    } catch (err) {}
+  }
 
-  /**
-   * Fetch historical candles by subscribing to the asset and waiting for
-   * updateHistoryNew data. Falls back to loadHistoryPeriod if needed.
-   */
-  async requestCandleHistory(
-    asset: string,
-    period: number,
-    count: number
-  ): Promise<CandleData[]> {
-    if (!this.connected || !this.authenticated) return [];
+  // ============ Async Public API ============
 
-    // Reset state
-    this.historyPeriodData = null;
-    this.historyNewData = null;
-    this.loadHistoryPeriodFlag = false;
-
+  async requestCandleHistory(asset: string, period: number, count: number): Promise<CandleData[]> {
+    if (this.state !== ConnectionState.READY) return [];
     const poAsset = PocketOptionClient.toPOSymbol(asset);
 
-    // Strategy 1: Subscribe via changeSymbol and wait for updateHistoryNew
-    // This typically provides the most complete candle history
     if (this.currentSymbol?.asset !== asset || this.currentSymbol?.period !== period) {
       this.changeSymbol(asset, period);
     } else {
-      // Already watching, but force a refresh if we need history
       this.sendEvent(["changeSymbol", { asset: poAsset, period }]);
     }
 
-    // Wait for updateHistoryNew/Fast binary data to arrive (max 3 seconds)
-    for (let i = 0; i < 30; i++) {
-      if (this.historyNewData !== null) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-
-    // Check if we got candle data from the subscription
-    if (this.historyNewData) {
-      const candles = this.parseCandleData(asset, this.historyNewData);
-      if (candles.length >= 10) {
-        console.log(`[PO] Got ${candles.length} candles from subscription for ${asset}`);
-        return candles;
-      }
-    }
-
-    // Strategy 2: Try loadHistoryPeriod for additional data
-    this.historyPeriodData = null;
-    this.loadHistoryPeriodFlag = false;
+    try {
+      const historyNew = await this.waitForEvent<any>("historyNew", 3000);
+      const candles = this.parseCandleData(asset, historyNew);
+      if (candles.length >= 10) return candles;
+    } catch (e) {}
 
     const endTime = Math.floor(Date.now() / 1000);
-    // Request a bit more than needed to ensure we get enough after filtering
     this.loadHistoryPeriod(poAsset, period, endTime, Math.max(count, 300));
-
-    for (let i = 0; i < 60; i++) { // Increase wait to 6s
-      if (this.historyPeriodData !== null) break;
-      await new Promise((r) => setTimeout(r, 100));
-    }
-
-    if (this.historyPeriodData) {
-      const candles = this.parseCandleData(asset, this.historyPeriodData);
-      if (candles.length > 0) {
-        console.log(`[PO] Got ${candles.length} candles from loadHistoryPeriod for ${asset}`);
-        return candles;
-      }
-    }
-
-    // Strategy 3: Try with different offset values and longer wait
-    for (const offsetMult of [1, 2, 5]) {
-      this.historyPeriodData = null;
-      this.loadHistoryPeriodFlag = false;
-
-      const offsetTime = endTime - (count * period * offsetMult);
-      this.loadHistoryPeriod(poAsset, period, offsetTime, Math.max(count, 300));
-
-      for (let i = 0; i < 40; i++) {
-        if (this.historyPeriodData !== null) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-
-      if (this.historyPeriodData) {
-        const candles = this.parseCandleData(asset, this.historyPeriodData);
-        if (candles.length > 0) {
-          console.log(`[PO] Got ${candles.length} candles from loadHistoryPeriod (offset=${offsetMult}) for ${asset}`);
-          return candles;
-        }
-      }
-    }
-
-    console.log(`[PO] Could not get candle history for ${asset}`);
-    return [];
-  }
-
-  /** Parse candle data from server response (both historyPeriod and historyNew formats) */
-  private parseCandleData(asset: string, data: Record<string, unknown>): CandleData[] {
-    const dataArr = data.data;
-    if (Array.isArray(dataArr) && dataArr.length > 0) {
-      // Format 1: array of objects with {time, open, high, low, close}
-      if (typeof dataArr[0] === "object" && dataArr[0] !== null && "time" in (dataArr[0] as Record<string, unknown>)) {
-        return dataArr
-          .map((c: Record<string, unknown>) => ({
-            asset,
-            open: Number(c.open || 0),
-            high: Number(c.high || 0),
-            low: Number(c.low || 0),
-            close: Number(c.close || 0),
-            volume: 0,
-            timestamp: Number(c.time || 0),
-          }))
-          .filter((c: CandleData) => c.timestamp > 0 && c.close > 0)
-          .sort((a: CandleData, b: CandleData) => a.timestamp - b.timestamp);
-      }
-
-      // Format 2: array of arrays [[time, open, close, high, low, volume], ...]
-      if (Array.isArray(dataArr[0])) {
-        return dataArr
-          .map((c: unknown[]) => {
-            if (Array.isArray(c) && c.length >= 5) {
-              return {
-                asset,
-                open: Number(c[1] || 0),
-                close: Number(c[2] || 0),
-                high: Number(c[3] || 0),
-                low: Number(c[4] || 0),
-                volume: Number(c[5] || 0),
-                timestamp: Number(c[0] || 0),
-              };
-            }
-            return null;
-          })
-          .filter((c): c is CandleData => c !== null && c.timestamp > 0 && c.close > 0)
-          .sort((a, b) => a.timestamp - b.timestamp);
-      }
-    }
-
-    // Format 3: candles field from updateHistoryNew
-    const candlesRaw = data.candles;
-    if (Array.isArray(candlesRaw) && candlesRaw.length > 0) {
-      return candlesRaw
-        .map((c: unknown) => {
-          if (Array.isArray(c) && c.length >= 5) {
-            return {
-              asset,
-              open: Number(c[1]),
-              close: Number(c[2]),
-              high: Number(c[3]),
-              low: Number(c[4]),
-              volume: 0,
-              timestamp: Number(c[0]),
-            };
-          }
-          return null;
-        })
-        .filter((c): c is CandleData => c !== null && c.timestamp > 0 && c.close > 0)
-        .sort((a, b) => a.timestamp - b.timestamp);
-    }
+    
+    try {
+      const history = await this.waitForEvent<any>("history", 6000);
+      const candles = this.parseCandleData(asset, history);
+      if (candles.length > 0) return candles;
+    } catch (e) {}
 
     return [];
   }
 
-  onCandle(
-    asset: string,
-    callback: (candle: CandleData) => void,
-    size = 60
-  ): () => void {
-    if (!this.candleListeners.has(asset)) {
-      this.candleListeners.set(asset, []);
+  async placeTrade(request: { asset: string; direction: "CALL" | "PUT"; amount: number; duration: number }): Promise<TradeResult> {
+    if (this.state !== ConnectionState.READY) throw new Error("Not connected");
+
+    const releaseMutex = await this.tradeMutex.acquire();
+
+    try {
+      await new Promise((r) => setTimeout(r, getTradeJitter()));
+
+      const pendingRequestId = Date.now();
+      this.openOrder(request.asset, request.amount, request.direction === "CALL" ? "call" : "put", this.isDemo ? 1 : 0, request.duration);
+
+      // Event Driven Phase 1: Confirmation
+      const order = await this.waitForEvent<any>("successopenOrder", 15000);
+      if (!order) throw new Error("Trade confirmation empty");
+
+      const tradeId = String(order.id ?? order.deal_id ?? pendingRequestId);
+      const openPrice = Number(order.open_price ?? order.openPrice ?? 0);
+
+      // Event Driven Phase 2: Result
+      const tradeDurationMs = request.duration * 1000;
+      await new Promise((r) => setTimeout(r, tradeDurationMs));
+
+      this.getBalances();
+
+      const match = await this.waitForEvent<any[]>("updateClosedDeals", 30000, (deals) => {
+        return deals.some(d => String(d.id ?? d.deal_id) === tradeId);
+      });
+
+      const deal = match.find(d => String(d.id ?? d.deal_id) === tradeId);
+      const profit = Number(deal.profit ?? deal.win_amount ?? -request.amount);
+      const closePrice = Number(deal.close_price ?? deal.closePrice ?? 0);
+
+      return { win: profit > 0, profit, openPrice, closePrice, tradeId };
+    } finally {
+      releaseMutex();
     }
+  }
+
+  async getBalance(): Promise<{ demo: number; live: number }> {
+    if (this.lastBalance) {
+      return this.isDemo ? { demo: this.lastBalance.balance, live: 0 } : { demo: 0, live: this.lastBalance.balance };
+    }
+    return { demo: 0, live: 0 };
+  }
+
+  async getTradeHistory(): Promise<PocketOptionTrade[]> {
+    this.getBalances();
+    try {
+      const deals = await this.waitForEvent<any[]>("updateClosedDeals", 3000);
+      return deals.map((d) => ({
+        id: String(d.id || d.deal_id || ""),
+        asset: String(d.asset || d.symbol || ""),
+        direction: String(d.direction || d.action || "").toLowerCase() === "call" ? "CALL" : "PUT",
+        amount: Number(d.amount || 0),
+        profit: Number(d.profit || 0),
+        openPrice: Number(d.open_price || 0),
+        closePrice: Number(d.close_price || 0),
+        openTime: Number(d.open_time || 0),
+        closeTime: Number(d.close_time || 0),
+        result: Number(d.profit || 0) > 0 ? "WIN" : "LOSS",
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  // ============ Event Callbacks (Legacy Adapters) ============
+
+  onCandle(asset: string, callback: (candle: CandleData) => void, size = 60): () => void {
+    if (!this.candleListeners.has(asset)) this.candleListeners.set(asset, []);
     this.candleListeners.get(asset)!.push(callback);
-
-    const subKey = `${asset}:${size}`;
-    if (!this.activeSubscriptions.has(subKey)) {
-      this.activeSubscriptions.set(subKey, { asset, size });
-    }
-
-    if (this.authenticated) {
-      this.changeSymbol(asset, size);
-    }
-
+    this.activeSubscriptions.set(`${asset}:${size}`, { asset, size });
+    if (this.state === ConnectionState.READY) this.changeSymbol(asset, size);
     return () => {
       const listeners = this.candleListeners.get(asset);
       if (listeners) {
@@ -1430,225 +974,31 @@ export class PocketOptionClient {
     };
   }
 
-  async placeTrade(request: {
-    asset: string;
-    direction: "CALL" | "PUT";
-    amount: number;
-    duration: number;
-  }): Promise<TradeResult> {
-    if (!this.connected || !this.authenticated) {
-      throw new Error("Not connected");
-    }
-
-    // Use mutex to serialize trades on this client
-    let releaseMutex: () => void;
-    const mutexPromise = new Promise<void>((resolve) => {
-      releaseMutex = resolve;
-    });
-    const prevMutex = this.tradeMutex;
-    this.tradeMutex = this.tradeMutex.catch(() => { }).then(() => mutexPromise);
-
-    await prevMutex.catch(() => { });
-
-    try {
-      // Reset all trade state before placing
-      this.orderData = null;
-      this.tradeResult = null;
-      this.confirmedOrderId = null;
-      this.successOpenOrderFlag = false;
-      this.pendingTradeRequestId = Date.now();
-
-      // Add human-like jitter before placing trade
-      const jitter = getTradeJitter();
-      await new Promise((r) => setTimeout(r, jitter));
-
-      const action = request.direction === "CALL" ? "call" : "put";
-      this.openOrder(
-        request.asset,
-        request.amount,
-        action,
-        this.isDemo ? 1 : 0,
-        request.duration
-      );
-
-      // ── Phase 1: Wait for successopenOrder binary confirmation (max 15s) ──
-      const phase1Start = Date.now();
-      while (Date.now() - phase1Start < 15000) {
-        if (this.orderData !== null) break;
-        await new Promise((r) => setTimeout(r, 150));
-      }
-
-      if (!this.orderData) {
-        console.error(`[PO] Trade NOT confirmed for ${request.asset} after 15s — order may not have been placed.`);
-        throw new Error("Trade confirmation timeout (successopenOrder)");
-      }
-
-      const order = this.orderData as Record<string, unknown>;
-      const tradeId = String(order.id ?? order.deal_id ?? order.requestId ?? "");
-      const openPrice = Number(order.open_price ?? order.openPrice ?? 0);
-      const tradeDurationMs = request.duration * 1000;
-      console.log(`[PO] Trade confirmed: id=${tradeId}, open=${openPrice}, duration=${request.duration}s`);
-
-      // ── Phase 2: Wait for trade expiry then look for result in closedDeals (max duration + 30s) ──
-      // First wait for the trade to expire
-      const waitForExpiry = Math.max(tradeDurationMs - (Date.now() - phase1Start), 0);
-      if (waitForExpiry > 0) {
-        console.log(`[PO] Waiting ${Math.round(waitForExpiry / 1000)}s for trade expiry...`);
-        await new Promise((r) => setTimeout(r, waitForExpiry));
-      }
-
-      // Now poll closedDeals for the result (max 30s after expiry)
-      // First, ask PocketOption to send updateClosedDeals by requesting balance update
-      console.log(`[PO] Requesting balance update to trigger updateClosedDeals...`);
-      this.updateClosedDealsFlag = false;
-      this.getBalances();
-      const phase2Start = Date.now();
-      let closePrice = 0;
-      let profit = -request.amount; // default: loss
-
-      while (Date.now() - phase2Start < 30000) {
-        // Search in closedDealsData for our trade
-        const match = this.closedDealsData.find((d) => {
-          if (typeof d !== "object" || d === null) return false;
-          const deal = d as Record<string, unknown>;
-          const id = String(deal.id ?? deal.deal_id ?? "");
-          return tradeId && id === tradeId;
-        }) as Record<string, unknown> | undefined;
-
-        if (match) {
-          profit = Number(match.profit ?? match.win_amount ?? -request.amount);
-          closePrice = Number(match.close_price ?? match.closePrice ?? 0);
-          console.log(`[PO] Trade result found: id=${tradeId} profit=${profit} close=${closePrice}`);
-          break;
-        }
-
-        // Also check if orderData was updated with result
-        const od = this.orderData as Record<string, unknown> | null;
-        if (od && od.profit !== undefined) {
-          profit = Number(od.profit);
-          closePrice = Number((od.close_price as number | undefined) ?? (od.closePrice as number | undefined) ?? 0);
-          console.log(`[PO] Trade result from orderData: profit=${profit}`);
-          break;
-        }
-
-        await new Promise((r) => setTimeout(r, 500));
-      }
-
-      if (profit === -request.amount) {
-        console.warn(`[PO] Trade result not found in closedDeals after 30s for id=${tradeId}. Defaulting to LOSS.`);
-      }
-
-      return {
-        win: profit > 0,
-        profit,
-        openPrice,
-        closePrice,
-        tradeId,
-      };
-    } finally {
-      releaseMutex!();
-    }
-  }
-
-  async getBalance(): Promise<{ demo: number; live: number }> {
-    if (this.lastBalance) {
-      return this.isDemo
-        ? { demo: this.lastBalance.balance, live: 0 }
-        : { demo: 0, live: this.lastBalance.balance };
-    }
-    return { demo: 0, live: 0 };
-  }
-
-  async getTradeHistory(): Promise<PocketOptionTrade[]> {
-    this.getBalances();
-    await new Promise((r) => setTimeout(r, 2000));
-
-    if (!this.closedDealsData.length) return [];
-
-    return this.closedDealsData
-      .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
-      .map((d) => ({
-        id: String(d.id || d.deal_id || ""),
-        asset: String(d.asset || d.symbol || ""),
-        direction:
-          String(d.direction || d.action || "").toLowerCase() === "call"
-            ? ("CALL" as const)
-            : ("PUT" as const),
-        amount: Number(d.amount || 0),
-        profit: Number(d.profit || 0),
-        openPrice: Number(d.open_price || 0),
-        closePrice: Number(d.close_price || 0),
-        openTime: Number(d.open_time || 0),
-        closeTime: Number(d.close_time || 0),
-        result: Number(d.profit || 0) > 0 ? ("WIN" as const) : ("LOSS" as const),
-      }));
-  }
-
-  // ============ Event Callbacks ============
-
   onAuth(callback: () => void): () => void {
     this.onAuthCallbacks.push(callback);
-    return () => {
-      this.onAuthCallbacks = this.onAuthCallbacks.filter((cb) => cb !== callback);
-    };
+    return () => { this.onAuthCallbacks = this.onAuthCallbacks.filter((cb) => cb !== callback); };
   }
 
-  onBalance(
-    callback: (balance: { balance: number; isDemo: number }) => void
-  ): () => void {
+  onBalance(callback: (balance: { balance: number; isDemo: number }) => void): () => void {
     this.onBalanceCallbacks.push(callback);
-    return () => {
-      this.onBalanceCallbacks = this.onBalanceCallbacks.filter((cb) => cb !== callback);
-    };
+    return () => { this.onBalanceCallbacks = this.onBalanceCallbacks.filter((cb) => cb !== callback); };
   }
 
   onError(callback: (error: Error) => void): () => void {
     this.onErrorCallbacks.push(callback);
-    return () => {
-      this.onErrorCallbacks = this.onErrorCallbacks.filter((cb) => cb !== callback);
-    };
+    return () => { this.onErrorCallbacks = this.onErrorCallbacks.filter((cb) => cb !== callback); };
   }
 
   onSsidExpired(callback: () => void): () => void {
     this.onSsidExpiredCallbacks.push(callback);
-    return () => {
-      this.onSsidExpiredCallbacks = this.onSsidExpiredCallbacks.filter((cb) => cb !== callback);
-    };
-  }
-
-  // ============ Helpers ============
-
-  private emitCandle(asset: string, candle: CandleData): void {
-    const listeners = this.candleListeners.get(asset) || [];
-    for (const listener of listeners) {
-      try { listener(candle); } catch { }
-    }
-  }
-
-  private sendEvent(data: unknown): void {
-    if (!this.ws || !this.connected) return;
-    // PocketOption uses the Socket.IO 42 message type followed by JSON
-    const message = `42${JSON.stringify(data)}`;
-    try {
-      this.ws.send(message);
-      console.log(`[PO] >> ${message.substring(0, 150)}`);
-    } catch (err) {
-      console.error("[PO] Send error:", err);
-    }
-  }
-
-  private cleanup(): void {
-    if (this.socketIoHeartbeat) {
-      clearInterval(this.socketIoHeartbeat);
-      this.socketIoHeartbeat = null;
-    }
+    return () => { this.onSsidExpiredCallbacks = this.onSsidExpiredCallbacks.filter((cb) => cb !== callback); };
   }
 
   private parseIsDemoFromSsid(): boolean {
     try {
       const match = this.ssid.match(/"isDemo"\s*:\s*(\d)/);
       if (match) return match[1] === "1";
-    } catch { }
+    } catch {}
     return true;
   }
 }

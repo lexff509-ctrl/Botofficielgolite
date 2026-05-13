@@ -17,6 +17,7 @@ import {
   TIMEFRAMES,
 } from "@/lib/trading";
 import { AdvancedStrategyEngine } from "../core/AdvancedStrategyEngine";
+import { OrchestratorAgent } from "../core/agents/OrchestratorAgent";
 import { candleCache } from "@/lib/candle-cache";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { externalDataService } from "@/services/external-data.service";
@@ -30,8 +31,8 @@ import { signalTracker } from "@/services/signal-tracker";
 
 // ============ CONFIG ============
 
-const AUTO_TRADE_CONFIDENCE_THRESHOLD = 70; // Minimum confidence % to auto-trade (standard mode)
-const HIGH_CONFIDENCE_THRESHOLD = 80; // Minimum confidence % for high confidence mode
+const AUTO_TRADE_CONFIDENCE_THRESHOLD = 55; // Calibré avec IA V5 (55 = Weak Trade, 65 = Valid)
+const HIGH_CONFIDENCE_THRESHOLD = 75; // Calibré avec IA V5 (75 = Strong)
 const MAX_CONSECUTIVE_ERRORS = 10;
 const DEFAULT_PROFIT_TARGET = 50; // Default $50 profit target
 const DEFAULT_LOSS_LIMIT = 25; // Default $25 loss limit
@@ -549,11 +550,10 @@ export class BotRunner {
     // Use all closed candles for analysis (exclude the live candle if we have > 1)
     const analysisCandles = candles.length >= 2 ? candles.slice(0, -1) : candles;
 
-    // === 4. Indicator Engine & Signal Generator ===
-    // Engine ALWAYS returns BUY or SELL — never WAIT
-    // Engine ALWAYS returns BUY, SELL or WAIT
+    // === 4. Intelligence Artificielle (Agents 1 & 2) ===
+    // Remplace l'ancien moteur monolithique par la nouvelle architecture IA (Cerveau + Juge)
     const isOtc = this.asset.toUpperCase().includes("OTC");
-    const strategy = isOtc ? AdvancedStrategyEngine.evaluateOtc(analysisCandles, this.timeframe) : AdvancedStrategyEngine.evaluateNonOtc(analysisCandles, this.timeframe, !isOtc);
+    const strategy = OrchestratorAgent.evaluate(analysisCandles, this.asset, this.timeframe, isOtc);
     
     // Extraction de la probabilité réelle
     const probaValue = strategy.score;
@@ -654,7 +654,7 @@ export class BotRunner {
 
     // === 5. Trade Execution & State Management ===
     if (this.botType === "auto") {
-      // MISSION 3: Vérification/Reconnexion Pocket Option AVANT le trade
+      // Vérification/Reconnexion Pocket Option AVANT le trade
       if (!poClient || !poClient.isConnected) {
         console.warn(`[BotRunner] Signal prêt mais PO déconnecté. Tentative de reconnexion express pour ${this.asset}...`);
         await this.reconnectExpress();
@@ -669,23 +669,34 @@ export class BotRunner {
       // Check confidence threshold before executing
       const threshold = this.confidenceMode === "high" ? HIGH_CONFIDENCE_THRESHOLD : AUTO_TRADE_CONFIDENCE_THRESHOLD;
       if (signal.confidence_score < threshold) {
-        console.log(`[BotRunner] Signal confidence ${signal.confidence_score}% < threshold ${threshold}% — skipping trade (${signal.confidence})`);
+        console.log(`[BotRunner] Signal ignoré (${signal.confidence_score}% < seuil ${threshold}%)`);
         await this.updateSessionStats();
         return;
       }
 
       // Lock position until trade is finished
       this.isInPosition = true;
-      console.log(`[BotRunner] Entrée en position: ${signal.direction} $${this.tradeAmount} (confidence: ${signal.confidence_score}%)`);  
 
       try {
-        // executeAutoTrade calls executeTrade which calls poClient.placeTrade (which waits for expiry)
-        const result = await this.executeAutoTrade(signal, analysisCandles);
-        
-        // Update signal tracker with result
-        if (result && result.trade) {
-          const res = (result as any).profit > 0 ? 'WIN' : 'LOSS';
-          await signalTracker.updateResult(signalId, res, (result as any).closePrice || 0, (result as any).profit);
+        if (process.env.AUTO_TRADING_ENABLED === "true") {
+          console.log(`[BotRunner] Entrée en position: ${signal.direction} $${this.tradeAmount} (confidence: ${signal.confidence_score}%)`);  
+          // executeAutoTrade calls executeTrade which calls poClient.placeTrade (which waits for expiry)
+          const result = await this.executeAutoTrade(signal, analysisCandles);
+          
+          // Update signal tracker with result
+          if (result && result.trade) {
+            const res = (result as any).profit > 0 ? 'WIN' : 'LOSS';
+            // Note: signalId must be in scope from earlier code
+            if (typeof signalId !== 'undefined') {
+              await signalTracker.updateResult(signalId, res, (result as any).closePrice || 0, (result as any).profit);
+            }
+          }
+        } else {
+          console.log(`\n=============================================================`);
+          console.log(`[LIVE SIGNAL MODE] 🟢 SIGNAL EXPLOITABLE DÉTECTÉ`);
+          console.log(`[LIVE SIGNAL MODE] Action: ${signal.direction} sur ${this.asset} | Score: ${signal.confidence_score}%`);
+          console.log(`[LIVE SIGNAL MODE] Exécution auto désactivée (AUTO_TRADING_ENABLED != "true").`);
+          console.log(`=============================================================\n`);
         }
       } catch (err) {
         console.error(`[BotRunner] Erreur lors de l'exécution du trade:`, err);
