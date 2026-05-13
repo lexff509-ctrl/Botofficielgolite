@@ -587,11 +587,29 @@ export class PocketOptionClient {
     }
   }
 
-  private handleNotAuthorized() {
+  private async handleNotAuthorized() {
     this.ssidExpired = true;
     this.intentionallyClosed = true;
     this.state = ConnectionState.DISCONNECTED;
     this.onSsidExpiredCallbacks.forEach((cb) => cb());
+
+    if (this.isDemo) {
+      try {
+        const { getGlobalSsid } = await import("@/services/trading.service");
+        const fresh = await getGlobalSsid();
+        if (fresh) {
+          this.ssid = fresh;
+          this.ssidExpired = false;
+          this.intentionallyClosed = false;
+          console.log('[PO] SSID refreshed automatically, reconnecting...');
+          this.connect(this.isDemo).catch(console.error);
+          return;
+        }
+      } catch (e) {
+        console.warn('[PO] Failed to auto-refresh SSID:', e);
+      }
+    }
+
     if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
     if (this.upgradeReject) this.upgradeReject(new Error("NotAuthorized: SSID invalide"));
     this.ws?.close();
@@ -808,6 +826,7 @@ export class PocketOptionClient {
   // ============ Disconnect & Cleanup ============
 
   private handleDisconnect(): void {
+    console.log(`[PO] handleDisconnect called. State was: ${this.state}, intentionallyClosed: ${this.intentionallyClosed}`);
     const wasConnecting = this.state !== ConnectionState.READY && this.state !== ConnectionState.WS_OPEN;
     this.state = ConnectionState.DISCONNECTED;
     this.upgradeResolve = null;

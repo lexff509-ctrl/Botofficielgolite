@@ -550,8 +550,17 @@ export class BotRunner {
 
     this.lastProcessedTimestamp = lastClosedCandle.timestamp;
 
-    // Use all closed candles for analysis (exclude the live candle if we have > 1)
-    const analysisCandles = candles.length >= 2 ? candles.slice(0, -1) : candles;
+    // The TechnicalAnalysisAgent requires at least 30 candles
+    // Get up to 300 historical candles from cache directly instead of the subset
+    // This fixes the "Au moins 30 bougies sont nécessaires" error while still 
+    // using the `analysisCandles` subset to avoid triggering on the live unclosed candle.
+    const allCandles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 300);
+    const analysisCandles = allCandles.length >= 2 ? allCandles.slice(0, -1) : allCandles;
+
+    if (analysisCandles.length < 30) {
+      console.warn(`[BotRunner] Not enough closed candles for AI analysis (${analysisCandles.length}/30). Waiting...`);
+      return;
+    }
 
     // === 4. Intelligence Artificielle (Agents 1 & 2) ===
     // Remplace l'ancien moteur monolithique par la nouvelle architecture IA (Cerveau + Juge)
