@@ -13,6 +13,7 @@ const adminNavItems = [
   { href: "/admin/payments", label: "Paiements", icon: "💳" },
   { href: "/admin/settings", label: "Parametres", icon: "⚙️" },
   { href: "/admin/stats", label: "Statistiques", icon: "📈" },
+  { href: "/admin/logs", label: "Logs Système", icon: "📝" },
 ];
 
 export default function AdminLayout({ children }: Props) {

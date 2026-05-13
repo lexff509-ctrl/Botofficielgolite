@@ -9,7 +9,7 @@ import {
   type Candle,
   TIMEFRAMES,
 } from "@/lib/trading";
-import { AdvancedStrategyEngine } from "@/core/AdvancedStrategyEngine";
+import { OrchestratorAgent } from "@/core/agents/OrchestratorAgent";
 import { candleCache } from "@/lib/candle-cache";
 import { getDecryptedSSID } from "@/services/auth.service";
 import { encryptSSID, decryptSSID as decryptAuthSSID } from "@/lib/auth";
@@ -115,9 +115,7 @@ export async function generateAndSaveSignal(
     return { signal: null, saved: null, error: `Connexion en cours pour ${selectedAsset}. Le signal arrivera dans quelques secondes.` };
   }
 
-  const strategy = isOTC 
-    ? AdvancedStrategyEngine.evaluateOtc(candles, selectedTimeframe as Timeframe)
-    : AdvancedStrategyEngine.evaluateNonOtc(candles, selectedTimeframe as Timeframe, true);
+  const strategy = await OrchestratorAgent.evaluate(candles as any, selectedAsset, selectedTimeframe, isOTC);
 
   // ─── MTF Confirmation (Multi-Timeframe) ──────────────────────────────────
   let mtfStatus = "NEUTRAL";
@@ -125,7 +123,7 @@ export async function generateAndSaveSignal(
     const higherTf = selectedTimeframe === "1m" ? "5m" : "15m";
     const mtfCandles = await externalDataService.getExternalCandles(selectedAsset, higherTf as Timeframe, 50);
     if (mtfCandles.length >= 30) {
-      const mtfStrategy = AdvancedStrategyEngine.evaluateNonOtc(mtfCandles, higherTf as Timeframe, true);
+      const mtfStrategy = await OrchestratorAgent.evaluate(mtfCandles as any, selectedAsset, higherTf, true);
       if (mtfStrategy.signal === strategy.signal) {
         mtfStatus = "ALIGNED";
         strategy.score = Math.min(99, strategy.score + 5);
@@ -150,10 +148,12 @@ export async function generateAndSaveSignal(
   }
 
   const lastCandle = candles[candles.length - 1];
+  const ind = strategy.marketState?.indicators || {} as any;
+  const struct = strategy.marketState?.structure || {} as any;
   
   // Dummy data for legacy fields to avoid breaking the frontend
-  const dummyBollinger = { signal: "NEUTRAL" as any, upper: strategy.metrics.bb?.upper || 0, middle: strategy.metrics.bb?.middle || 0, lower: strategy.metrics.bb?.lower || 0, price_position: "neutral" };
-  const dummyStoch = { signal: "NEUTRAL" as any, k: strategy.metrics.stochData?.k || 50, d: strategy.metrics.stochData?.d || 50 };
+  const dummyBollinger = { signal: "NEUTRAL" as any, upper: ind.bollinger?.upper || 0, middle: ind.bollinger?.middle || 0, lower: ind.bollinger?.lower || 0, price_position: struct.isNearSupport ? "near_lower" : struct.isNearResistance ? "near_upper" : "neutral" };
+  const dummyStoch = { signal: "NEUTRAL" as any, k: ind.stochastic?.k || 50, d: ind.stochastic?.d || 50, k_value: ind.stochastic?.k || 50, d_value: ind.stochastic?.d || 50 };
 
   const signalObj: Signal = {
     signal: strategy.signal,
@@ -167,31 +167,31 @@ export async function generateAndSaveSignal(
     reason: `${strategy.reason}${aiReason} (MTF: ${mtfStatus})`,
     action: strategy.confidence === "HIGH" ? "ENTRER MAINTENANT" : strategy.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
     direction: strategy.signal === "BUY" ? "CALL" : "PUT",
-    confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 45,
+    confidence_score: strategy.score,
     indicators: {
-      rsi: strategy.metrics.rsi || 50,
-      macd: strategy.metrics.macdData?.MACD || 0,
-      ema9: strategy.metrics.ema || 0,
-      bollingerUpper: strategy.metrics.bb?.upper || 0,
-      bollingerMiddle: strategy.metrics.bb?.middle || 0,
-      bollingerLower: strategy.metrics.bb?.lower || 0,
-      stochastic: strategy.metrics.stochData?.k || 50,
-      stochasticSignal: strategy.metrics.stochData?.d || 50,
-      ema20: strategy.metrics.bb?.middle || 0,
-      ema50: strategy.metrics.sma || 0,
-      stochK: strategy.metrics.stochData?.k || 50,
-      stochD: strategy.metrics.stochData?.d || 50,
+      rsi: ind.rsi || 50,
+      macd: ind.macd?.MACD || 0,
+      ema9: ind.ema9 || 0,
+      bollingerUpper: ind.bollinger?.upper || 0,
+      bollingerMiddle: ind.bollinger?.middle || 0,
+      bollingerLower: ind.bollinger?.lower || 0,
+      stochastic: ind.stochastic?.k || 50,
+      stochasticSignal: ind.stochastic?.d || 50,
+      ema20: ind.ema21 || 0,
+      ema50: ind.ema50 || 0,
+      stochK: ind.stochastic?.k || 50,
+      stochD: ind.stochastic?.d || 50,
       lowFractal: false,
       highFractal: false,
       dojiRejected: false,
-      atr: strategy.metrics.atr || 0,
+      atr: 0,
       bollingerPercentB: 0,
-      bollingerWidth: 0,
-      supportLevel: 0,
-      resistanceLevel: 0,
-      nearSupport: false,
-      nearResistance: false,
-      marketStructure: "NEUTRAL",
+      bollingerWidth: ind.bollinger?.width || 0,
+      supportLevel: struct.support || 0,
+      resistanceLevel: struct.resistance || 0,
+      nearSupport: struct.isNearSupport || false,
+      nearResistance: struct.isNearResistance || false,
+      marketStructure: struct.trend || "NEUTRAL",
       structureBreak: "NONE",
       signalScore: strategy.score,
       indicatorScores: {
@@ -221,20 +221,20 @@ export async function generateAndSaveSignal(
           middle: signalObj.bollinger.middle,
           lower: signalObj.bollinger.lower,
         },
-        stochastic: signalObj.stochastic.k_value.toFixed(4),
+        stochastic: (signalObj.stochastic as any).k_value.toFixed(4),
         ema20: signalObj.indicators.ema20.toFixed(8),
         ema50: signalObj.indicators.ema50.toFixed(8),
-        stochK: signalObj.stochastic.k_value.toFixed(4),
-        stochD: signalObj.stochastic.d_value.toFixed(4),
+        stochK: (signalObj.stochastic as any).k_value.toFixed(4),
+        stochD: (signalObj.stochastic as any).d_value.toFixed(4),
         lowFractal: false,
         highFractal: false,
         dojiFiltered: false,
         multiTimeframeConfirmation: {},
-        supportLevel: null,
-        resistanceLevel: null,
-        nearSupport: signalObj.bollinger.price_position === "near_lower",
-        nearResistance: signalObj.bollinger.price_position === "near_upper",
-        marketStructure: "NEUTRAL",
+        supportLevel: struct.support ? String(struct.support) : null,
+        resistanceLevel: struct.resistance ? String(struct.resistance) : null,
+        nearSupport: signalObj.indicators.nearSupport,
+        nearResistance: signalObj.indicators.nearResistance,
+        marketStructure: struct.trend || "NEUTRAL",
         structureBreak: "NONE",
         signalScore: (strategy.score / 100).toFixed(4),
         bollingerPercentB: null,

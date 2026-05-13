@@ -242,3 +242,13 @@ export const promoCodeUsage = pgTable("promo_code_usage", {
   userId: integer("user_id").references(() => users.id).notNull(),
   usedAt: timestamp("used_at").defaultNow().notNull(),
 });
+
+// System Logs (For Admin Debugging)
+export const systemLogs = pgTable("system_logs", {
+  id: serial("id").primaryKey(),
+  level: varchar("level", { length: 20 }).notNull(), // INFO, WARN, ERROR
+  source: varchar("source", { length: 100 }).notNull(), // BotRunner, WebSocket, DB, etc.
+  message: text("message").notNull(),
+  details: text("details"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

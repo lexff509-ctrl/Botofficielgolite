@@ -44,6 +44,11 @@ export interface MarketState {
   indicators: IndicatorsState;
   priceAction: PriceActionState;
   structure: MarketStructureState;
+  newsBias?: {
+    sentiment: "BULLISH" | "BEARISH" | "NEUTRAL";
+    strength: number;
+    reason: string;
+  };
 }
 
 export interface ConfidenceResult {

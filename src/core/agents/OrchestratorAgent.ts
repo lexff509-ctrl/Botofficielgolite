@@ -1,5 +1,6 @@
 import { TechnicalAnalysisAgent } from "./TechnicalAnalysisAgent";
 import { ConfidenceAgent } from "./ConfidenceAgent";
+import { NewsAgent } from "./NewsAgent";
 import { Candle } from "./types";
 
 export class OrchestratorAgent {
@@ -9,13 +10,18 @@ export class OrchestratorAgent {
    * 
    * Flux :
    * 1. Boucles brutes (PO / Binance) -> Agent 1 (Cerveau) -> MarketState
-   * 2. MarketState -> Agent 2 (Filtre Pro) -> Décision finale
-   * 3. Décision -> Format legacy pour le TradeEngine
+   * 2. NewsAgent -> Analyse l'impact macro-économique
+   * 3. MarketState + News -> Agent 2 (Filtre Pro) -> Décision finale
+   * 4. Décision -> Format legacy pour le TradeEngine
    */
-  public static evaluate(candles: Candle[], asset: string, timeframe: string, isOtc: boolean = false) {
+  public static async evaluate(candles: Candle[], asset: string, timeframe: string, isOtc: boolean = false) {
     try {
       // ÉTAPE 1 : Le Cerveau analyse les données brutes
       const marketState = TechnicalAnalysisAgent.analyze(candles, asset, timeframe);
+
+      // ÉTAPE 1.5 : Le NewsAgent récupère la direction macro
+      const newsBias = await NewsAgent.analyze(asset);
+      marketState.newsBias = newsBias;
 
       // ÉTAPE 2 : Le Juge Institutionnel filtre et score
       const decision = ConfidenceAgent.evaluate(marketState);

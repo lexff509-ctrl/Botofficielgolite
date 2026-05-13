@@ -16,13 +16,11 @@ import {
   type Candle,
   TIMEFRAMES,
 } from "@/lib/trading";
-import { AdvancedStrategyEngine } from "../core/AdvancedStrategyEngine";
 import { OrchestratorAgent } from "../core/agents/OrchestratorAgent";
 import { candleCache } from "@/lib/candle-cache";
 import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { externalDataService } from "@/services/external-data.service";
 import { RiskManager } from "@/services/risk-manager.service";
-import { BollingerStochStrategy } from "@/strategies/bollinger-stoch.strategy";
 import { getPocketOptionClient, executeTrade } from "@/services/trading.service";
 import { hasActiveSubscription } from "@/services/payment.service";
 
@@ -101,9 +99,10 @@ export class BotRunner {
   private isInPosition = false;
   private currentTradeId: string | null = null;
   private riskManager: RiskManager;
-  private strategy: BollingerStochStrategy;
   // Force-signal timeout: reset lastProcessedTimestamp if stuck for > 2x timeframe
   private lastSignalGeneratedAt = 0;
+  // Sniper lock: prevent trading for a specific duration after a trade
+  private cooldownUntil = 0;
 
   constructor(opts: {
     userId: number;
@@ -144,7 +143,6 @@ export class BotRunner {
       maxPositionSize: this.tradeAmount * 5,
       riskPerTradePercent: 2
     });
-    this.strategy = new BollingerStochStrategy(this.asset, this.timeframe, {});
   }
 
   get running(): boolean {
@@ -226,6 +224,7 @@ export class BotRunner {
     // Without this, a restarted runner uses stale timestamps and waits silently
     this.lastProcessedTimestamp = 0;
     this.lastSignalGeneratedAt = 0;
+    this.cooldownUntil = 0;
 
     // Load today's trade stats from DB for risk management
     this.loadDailyStats().catch(() => {});
@@ -404,6 +403,10 @@ export class BotRunner {
       return;
     }
 
+    if (Date.now() < this.cooldownUntil) {
+      return;
+    }
+
     // === Auto-Reconnect: if PO client is missing or disconnected, force reconnect ===
     let poClient = getPocketOptionClient(this.userId);
     if (!poClient || !poClient.isConnected) {
@@ -553,7 +556,7 @@ export class BotRunner {
     // === 4. Intelligence Artificielle (Agents 1 & 2) ===
     // Remplace l'ancien moteur monolithique par la nouvelle architecture IA (Cerveau + Juge)
     const isOtc = this.asset.toUpperCase().includes("OTC");
-    const strategy = OrchestratorAgent.evaluate(analysisCandles, this.asset, this.timeframe, isOtc);
+    const strategy = await OrchestratorAgent.evaluate(analysisCandles, this.asset, this.timeframe, isOtc);
     
     // Extraction de la probabilité réelle
     const probaValue = strategy.score;
@@ -707,11 +710,7 @@ export class BotRunner {
         // Sniper Cooldown: Lock for timeframe duration to avoid spamming same setup
         const cooldownMs = this.timeframeToSeconds() * 1000;
         console.log(`[BotRunner] Sortie de position. Sniper Lock actif pendant ${cooldownMs/1000}s...`);
-        this.isPaused = true;
-        setTimeout(() => {
-          this.isPaused = false;
-          console.log(`[BotRunner] Sniper Lock levé. Prêt pour le prochain signal.`);
-        }, cooldownMs);
+        this.cooldownUntil = Date.now() + cooldownMs;
       }
     }
 
