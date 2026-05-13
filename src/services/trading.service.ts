@@ -19,6 +19,8 @@ import { externalDataService } from "@/services/external-data.service";
 // Re-export for convenience
 export const decryptSSID = decryptAuthSSID;
 import { preFetchCookies, getBestHost } from "@/lib/pocketoption/connection";
+import { newsService } from "@/services/news.service";
+import { aiSentimentService } from "@/services/ai-sentiment.service";
 
 // Active PocketOption connections per user (personal SSID)
 const activeConnections = new Map<number, PocketOptionClient>();
@@ -60,6 +62,13 @@ export async function generateAndSaveSignal(
 
   if (!TIMEFRAMES.includes(selectedTimeframe as Timeframe)) {
     return { signal: null, saved: null, error: "Timeframe invalide" };
+  }
+
+  // ─── News Filter (Economic Calendar) ──────────────────────────────────────
+  const newsCheck = await newsService.isSafeToTrade(selectedAsset);
+  if (!newsCheck.safe) {
+    console.warn(`[Signal] Blocked by News Filter: ${newsCheck.reason}`);
+    return { signal: null, saved: null, error: newsCheck.reason };
   }
 
   // ─── Data Collection (all sources, best-effort) ───────────────────────────
@@ -110,6 +119,36 @@ export async function generateAndSaveSignal(
     ? AdvancedStrategyEngine.evaluateOtc(candles, selectedTimeframe as Timeframe)
     : AdvancedStrategyEngine.evaluateNonOtc(candles, selectedTimeframe as Timeframe, true);
 
+  // ─── MTF Confirmation (Multi-Timeframe) ──────────────────────────────────
+  let mtfStatus = "NEUTRAL";
+  if (!isOTC && (selectedTimeframe === "1m" || selectedTimeframe === "3m")) {
+    const higherTf = selectedTimeframe === "1m" ? "5m" : "15m";
+    const mtfCandles = await externalDataService.getExternalCandles(selectedAsset, higherTf as Timeframe, 50);
+    if (mtfCandles.length >= 30) {
+      const mtfStrategy = AdvancedStrategyEngine.evaluateNonOtc(mtfCandles, higherTf as Timeframe, true);
+      if (mtfStrategy.signal === strategy.signal) {
+        mtfStatus = "ALIGNED";
+        strategy.score = Math.min(99, strategy.score + 5);
+        if (strategy.score >= 80) strategy.confidence = "HIGH";
+      } else {
+        mtfStatus = "CONTRADICTING";
+        strategy.score -= 15;
+        strategy.confidence = strategy.score >= 60 ? "MEDIUM" : "LOW";
+      }
+    }
+  }
+
+  // ─── AI Sentiment Analysis (Price Action Validation) ─────────────────────
+  let aiReason = "";
+  if (strategy.confidence === "HIGH") {
+    const aiCheck = await aiSentimentService.validatePriceAction(selectedAsset, selectedTimeframe, strategy.signal as any, candles);
+    if (!aiCheck.approved) {
+      strategy.confidence = "LOW";
+      strategy.score -= 25;
+    }
+    aiReason = ` | ${aiCheck.reason}`;
+  }
+
   const lastCandle = candles[candles.length - 1];
   
   // Dummy data for legacy fields to avoid breaking the frontend
@@ -125,7 +164,7 @@ export async function generateAndSaveSignal(
     asset: selectedAsset,
     bollinger: dummyBollinger as any,
     stochastic: dummyStoch as any,
-    reason: strategy.reason,
+    reason: `${strategy.reason}${aiReason} (MTF: ${mtfStatus})`,
     action: strategy.confidence === "HIGH" ? "ENTRER MAINTENANT" : strategy.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
     direction: strategy.signal === "BUY" ? "CALL" : "PUT",
     confidence_score: strategy.confidence === "HIGH" ? 95 : strategy.confidence === "MEDIUM" ? 70 : 45,

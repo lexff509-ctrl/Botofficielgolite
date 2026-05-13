@@ -57,6 +57,9 @@ export class AdvancedStrategyEngine {
     // Timeframe context
     const isMicroScalping = timeframe === "5s" || timeframe === "10s" || timeframe === "15s" || timeframe === "30s";
     
+    // Prevent 0 volume from breaking VWAP/OBV (replace 0 with 1 to simulate baseline tick volume)
+    const safeVolumes = volumes.map(v => v === 0 ? 1 : v);
+    
     const getS = (res: any[]) => res.length > 0 ? res[res.length - 1] : null;
 
     // --- 20 EXACT INDICATORS ---
@@ -71,8 +74,8 @@ export class AdvancedStrategyEngine {
     const cci = getS(CCI.calculate({ high: highs, low: lows, close: closes, period: 20 })) || 0;
     const wr = getS(WilliamsR.calculate({ high: highs, low: lows, close: closes, period: 14 })) || -50;
     const roc = getS(ROC.calculate({ period: 12, values: closes })) || 0;
-    const obv = getS(OBV.calculate({ close: closes, volume: volumes })) || 0;
-    const vwap = getS(VWAP.calculate({ high: highs, low: lows, close: closes, volume: volumes })) || currentPrice;
+    const obv = getS(OBV.calculate({ close: closes, volume: safeVolumes })) || 0;
+    const vwap = getS(VWAP.calculate({ high: highs, low: lows, close: closes, volume: safeVolumes })) || currentPrice;
     const psar = getS(PSAR.calculate({ step: 0.02, max: 0.2, high: highs, low: lows })) || currentPrice;
     const ichi = getS(IchimokuCloud.calculate({ high: highs, low: lows, conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26 })) || { spanA: currentPrice, spanB: currentPrice };
     
@@ -95,8 +98,9 @@ export class AdvancedStrategyEngine {
     let reversalScore = 0;
 
     const check = (buyC: boolean, sellC: boolean, weight: number = 1) => {
-      if (buyC) buyPoints += weight;
-      else if (sellC) sellPoints += weight;
+      // Safe checks to avoid NaN issues
+      if (buyC === true) buyPoints += weight;
+      if (sellC === true) sellPoints += weight;
     };
 
     if (isMicroScalping) {
@@ -162,8 +166,11 @@ export class AdvancedStrategyEngine {
       check(volumes[volumes.length-1] > volumes[volumes.length-2] && closes[closes.length-1] > opens[opens.length-1], volumes[volumes.length-1] > volumes[volumes.length-2] && closes[closes.length-1] < opens[opens.length-1]);
       check(currentPrice > vwap, currentPrice < vwap);
       check(currentPrice > psar, currentPrice < psar);
-      check(currentPrice > ichi.spanA, currentPrice < ichi.spanB);
-      check(currentPrice > fib0618, currentPrice < fib0382);
+      check(currentPrice > ichi.spanA && currentPrice > ichi.spanB, currentPrice < ichi.spanA && currentPrice < ichi.spanB);
+      
+      // Fibonacci structure: Breakout above 0.382 is bullish, break below 0.618 is bearish
+      check(currentPrice > fib0382, currentPrice < fib0618);
+      
       check(isSupport, isResistance);
       check(isSuperTrendBullish, !isSuperTrendBullish);
       check(isHaBullish, !isHaBullish);
