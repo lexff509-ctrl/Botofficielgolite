@@ -22,8 +22,8 @@ export class OrchestratorAgent {
 
       // ÉTAPE 3 : Rétrocompatibilité avec l'existant (BotRunner)
       return {
-        signal: decision.action,
-        confidence: decision.strength === "strong" ? "HIGH" : decision.strength === "medium" ? "MEDIUM" : "LOW",
+        signal: decision.action as "BUY" | "SELL" | "WAIT",
+        confidence: (decision.strength === "strong" ? "HIGH" : decision.strength === "medium" ? "MEDIUM" : "LOW") as "HIGH" | "MEDIUM" | "LOW",
         score: decision.confidence,
         reason: `[IA Orchestrator] ${decision.action} (${decision.confidence}%) - ` + decision.reasons.join(" | "),
         isReversal: false, // Historique
@@ -36,8 +36,8 @@ export class OrchestratorAgent {
     } catch (e: any) {
       console.warn(`[OrchestratorAgent] Échec de l'analyse sur ${asset}: ${e.message}`);
       return { 
-        signal: "WAIT", 
-        confidence: "LOW", 
+        signal: "WAIT" as "BUY" | "SELL" | "WAIT", 
+        confidence: "LOW" as "HIGH" | "MEDIUM" | "LOW", 
         score: 0, 
         reason: `WAIT: Analyse impossible (${e.message})`,
         isReversal: false,
