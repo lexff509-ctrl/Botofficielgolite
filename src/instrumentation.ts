@@ -12,11 +12,14 @@ export async function register() {
     console.error = (...args: any[]) => {
       originalConsoleError.apply(console, args);
       
-      // Avoid logging Next.js internal build errors or spam
+      // Avoid logging Next.js internal build errors, spam, or DB SSL warnings (which cause infinite recursion)
       const message = args.map(a => typeof a === 'object' ? (a?.message || JSON.stringify(a)) : String(a)).join(" ");
       if (
         !message.includes("ExperimentalWarning") && 
-        !message.includes("punycode")
+        !message.includes("punycode") &&
+        !message.includes("SECURITY WARNING: The SSL modes") &&
+        !message.includes("uselibpqcompat") &&
+        !message.includes("libpq-ssl.html")
       ) {
         SystemLogger.error("System/Node", message, args);
       }

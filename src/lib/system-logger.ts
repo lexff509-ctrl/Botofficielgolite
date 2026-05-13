@@ -29,8 +29,9 @@ export class SystemLogger {
         details: detailsString,
       });
     } catch (e) {
-      // Do not crash the app if logging fails
-      console.error("[SystemLogger] Failed to save log to DB:", e);
+      // Do not crash the app if logging fails, and DO NOT use console.error here
+      // as it would trigger an infinite recursion loop with instrumentation.ts
+      console.log("[SystemLogger] Failed to save log to DB:", e);
     }
   }
 
