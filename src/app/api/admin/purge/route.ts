@@ -24,7 +24,7 @@ export async function GET(req: Request) {
 
     // Delete old logs (if systemLogs exists, adjust if needed)
     // We wrap in try-catch in case the table doesn't exist or is named differently
-    let logsResult = { rowCount: 0 };
+    let logsResult: { rowCount: number | null } = { rowCount: 0 };
     try {
       logsResult = await db.execute(
         sql`DELETE FROM ${systemLogs} WHERE ${systemLogs.timestamp} < ${sevenDaysAgo}`
