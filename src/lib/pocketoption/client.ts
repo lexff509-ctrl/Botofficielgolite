@@ -163,7 +163,9 @@ export class PocketOptionClient {
         sessionToken = this.ssid;
       }
       if (sessionToken && !this.prefetchedCookies.some((c) => c.includes("PHPSESSID"))) {
-        this.prefetchedCookies.push(`PHPSESSID=${sessionToken}`);
+        // Nettoyage strict pour éviter les erreurs "Invalid character in header content"
+        const cleanSessionToken = sessionToken.replace(/[\r\n]/g, "").trim();
+        this.prefetchedCookies.push(`PHPSESSID=${cleanSessionToken}`);
       }
     } catch (err) {
       // Ignore parse errors
@@ -279,7 +281,8 @@ export class PocketOptionClient {
       try {
         await this.connectDirect(host);
         return;
-      } catch (directErr) {
+      } catch (directErr: any) {
+        console.warn(`[PO] Direct WebSocket failed on ${host}: ${directErr.message}`);
         if (this.checkAuthFailure(host)) {
           gotNotAuthorizedOnMatchingHost = true;
           break;
@@ -290,7 +293,8 @@ export class PocketOptionClient {
       try {
         await this.connectWithUpgrade(host);
         return;
-      } catch (upgradeErr) {
+      } catch (upgradeErr: any) {
+        console.warn(`[PO] Upgrade failed on ${host}: ${upgradeErr.message}`);
         if (this.checkAuthFailure(host)) {
           gotNotAuthorizedOnMatchingHost = true;
           break;
