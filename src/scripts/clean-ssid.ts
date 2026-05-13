@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { db } from "../db";
 import { users, platformSettings } from "../db/schema";
+import { eq } from "drizzle-orm";
 
 async function clearCorruptedSSID() {
   console.log("=========================================");
@@ -16,20 +17,20 @@ async function clearCorruptedSSID() {
       if (u.pocketOptionSsid && u.pocketOptionSsid.length > 500) {
         // Un SSID normal (même crypté) fait moins de 200 caractères
         // Si c'est > 500, c'est le fameux prompt IA copié par erreur !
-        await db.update(users).set({ pocketOptionSsid: null }).where(users.id === u.id);
+        await db.update(users).set({ pocketOptionSsid: null }).where(eq(users.id, u.id));
         usersCleaned++;
         console.log(`✅ SSID corrompu supprimé pour l'utilisateur ID: ${u.id} (${u.email})`);
       }
     }
 
     // 2. Nettoyer le SSID Global
-    const globalSsidRows = await db.select().from(platformSettings).where(platformSettings.key === "global_ssid");
+    const globalSsidRows = await db.select().from(platformSettings).where(eq(platformSettings.key, "global_ssid"));
     let globalCleaned = 0;
     if (globalSsidRows.length > 0) {
       const gSsid = globalSsidRows[0].value;
       if (gSsid && gSsid.length > 500) {
-        await db.delete(platformSettings).where(platformSettings.key === "global_ssid");
-        await db.delete(platformSettings).where(platformSettings.key === "global_ssid_status");
+        await db.delete(platformSettings).where(eq(platformSettings.key, "global_ssid"));
+        await db.delete(platformSettings).where(eq(platformSettings.key, "global_ssid_status"));
         globalCleaned++;
         console.log(`✅ SSID Global corrompu supprimé des paramètres de plateforme.`);
       }
