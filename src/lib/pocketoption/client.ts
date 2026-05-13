@@ -599,7 +599,7 @@ export class PocketOptionClient {
       try {
         const { getGlobalSsid } = await import("@/services/trading.service");
         const fresh = await getGlobalSsid();
-        if (fresh) {
+        if (fresh && fresh !== this.ssid) {
           this.ssid = fresh;
           this.ssidExpired = false;
           this.intentionallyClosed = false;
