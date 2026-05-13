@@ -343,6 +343,8 @@ export class PocketOptionClient {
 
         this.ws.on("open", () => {
           this.state = ConnectionState.WS_OPEN;
+          this.ws?.send("2"); // Early Ping to satisfy heartbeat requirement immediately
+          this.startHeartbeats();
         });
 
         this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
@@ -396,6 +398,7 @@ export class PocketOptionClient {
         this.ws.on("open", () => {
           this.state = ConnectionState.WS_OPEN;
           this.ws?.send("2probe");
+          this.startHeartbeats();
         });
 
         this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
@@ -827,8 +830,13 @@ export class PocketOptionClient {
 
   private handleDisconnect(): void {
     console.log(`[PO] handleDisconnect called. State was: ${this.state}, intentionallyClosed: ${this.intentionallyClosed}`);
-    const wasConnecting = this.state !== ConnectionState.READY && this.state !== ConnectionState.WS_OPEN;
+    // Allow reconnects even if dropped during AUTHENTICATING
+    const wasConnecting = this.state === ConnectionState.CONNECTING;
     this.state = ConnectionState.DISCONNECTED;
+    
+    if (this.upgradeReject) {
+      this.upgradeReject(new Error("Disconnected before READY"));
+    }
     this.upgradeResolve = null;
     this.upgradeReject = null;
     if (this.connectionTimeout) {
@@ -845,6 +853,7 @@ export class PocketOptionClient {
     if (!this.intentionallyClosed && !wasConnecting) {
       const delay = getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);
       this.reconnectAttempts++;
+      console.log(`[PO] Dropped! Reconnecting in ${delay}ms...`);
       setTimeout(() => {
         if (this.state === ConnectionState.DISCONNECTED && !this.intentionallyClosed) {
           this.connect(this.isDemo).catch(() => {});

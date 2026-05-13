@@ -516,6 +516,10 @@ export class BotRunner {
 
     // === If still no candles at all, wait one tick then continue — never block permanently ===
     if (candles.length === 0) {
+      if (!poClient || !poClient.isConnected) {
+        console.warn(`[BotRunner] Pause Réseau: Attente de la reconnexion PO pour ${this.asset}...`);
+        return;
+      }
       console.warn(`[BotRunner] Zero candles for ${this.asset}. Will retry next tick.`);
       this.consecutiveErrors++;
       return;
