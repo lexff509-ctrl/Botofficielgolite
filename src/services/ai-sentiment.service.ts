@@ -34,7 +34,7 @@ export class AISentimentService {
     // Format the last 20 candles for the prompt to save tokens
     const recentCandles = candles.slice(-20);
     const priceData = recentCandles.map(c => 
-      `O:${c.open.toFixed(5)} H:${c.high.toFixed(5)} L:${c.low.toFixed(5)} C:${c.close.toFixed(5)}`
+      `O:${Number(c?.open || 0).toFixed(5)} H:${Number(c?.high || 0).toFixed(5)} L:${Number(c?.low || 0).toFixed(5)} C:${Number(c?.close || 0).toFixed(5)}`
     ).join(" | ");
 
     const prompt = `Tu es un trader institutionnel expert en Price Action.
