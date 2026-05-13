@@ -562,16 +562,16 @@ export class BotRunner {
     const probaValue = strategy.score;
 
     // Log the generated signal
-    console.log(`[BotRunner] Signal: ${strategy.signal} (${strategy.confidence}) — ${strategy.reason}`);
+    console.log(`[BotRunner] Signal: ${strategy.action} (${strategy.confidence}) — ${strategy.reason}`);
 
     // If signal is WAIT, do not execute
-    if (strategy.signal === "WAIT") {
+    if (strategy.action === "WAIT") {
       return;
     }
 
     // Prepare Signal Object
     const signal: Signal = {
-      signal: strategy.signal,
+      signal: strategy.action,
       confidence: strategy.confidence,
       timeframe: this.timeframe,
       timestamp: new Date().toISOString().replace('T', ' ').split('.')[0],
@@ -579,7 +579,7 @@ export class BotRunner {
       asset: this.asset,
       
       bollinger: {
-        signal: strategy.signal,
+        signal: strategy.action as any,
         upper: lastClosedCandle.close, // Fallback for legacy format
         middle: lastClosedCandle.close,
         lower: lastClosedCandle.close,
@@ -587,7 +587,7 @@ export class BotRunner {
       },
 
       stochastic: {
-        signal: strategy.signal,
+        signal: strategy.action as any,
         k_value: 50,
         d_value: 50,
         zone: "neutral",
@@ -598,7 +598,7 @@ export class BotRunner {
       action: strategy.confidence === "HIGH" ? "ENTRER MAINTENANT" : strategy.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
       
       // Internal/Legacy fields for compatibility
-      direction: strategy.signal === "BUY" ? "CALL" : "PUT",
+      direction: strategy.action === "BUY" ? "CALL" : "PUT",
       confidence_score: probaValue,
       indicators: {
         rsi: calculateRSI(analysisCandles.map(c => c.close)),

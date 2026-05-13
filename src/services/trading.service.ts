@@ -124,7 +124,7 @@ export async function generateAndSaveSignal(
     const mtfCandles = await externalDataService.getExternalCandles(selectedAsset, higherTf as Timeframe, 50);
     if (mtfCandles.length >= 30) {
       const mtfStrategy = await OrchestratorAgent.evaluate(mtfCandles as any, selectedAsset, higherTf, true);
-      if (mtfStrategy.signal === strategy.signal) {
+      if (mtfStrategy.action === strategy.action) {
         mtfStatus = "ALIGNED";
         strategy.score = Math.min(99, strategy.score + 5);
         if (strategy.score >= 80) strategy.confidence = "HIGH";
@@ -139,7 +139,7 @@ export async function generateAndSaveSignal(
   // ─── AI Sentiment Analysis (Price Action Validation) ─────────────────────
   let aiReason = "";
   if (strategy.confidence === "HIGH") {
-    const aiCheck = await aiSentimentService.validatePriceAction(selectedAsset, selectedTimeframe, strategy.signal as any, candles);
+    const aiCheck = await aiSentimentService.validatePriceAction(selectedAsset, selectedTimeframe, strategy.action as any, candles);
     if (!aiCheck.approved) {
       strategy.confidence = "LOW";
       strategy.score -= 25;
@@ -156,7 +156,7 @@ export async function generateAndSaveSignal(
   const dummyStoch = { signal: "NEUTRAL" as any, k: ind.stochastic?.k || 50, d: ind.stochastic?.d || 50, k_value: ind.stochastic?.k || 50, d_value: ind.stochastic?.d || 50 };
 
   const signalObj: Signal = {
-    signal: strategy.signal,
+    signal: strategy.action,
     confidence: strategy.confidence,
     timeframe: selectedTimeframe as Timeframe,
     timestamp: new Date().toISOString().replace("T", " ").split(".")[0],
@@ -166,7 +166,7 @@ export async function generateAndSaveSignal(
     stochastic: dummyStoch as any,
     reason: `${strategy.reason}${aiReason} (MTF: ${mtfStatus})`,
     action: strategy.confidence === "HIGH" ? "ENTRER MAINTENANT" : strategy.confidence === "MEDIUM" ? "ATTENDRE" : "ÉVITER",
-    direction: strategy.signal === "BUY" ? "CALL" : "PUT",
+    direction: strategy.action === "BUY" ? "CALL" : "PUT",
     confidence_score: strategy.score,
     indicators: {
       rsi: ind.rsi || 50,

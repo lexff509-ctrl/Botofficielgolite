@@ -38,7 +38,7 @@ export class WebSocketManager {
         });
     }
 
-    public analyzeNow(timeframe: Timeframe): Signal | null {
+    public async analyzeNow(timeframe: Timeframe): Promise<Signal | null> {
         const tfSec = this.tfToSeconds(timeframe);
         const candles = candleBuffer.getCandles(this.asset, tfSec);
         
@@ -47,7 +47,7 @@ export class WebSocketManager {
             return null;
         }
 
-        return signalEngine.generateSignal(this.asset, timeframe, candles);
+        return await signalEngine.generateSignal(this.asset, timeframe, candles);
     }
 
     private tfToSeconds(tf: Timeframe): number {
@@ -63,8 +63,8 @@ export class WebSocketManager {
 
         timeframes.forEach(tf => {
             const ms = this.tfToSeconds(tf) * 1000;
-            const interval = setInterval(() => {
-                const signal = this.analyzeNow(tf);
+            const interval = setInterval(async () => {
+                const signal = await this.analyzeNow(tf);
                 if (signal && signal.isValid) {
                     this.logSignal(signal);
                 }

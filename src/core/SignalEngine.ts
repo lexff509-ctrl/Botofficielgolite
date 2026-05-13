@@ -3,7 +3,7 @@ import { Signal, Timeframe } from '../types/Signal';
 import { calculateBollingerBands } from '../indicators/BollingerBands';
 import { calculateStochasticOscillator } from '../indicators/Stochastic';
 import { calculateRSIIndicator } from '../indicators/RSI';
-import { AdvancedStrategyEngine } from './AdvancedStrategyEngine';
+import { OrchestratorAgent } from './agents/OrchestratorAgent';
 
 export class SignalEngine {
     private candleBuffer: Map<string, Candle[]> = new Map();
@@ -11,7 +11,7 @@ export class SignalEngine {
 
     constructor() {}
 
-    public generateSignal(asset: string, timeframe: Timeframe, candles: Candle[]): Signal | null {
+    public async generateSignal(asset: string, timeframe: Timeframe, candles: Candle[]): Promise<Signal | null> {
         if (candles.length < this.minCandles) return null;
 
         const closes = candles.map(c => c.close);
@@ -26,15 +26,13 @@ export class SignalEngine {
         const isOtc = asset.toUpperCase().includes("OTC");
         const isBinance = !isOtc; // Simplified: If not OTC, we treat it as Binance/External for the strict reversal rules
 
-        // 2. Confluence Logic using the Advanced Strategy Engine
-        const advancedEval = isOtc 
-          ? AdvancedStrategyEngine.evaluateOtc(candles, timeframe)
-          : AdvancedStrategyEngine.evaluateNonOtc(candles, timeframe, isBinance);
+        // 2. Confluence Logic using the V5 OrchestratorAgent
+        const advancedEval = await OrchestratorAgent.evaluate(candles, timeframe, isOtc);
 
-        const direction = advancedEval.signal;
-        const confidenceLabel = advancedEval.confidence;
+        const direction = advancedEval.action === "BUY" ? "BUY" : advancedEval.action === "SELL" ? "SELL" : "WAIT";
+        const confidenceLabel = direction !== "WAIT" ? "HIGH" : "LOW";
         const diagnostic = advancedEval.reason;
-        const confidence = advancedEval.score;
+        const confidence = advancedEval.confidence;
 
         // Re-adjust BB and Stoch signals based on advanced evaluation
         if (direction === "BUY") {
