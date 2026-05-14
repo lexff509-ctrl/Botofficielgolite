@@ -29,8 +29,8 @@ import { signalTracker } from "@/services/signal-tracker";
 
 // ============ CONFIG ============
 
-const AUTO_TRADE_CONFIDENCE_THRESHOLD = 55; // Calibré avec IA V5 (55 = Weak Trade, 65 = Valid)
-const HIGH_CONFIDENCE_THRESHOLD = 75; // Calibré avec IA V5 (75 = Strong)
+const AUTO_TRADE_CONFIDENCE_THRESHOLD = 50; // V6: OrchestratorAgent score range, 50=seuil minimum
+const HIGH_CONFIDENCE_THRESHOLD = 70;         // V6: 70+ = HIGH confidence
 const MAX_CONSECUTIVE_ERRORS = 10;
 const DEFAULT_PROFIT_TARGET = 50; // Default $50 profit target
 const DEFAULT_LOSS_LIMIT = 25; // Default $25 loss limit
@@ -616,8 +616,8 @@ export class BotRunner {
     const allCandles = candleCache.getCandlesForTimeframe(this.asset, this.timeframe, 300);
     const analysisCandles = allCandles.length >= 2 ? allCandles.slice(0, -1) : allCandles;
 
-    if (analysisCandles.length < 30) {
-      console.warn(`[BotRunner] Not enough closed candles for AI analysis (${analysisCandles.length}/30). Waiting...`);
+    if (analysisCandles.length < 10) {
+      console.warn(`[BotRunner] Pas assez de bougies pour l'analyse IA (${analysisCandles.length}/10). Attente...`);
       return;
     }
 
@@ -733,17 +733,19 @@ export class BotRunner {
       }
 
       if (!poClient || !poClient.isConnected) {
-        console.error(`[BotRunner] Impossible de placer le trade : PO reste déconnecté.`);
+        console.error(`[BotRunner] ❌ Trade bloqué: PO reste déconnecté après reconnexion express. Signal: ${signal.direction} ${signal.asset}`);
+        console.error(`[BotRunner] Vérifiez que le SSID est valide et que le Bridge est connecté.`);
         return;
       }
 
       // Check confidence threshold before executing
       const threshold = this.confidenceMode === "high" ? HIGH_CONFIDENCE_THRESHOLD : AUTO_TRADE_CONFIDENCE_THRESHOLD;
       if (signal.confidence_score < threshold) {
-        console.log(`[BotRunner] Signal ignoré (${signal.confidence_score}% < seuil ${threshold}%)`);
+        console.log(`[BotRunner] ⚠️  Signal ignoré — Score ${signal.confidence_score}% < seuil ${threshold}% (mode: ${this.confidenceMode})`);
         await this.updateSessionStats();
         return;
       }
+      console.log(`[BotRunner] ✅ Seuil OK: ${signal.confidence_score}% >= ${threshold}% — Exécution du trade...`);
 
       // Lock position until trade is finished
       this.isInPosition = true;

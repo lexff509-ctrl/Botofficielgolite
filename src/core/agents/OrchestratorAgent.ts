@@ -129,6 +129,8 @@ export class OrchestratorAgent {
         ...decision.reasons.slice(0, 3)
       ].join(" | ");
 
+      const finalStrength = adjustedScore >= 75 ? "HIGH" : adjustedScore >= 60 ? "MEDIUM" : "LOW";
+
       return {
         signal: finalAction as "BUY" | "SELL" | "WAIT",
         confidence: finalStrength as "HIGH" | "MEDIUM" | "LOW",
