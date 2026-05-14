@@ -22,6 +22,21 @@ import { preFetchCookies, getBestHost } from "@/lib/pocketoption/connection";
 import { newsService } from "@/services/news.service";
 import { aiSentimentService } from "@/services/ai-sentiment.service";
 
+// Lazy getter for BotRunner — avoids circular dependency & ESM require() issues
+function getBotRunnerLazy(userId: number): { pause: (reason: string) => void } | null {
+  try {
+    // Dynamic import-safe: use the module registry directly
+    const mod = require("@/services/bot-runner");
+    if (mod && typeof mod.getBotRunner === "function") {
+      return mod.getBotRunner(userId);
+    }
+  } catch {
+    // Module not loaded yet or circular dep — safe to ignore
+  }
+  return null;
+}
+
+
 // Active PocketOption connections per user (personal SSID)
 const activeConnections = new Map<number, PocketOptionClient>();
 
@@ -464,10 +479,9 @@ export async function connectPocketOption(
     console.log(`[Trading] SSID expired for user ${userId}, updating DB and pausing bot`);
     updateSsidStatus(userId, "EXPIRED").catch(() => {});
     activeConnections.delete(userId);
-    // Pause bot runner if active
-    const { getBotRunner } = require("@/services/bot-runner");
-    const runner = getBotRunner(userId);
-    if (runner) {
+    // Pause bot runner if active — use lazy getter to avoid ESM circular dependency
+    const runner = getBotRunnerLazy(userId);
+    if (runner && typeof runner.pause === "function") {
       runner.pause("SSID_EXPIRED");
     }
   });
@@ -548,11 +562,10 @@ export async function connectSharedPocketOption(
   // Register SSID expiration callback
   client.onSsidExpired(() => {
     console.log(`[Trading] Shared SSID expired, pausing all ${sharedClientUsers.size} users`);
-    const { getBotRunner } = require("@/services/bot-runner");
     for (const uid of sharedClientUsers) {
       updateSsidStatus(uid, "EXPIRED").catch(() => {});
-      const runner = getBotRunner(uid);
-      if (runner) runner.pause("SSID_EXPIRED");
+      const runner = getBotRunnerLazy(uid);
+      if (runner && typeof runner.pause === "function") runner.pause("SSID_EXPIRED");
     }
     db.update(platformSettings)
       .set({ value: "EXPIRED", updatedAt: new Date() })

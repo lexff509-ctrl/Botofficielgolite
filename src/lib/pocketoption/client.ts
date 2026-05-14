@@ -899,15 +899,19 @@ export class PocketOptionClient {
       this.ws = null;
     }
 
-    if (!this.intentionallyClosed && !wasConnecting) {
+    // CRITICAL: Never reconnect if SSID is expired — prevents infinite loop
+    if (!this.intentionallyClosed && !wasConnecting && !this.ssidExpired) {
       const delay = getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);
       this.reconnectAttempts++;
       console.log(`[PO] Dropped! Reconnecting in ${delay}ms...`);
       setTimeout(() => {
-        if (this.state === ConnectionState.DISCONNECTED && !this.intentionallyClosed) {
+        // Double-check ssidExpired before actually reconnecting (may have expired during the delay)
+        if (this.state === ConnectionState.DISCONNECTED && !this.intentionallyClosed && !this.ssidExpired) {
           this.connect(this.isDemo).catch(() => {});
         }
       }, delay);
+    } else if (this.ssidExpired) {
+      console.warn(`[PO] Halting auto-reconnect: SSID is expired. Waiting for new session from Bridge.`);
     }
   }
 

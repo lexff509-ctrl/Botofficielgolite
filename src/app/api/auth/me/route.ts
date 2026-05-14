@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
     }
 
-    // Compute real-time bridge status: active only if synced within last 5 minutes
-    const BRIDGE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    // Compute real-time bridge status: active only if synced within last 10 minutes
+    const BRIDGE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
     const lastSync = user.extensionLastSync ? new Date(user.extensionLastSync).getTime() : 0;
     const bridgeIsReallyActive = lastSync > 0 && (Date.now() - lastSync) < BRIDGE_TIMEOUT_MS;
 

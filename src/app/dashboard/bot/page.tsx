@@ -165,13 +165,13 @@ export default function BotPage() {
     fetchSessions();
   }, [fetchUser, fetchSessions]);
 
-  // Poll user every 30s to pick up extensionActive / balance changes from Bridge
+  // Adaptive polling: fast (5s) while waiting for Bridge, slow (30s) when connected
   useEffect(() => {
     const interval = setInterval(() => {
       fetchUser();
-    }, 30000);
+    }, user?.extensionActive ? 30000 : 5000);
     return () => clearInterval(interval);
-  }, [fetchUser]);
+  }, [fetchUser, user?.extensionActive]);
 
   // Poll runner status while running
   useEffect(() => {

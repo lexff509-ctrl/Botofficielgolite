@@ -94,6 +94,13 @@ export class BotRunner {
   private stopped = false;
   private isReconnecting = false;
 
+  // ─── Connection State Machine ───────────────────────────────────────────
+  private ssidExpiredFinal = false;      // FINAL state — no reconnect ever
+  private reconnectAttempts = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private lastReconnectAt = 0;
+  private readonly MIN_RECONNECT_COOLDOWN_MS = 8000; // 8s min between reconnects
+
   // New Strategy State Management
   private lastProcessedTimestamp = 0;
   private isInPosition = false;
@@ -418,16 +425,42 @@ export class BotRunner {
     try {
       // We are inside the locked section. All returns from here on must be wrapped or handled so we release the lock in the finally block.
 
-    // === Auto-Reconnect: if PO client is missing or disconnected, force reconnect ===
+    // === 1. STATE MACHINE: SSID_EXPIRED is a FINAL blocking state — no reconnect ever ===
     let poClient = getPocketOptionClient(this.userId);
+
+    // Check SSID expiry FIRST — before any reconnect attempt
+    if (this.ssidExpiredFinal || (poClient && poClient.isSsidExpired)) {
+      if (!this.ssidExpiredFinal) {
+        console.warn(`[BotRunner] SSID_EXPIRED detected for user ${this.userId} — entering final halt state`);
+        this.ssidExpiredFinal = true;
+      }
+      this.pause("SSID_EXPIRED");
+      return;
+    }
+
+    // === Auto-Reconnect: if PO client is missing or disconnected ===
     if (!poClient || !poClient.isConnected) {
       if (this.isReconnecting) {
-        // Déjà en train de reconnecter, on attend la fin du processus
+        return; // Already reconnecting
+      }
+
+      // Anti-spam: enforce minimum cooldown between reconnects
+      const now = Date.now();
+      if (now - this.lastReconnectAt < this.MIN_RECONNECT_COOLDOWN_MS) {
         return;
       }
 
-      console.warn(`[BotRunner] PocketOption not connected for user ${this.userId} — forcing reconnect...`);
+      // Max reconnect attempts guard
+      if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+        console.error(`[BotRunner] Max reconnect attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached for user ${this.userId} — pausing bot`);
+        this.pause("MAX_RECONNECT_REACHED");
+        return;
+      }
+
+      console.warn(`[BotRunner] PocketOption not connected for user ${this.userId} — forcing reconnect (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
       this.isReconnecting = true;
+      this.lastReconnectAt = now;
+      this.reconnectAttempts++;
       try {
         const { connectPocketOption, getGlobalSsid } = await import("@/services/trading.service");
         const { getUserProfile, getDecryptedSSID } = await import("@/services/auth.service");
@@ -450,21 +483,32 @@ export class BotRunner {
           this.isReconnecting = false;
         } else {
           connectPocketOption(this.userId, ssid, isDemo).then(r => {
-            if (r.success) console.log(`[BotRunner] Auto-reconnect succeeded for user ${this.userId}`);
-            else console.warn(`[BotRunner] Auto-reconnect failed: ${r.error}`);
+            if (r.success) {
+              console.log(`[BotRunner] Auto-reconnect succeeded for user ${this.userId}`);
+              this.reconnectAttempts = 0; // Reset counter on success
+            } else {
+              console.warn(`[BotRunner] Auto-reconnect failed: ${r.error}`);
+              // If SSID expired during reconnect, set final halt
+              if (r.ssidExpired) this.ssidExpiredFinal = true;
+            }
             this.isReconnecting = false;
           }).catch(() => {
             this.isReconnecting = false;
           });
         }
-      } catch { 
+      } catch {
         this.isReconnecting = false;
       }
+      return; // Always return after triggering reconnect — let next tick evaluate
     }
 
-    // Check if SSID has expired (only block if explicitly expired)
+    // Reconnect succeeded: reset counter
+    this.reconnectAttempts = 0;
+
+    // Check if SSID has expired on the now-connected client
     poClient = getPocketOptionClient(this.userId);
     if (poClient && poClient.isSsidExpired) {
+      this.ssidExpiredFinal = true;
       this.pause("SSID_EXPIRED");
       return;
     }
