@@ -65,45 +65,61 @@ export class OrchestratorAgent {
       let adjustedScore = decision.confidence;
       const adjustmentReasons: string[] = [];
 
-      // — MTF Adjustments —
-      if (decision.action !== "WAIT") {
+      // ── Guard: si ConfidenceAgent a déjà bloqué (WAIT forcé MQS), ne rien ajouter ──
+      const volIsLow = marketState.structure?.volatility === "LOW";
+      const mqsOk    = (decision.marketQuality ?? 100) >= 35;
+
+      // — MTF Adjustments — (désactivé si vol LOW ou MQS mauvais)
+      if (decision.action !== "WAIT" && !volIsLow && mqsOk) {
         const signalBias = decision.action === "BUY" ? "BULLISH" : "BEARISH";
 
         if (mtf.confirmation === "STRONG" && mtf.htf1Trend === signalBias) {
           adjustedScore += 12;
-          adjustmentReasons.push(`+12 pts MTF: HTF fortement aligné (${signalBias})`);
+          adjustmentReasons.push(`+12 MTF Strong`);
         } else if (mtf.confirmation === "MODERATE" && mtf.htf1Trend === signalBias) {
           adjustedScore += 6;
-          adjustmentReasons.push(`+6 pts MTF: HTF modérément aligné`);
+          adjustmentReasons.push(`+6 MTF Moderate`);
         } else if (mtf.confirmation === "CONFLICT") {
           adjustedScore -= 12;
-          adjustmentReasons.push(`-12 pts MTF: Conflit HTF (signal contre-tendance risqué)`);
+          adjustmentReasons.push(`-12 MTF Conflict`);
         } else if (mtf.htf1Trend !== "NEUTRAL" && mtf.htf1Trend !== signalBias) {
           adjustedScore -= 8;
-          adjustmentReasons.push(`-8 pts MTF: HTF opposé au signal`);
+          adjustmentReasons.push(`-8 MTF Opposed`);
         }
+      } else if (volIsLow) {
+        adjustmentReasons.push(`MTF bonus désactivé (Vol LOW)`);
       }
 
-      // — Sentiment Adjustments —
-      if (decision.action !== "WAIT") {
+      // — Sentiment Adjustments — (max ±5 pts, secondaire uniquement, jamais seul) —
+      if (decision.action !== "WAIT" && !volIsLow && mqsOk) {
         const signalBias = decision.action === "BUY" ? "BULLISH" : "BEARISH";
+        const MAX_SENTIMENT = 5; // Sentiment ne peut jamais transformer WAIT→signal seul
 
         if (sentimentFull.bias === signalBias && sentimentFull.confidence >= 40) {
-          adjustedScore += 8;
-          adjustmentReasons.push(`+8 pts Sentiment: Marché ${sentimentFull.bias} confirmé (${sentimentFull.finalScore > 0 ? "+" : ""}${sentimentFull.finalScore})`);
+          adjustedScore += MAX_SENTIMENT;
+          adjustmentReasons.push(`+${MAX_SENTIMENT} Sentiment ✓`);
         } else if (sentimentFull.bias !== "NEUTRAL" && sentimentFull.bias !== signalBias && sentimentFull.confidence >= 40) {
-          adjustedScore -= 8;
-          adjustmentReasons.push(`-8 pts Sentiment: Marché contre-directionnel (${sentimentFull.finalScore > 0 ? "+" : ""}${sentimentFull.finalScore})`);
+          adjustedScore -= MAX_SENTIMENT;
+          adjustmentReasons.push(`-${MAX_SENTIMENT} Sentiment ✗`);
         }
       }
 
       adjustedScore = Math.max(0, Math.min(100, Math.round(adjustedScore)));
 
-      // ═══════════════════════════════════════════════════════════════════
-      // ÉTAPE 6 : Décision Finale avec score ajusté
-      // ═══════════════════════════════════════════════════════════════════
-      const finalStrength = adjustedScore >= 75 ? "HIGH" : adjustedScore >= 60 ? "MEDIUM" : "LOW";
-      const finalAction = adjustedScore < 48 ? "WAIT" : decision.action;
+      // Final action: WAIT only if score is truly too low (after MTF/sentiment adjustments)
+      // This allows MTF alignment to rescue a borderline 45% → 57% signal
+      let finalAction = decision.action;
+      if (adjustedScore < 48 || decision.action === "WAIT") {
+        // Re-check: if MTF strongly agrees with one side, override weak WAIT
+        const mtfBias = mtf.alignmentScore > 20 ? "BULLISH" : mtf.alignmentScore < -20 ? "BEARISH" : "NEUTRAL";
+        if (mtfBias !== "NEUTRAL" && mtf.confirmation !== "CONFLICT" && adjustedScore >= 40) {
+          finalAction = mtfBias === "BULLISH" ? "BUY" : "SELL";
+          adjustedScore = Math.max(adjustedScore, 50);
+          adjustmentReasons.push(`MTF override: ${mtfBias} (${mtf.alignmentScore}pts)`);
+        } else {
+          finalAction = "WAIT";
+        }
+      }
 
       const fullReason = [
         `[IA V6] ${finalAction} (${adjustedScore}%) |`,

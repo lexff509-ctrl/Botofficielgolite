@@ -56,4 +56,5 @@ export interface ConfidenceResult {
   confidence: number; // 0 to 100
   strength: "weak" | "medium" | "strong";
   reasons: string[];
+  marketQuality?: number; // 0-100, from Market Quality Score
 }

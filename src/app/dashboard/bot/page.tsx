@@ -333,10 +333,17 @@ export default function BotPage() {
           </div>
           
           {(() => {
-            // Bridge is active if extensionActive=true OR if lastSync was within last 5 minutes
-            const lastSync = user?.extensionLastSync ? new Date(user.extensionLastSync as string).getTime() : 0;
-            const recentSync = lastSync > 0 && (Date.now() - lastSync) < 5 * 60 * 1000;
-            const bridgeOk = Boolean(user?.extensionActive) || recentSync;
+            const TIMEOUT = 10 * 60 * 1000; // 10 minutes
+            // Signal 1: extensionActive from API (requires DB column)
+            const apiActive = Boolean(user?.extensionActive);
+            // Signal 2: extensionLastSync (requires column)
+            const lastSyncTs = user?.extensionLastSync ? new Date(user.extensionLastSync as string).getTime() : 0;
+            const syncedRecently = lastSyncTs > 0 && (Date.now() - lastSyncTs) < TIMEOUT;
+            // Signal 3: pocketOptionUid + updatedAt fallback (works even without extension_last_sync column)
+            const updatedTs = user?.updatedAt ? new Date(user.updatedAt as string).getTime() : 0;
+            const uidFallback = Boolean(user?.pocketOptionUid) && updatedTs > 0 && (Date.now() - updatedTs) < TIMEOUT;
+            const bridgeOk = apiActive || syncedRecently || uidFallback;
+            const displayTime = lastSyncTs || updatedTs;
             return !bridgeOk ? (
               <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-yellow-400 text-sm flex items-start gap-3">
                 <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -350,8 +357,10 @@ export default function BotPage() {
             ) : (
               <div className="mt-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 text-sm flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-                <span className="font-bold">Bridge Connecté</span>
-                <span className="text-emerald-400/60 text-xs ml-auto">Dernier sync: {lastSync ? new Date(lastSync).toLocaleTimeString('fr-FR') : '—'}</span>
+                <span className="font-bold">🟢 Bridge Connecté</span>
+                <span className="text-emerald-400/60 text-xs ml-auto">
+                  Dernier sync: {displayTime ? new Date(displayTime).toLocaleTimeString('fr-FR') : '—'}
+                </span>
               </div>
             );
           })()}

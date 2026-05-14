@@ -24,10 +24,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
     }
 
-    // Compute real-time bridge status: active only if synced within last 10 minutes
+    // Compute real-time bridge status — multi-signal detection
     const BRIDGE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-    const lastSync = user.extensionLastSync ? new Date(user.extensionLastSync).getTime() : 0;
-    const bridgeIsReallyActive = lastSync > 0 && (Date.now() - lastSync) < BRIDGE_TIMEOUT_MS;
+
+    // Signal 1: extensionLastSync (primary, requires DB column)
+    const lastSyncTs = user.extensionLastSync ? new Date(user.extensionLastSync).getTime() : 0;
+    const syncedRecently = lastSyncTs > 0 && (Date.now() - lastSyncTs) < BRIDGE_TIMEOUT_MS;
+
+    // Signal 2: pocketOptionUid + updatedAt (fallback when extension_last_sync column doesn't exist yet)
+    const updatedTs = user.updatedAt ? new Date(user.updatedAt as string).getTime() : 0;
+    const hasUid = !!user.pocketOptionUid;
+    const uidUpdatedRecently = hasUid && updatedTs > 0 && (Date.now() - updatedTs) < BRIDGE_TIMEOUT_MS;
+
+    const bridgeIsReallyActive = syncedRecently || uidUpdatedRecently;
 
     return NextResponse.json({
       user: {
@@ -52,7 +61,8 @@ export async function GET(req: NextRequest) {
         extensionApiKey: user.extensionApiKey,
         extensionLastSync: user.extensionLastSync,
         extensionDeviceName: user.extensionDeviceName,
-        extensionActive: bridgeIsReallyActive, // Real-time: false if no sync for >5min
+        extensionActive: bridgeIsReallyActive,
+        updatedAt: user.updatedAt,       // Fallback for bridge detection when extensionLastSync column missing
         liveBalance: user.liveBalance,
         pocketOptionUsername: user.pocketOptionUsername,
       },
