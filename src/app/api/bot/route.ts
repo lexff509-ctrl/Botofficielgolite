@@ -102,8 +102,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = botActionSchema.safeParse(body);
     if (!parsed.success) {
+      console.error(`[Bot API] Validation error for user ${payload.userId}:`, parsed.error.format());
       return NextResponse.json(
-        { error: parsed.error.issues[0].message },
+        { error: `Données invalides: ${parsed.error.issues[0].message}` },
         { status: 400 }
       );
     }
@@ -208,8 +209,9 @@ export async function POST(req: NextRequest) {
 
       // SSID is REQUIRED
         if (!rawSsid) {
+          console.error(`[Bot API] SSID missing for user ${payload.userId} (Personal: ${!!user.pocketOptionSsid})`);
           return NextResponse.json(
-            { error: "Connexion PocketOption manquante. Veuillez ouvrir PocketOption avec l'extension 'BotOfficiel Bridge' active pour synchroniser votre session.", ssidMissing: true },
+            { error: "Connexion PocketOption manquante. Ouvrez PocketOption avec l'extension 'BotOfficiel Bridge' pour synchroniser.", ssidMissing: true },
             { status: 400 }
           );
         }
@@ -218,8 +220,9 @@ export async function POST(req: NextRequest) {
 
       // Pre-check: skip connection attempt if personal SSID is already known expired
         if (!useGlobalSsid && user.ssidStatus === "EXPIRED" && !ssid) {
+          console.error(`[Bot API] SSID expired for user ${payload.userId}`);
           return NextResponse.json(
-            { error: "Session PocketOption expirée. Veuillez simplement ouvrir un onglet PocketOption pour que le Bridge synchronise automatiquement votre session.", ssidExpired: true },
+            { error: "Session PocketOption expirée. Ouvrez simplement un onglet PocketOption pour que le Bridge synchronise automatiquement.", ssidExpired: true },
             { status: 400 }
           );
         }

@@ -220,8 +220,8 @@ export default function BotPage() {
       const data = await res.json();
       if (!res.ok) {
         let errorMsg = data.error || "Erreur";
-        if (data.ssidExpired || errorMsg.includes("timeout") || errorMsg.includes("SSID")) {
-          errorMsg = "SSID invalide ou expire. Allez dans Profil pour copier un nouveau SSID PocketOption.";
+        if (data.ssidExpired || data.ssidMissing || errorMsg.includes("SSID") || errorMsg.includes("PocketOption")) {
+          errorMsg = "Session PocketOption manquante ou expirée. Assurez-vous que l'extension Bridge est active et qu'un onglet PocketOption est ouvert.";
         }
         setError(errorMsg);
       } else {
