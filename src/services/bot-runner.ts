@@ -18,10 +18,10 @@ import {
 } from "@/lib/trading";
 import { OrchestratorAgent } from "../core/agents/OrchestratorAgent";
 import { candleCache } from "@/lib/candle-cache";
-import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { externalDataService } from "@/services/external-data.service";
 import { RiskManager } from "@/services/risk-manager.service";
 import { getPocketOptionClient, executeTrade } from "@/services/trading.service";
+import { tradeMutexManager } from "@/services/trade-mutex.manager";
 import { hasActiveSubscription } from "@/services/payment.service";
 
 import { DataOrchestrator, NonOtcSignalGenerator } from "@/services/data-orchestrator.service";
@@ -399,13 +399,24 @@ export class BotRunner {
     if (this.isPaused || this.stopped) return;
 
     // === 1. State Management: Prevent multiple simultaneous trades ===
+    const tradeKey = tradeMutexManager.getTradeKey(this.userId, this.asset, this.timeframe);
+    const cooldownKey = tradeMutexManager.getCooldownKey(this.userId, this.asset, this.timeframe);
+
     if (this.isInPosition) {
       return;
     }
 
-    if (Date.now() < this.cooldownUntil) {
+    if (Date.now() < this.cooldownUntil || tradeMutexManager.isCooldownActive(cooldownKey)) {
       return;
     }
+
+    // Acquire lock for this tick evaluation
+    if (!tradeMutexManager.acquireLock(tradeKey, 60000)) {
+      return; // Already evaluating or trading for this user/asset/tf
+    }
+
+    try {
+      // We are inside the locked section. All returns from here on must be wrapped or handled so we release the lock in the finally block.
 
     // === Auto-Reconnect: if PO client is missing or disconnected, force reconnect ===
     let poClient = getPocketOptionClient(this.userId);
@@ -716,10 +727,17 @@ export class BotRunner {
         const cooldownMs = this.timeframeToSeconds() * 1000;
         console.log(`[BotRunner] Sortie de position. Sniper Lock actif pendant ${cooldownMs/1000}s...`);
         this.cooldownUntil = Date.now() + cooldownMs;
+        tradeMutexManager.setCooldown(cooldownKey, cooldownMs);
       }
     }
 
     await this.updateSessionStats();
+    } finally {
+      // Always release the tick lock at the end of the tick
+      if (!this.isInPosition) {
+        tradeMutexManager.releaseLock(tradeKey);
+      }
+    }
   }
 
   private async saveSignal(signal: Signal): Promise<void> {

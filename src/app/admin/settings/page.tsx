@@ -212,69 +212,24 @@ export default function AdminSettingsPage() {
           </div>
         )}
 
-        {/* Global SSID Configuration */}
-        <div className="glass-card rounded-xl p-5">
-          <div className="text-slate-400 text-xs font-medium mb-4">SSID GLOBAL POCKETOPTION</div>
-
-          {/* Current Status */}
-          <div className="bg-white/5 rounded-xl p-4 mb-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-slate-300">Statut du SSID</div>
-                <div className={`text-lg font-bold ${getStatusColor(settings?.globalSsidStatus || "NOT_SET")}`}>
-                  {getStatusLabel(settings?.globalSsidStatus || "NOT_SET")}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-sm text-slate-300">Connexion partagee</div>
-                <div className={`text-lg font-bold ${settings?.sharedClientConnected ? "text-emerald-400" : "text-slate-500"}`}>
-                  {settings?.sharedClientConnected ? "Active" : "Inactive"}
-                </div>
-              </div>
+        {/* Admin Note about Bridge Model */}
+        <div className="glass-card rounded-xl p-5 border-2 border-violet-500/20 bg-violet-500/5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-full bg-violet-500/20 flex items-center justify-center">
+              <svg className="w-6 h-6 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
             </div>
-            {settings?.sharedClientConnected && (
-              <div className="mt-2 text-xs text-slate-400">
-                {settings.sharedClientUserCount} utilisateur(s) connecte(s) via le SSID global
-              </div>
-            )}
-          </div>
-
-          {/* SSID Input */}
-          <div className="space-y-3">
             <div>
-              <label className="block text-slate-400 text-xs mb-1.5">
-                Nouveau SSID PocketOption
-              </label>
-              <input
-                type="password"
-                value={ssidInput}
-                onChange={(e) => setSsidInput(e.target.value)}
-                placeholder="Collez votre SSID PocketOption ici..."
-                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm font-mono"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Le SSID sera teste avant d&apos;etre sauvegarde. Tous les utilisateurs sans SSID personnel l&apos;utiliseront.
-              </p>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={handleSetSsid}
-                disabled={loading || !ssidInput.trim()}
-                className="flex-1 px-6 py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-cyan-500 to-violet-600 text-white hover:from-cyan-400 hover:to-violet-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? "Test en cours..." : "Sauvegarder et Tester"}
-              </button>
-              {settings?.globalSsidSet && (
-                <button
-                  onClick={handleClearSsid}
-                  disabled={loading}
-                  className="px-6 py-3 rounded-xl font-bold text-sm bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-400 transition-all disabled:opacity-50"
-                >
-                  Supprimer
-                </button>
-              )}
+              <h3 className="text-lg font-bold text-white">Modèle Connection Bridge</h3>
+              <p className="text-slate-400 text-xs">La plateforme utilise désormais l&apos;extension Chrome pour les connexions clients.</p>
             </div>
           </div>
+          <p className="text-sm text-slate-300 leading-relaxed">
+            Le système de SSID Global a été retiré au profit du <strong>BotOfficiel Bridge</strong>. 
+            Chaque utilisateur se connecte désormais via son propre navigateur, ce qui garantit une stabilité 24/7 et évite les blocages d&apos;IP par PocketOption. 
+            Assurez-vous que vos clients téléchargent bien l&apos;extension depuis leur profil.
+          </p>
         </div>
 
         {/* Payout Rate */}

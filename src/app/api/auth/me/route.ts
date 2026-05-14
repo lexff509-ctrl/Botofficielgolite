@@ -44,6 +44,12 @@ export async function GET(req: NextRequest) {
         ssidStatus: user.ssidStatus,
         profitTarget: user.profitTarget ?? null,
         lossLimit: user.lossLimit ?? null,
+        extensionApiKey: user.extensionApiKey,
+        extensionLastSync: user.extensionLastSync,
+        extensionDeviceName: user.extensionDeviceName,
+        extensionActive: user.extensionActive,
+        liveBalance: user.liveBalance,
+        pocketOptionUsername: user.pocketOptionUsername,
       },
     });
   } catch (error) {

@@ -25,6 +25,11 @@ export const MONCASH_INFO = {
   htgRate: HTG_RATE,
 };
 
+export const ZELLE_INFO = {
+  phone: "217 719 2953",
+  name: "LOVELY LAMOUR",
+};
+
 export type PlanKey = keyof typeof SUBSCRIPTION_PLANS;
 
 // ============ PAYMENT MANAGEMENT ============

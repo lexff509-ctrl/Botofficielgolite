@@ -279,64 +279,58 @@ export default function BotPage() {
           </div>
         )}
 
-        {/* Connection Status Panel */}
-        <div className="glass-card rounded-xl p-5">
-          <div className="text-slate-400 text-xs font-medium mb-3">CONNEXION POCKETOPTION</div>
-          <div className="flex items-center gap-4">
-            <div className={`w-4 h-4 rounded-full ${
-              isRunning && runnerStatus && !runnerStatus.paused
-                ? "bg-emerald-400 animate-pulse"
-                : runnerStatus?.paused
-                  ? "bg-yellow-400"
-                  : "bg-slate-500"
-            }`} />
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-white">
-                  {isRunning && runnerStatus && !runnerStatus.paused
-                    ? "Connecte"
-                    : runnerStatus?.paused
-                      ? "En pause"
-                      : "Deconnecte"}
+        {/* Bridge Connection Panel */}
+        <div className="glass-card rounded-xl p-5 border border-slate-700/50">
+          <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-4">
+            <div className="flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${user?.extensionActive ? 'bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'bg-red-500'}`} />
+              <h2 className="text-lg font-bold text-white">Bridge BotOfficiel</h2>
+              {Boolean(user?.extensionActive) && (
+                <span className="text-[10px] font-black bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20 uppercase">
+                  Connected
                 </span>
-                {isRunning && activeSession && (
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    activeSession.useGlobalSsid
-                      ? "bg-violet-500/20 text-violet-400 border border-violet-500/30"
-                      : "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
-                  }`}>
-                    {activeSession.useGlobalSsid ? "SSID Global (Admin)" : "SSID Personnel"}
-                  </span>
-                )}
-                {isRunning && realBalance && (
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-black ${mode === "LIVE" ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-blue-500/20 text-blue-400 border border-blue-500/30"}`}>
-                    SOLDE REEL: ${mode === "LIVE" ? (realBalance.live || 0).toLocaleString() : (realBalance.demo || 0).toLocaleString()}
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-slate-500 mt-0.5">
-                Source: {getSsidSource()}
+              )}
+            </div>
+            <div className="text-xs text-slate-400 text-right">
+              <div>Navigateur: <span className="text-white">{user?.extensionDeviceName as string || 'Inconnu'}</span></div>
+              {Boolean(user?.extensionLastSync) && (
+                <div>Dernière synchro: <span className="text-white">{new Date(user?.extensionLastSync as string).toLocaleTimeString()}</span></div>
+              )}
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white/5 rounded-xl p-3 border border-slate-700/30">
+              <div className="text-xs text-slate-400 mb-1">Compte PO</div>
+              <div className="font-bold text-white text-sm truncate">{user?.pocketOptionUsername as string || user?.pocketOptionUid as string || 'Non synchronisé'}</div>
+            </div>
+            <div className="bg-white/5 rounded-xl p-3 border border-slate-700/30">
+              <div className="text-xs text-slate-400 mb-1">Mode Actuel</div>
+              <div className={`font-bold text-sm ${user?.tradeMode === 'LIVE' ? 'text-green-400' : 'text-blue-400'}`}>
+                {(user?.tradeMode as string) || 'DEMO'}
               </div>
             </div>
-            {isRunning && (
-              <div className="flex flex-col items-end gap-1">
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${asset.includes("(OTC)") ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>
-                  ANALYSE {asset.includes("(OTC)") ? "POCKETOPTION" : "BINANCE"}
-                </span>
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
-                  FLUX TEMPS RÉEL ACTIF
-                </span>
-              </div>
-            )}
-            {!isRunning && !ssidInfo?.globalSsidAvailable && !user?.pocketOptionSsid && !ssid && (
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-1.5 text-yellow-400 text-xs">
-                Aucun SSID - Ajoutez-le ci-dessous ou demandez a l&apos;admin
-              </div>
-            )}
+            <div className="bg-white/5 rounded-xl p-3 border border-slate-700/30">
+              <div className="text-xs text-slate-400 mb-1">Solde Live</div>
+              <div className="font-bold text-green-400 text-sm">${user?.liveBalance ? Number(user?.liveBalance).toLocaleString() : '0.00'}</div>
+            </div>
+            <div className="bg-white/5 rounded-xl p-3 border border-slate-700/30">
+              <div className="text-xs text-slate-400 mb-1">Solde Demo</div>
+              <div className="font-bold text-blue-400 text-sm">${user?.demoBalance ? Number(user?.demoBalance).toLocaleString() : '0.00'}</div>
+            </div>
           </div>
-          <div className="mt-2 text-xs text-slate-500">
-            Le bot ne demarre PAS automatiquement. Vous devez cliquer sur Demarrer.
-          </div>
+          
+          {(!user?.extensionActive) && (
+             <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-yellow-400 text-sm flex items-start gap-3">
+               <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+               <div>
+                 <div className="font-bold mb-1">Extension non connectée</div>
+                 <p className="text-xs text-yellow-400/80">
+                   Installez l'extension Chrome Bridge et ouvrez un onglet PocketOption. La connexion et la synchronisation seront 100% automatiques. Plus besoin de saisir le SSID.
+                 </p>
+               </div>
+             </div>
+          )}
         </div>
 
         {/* Bot Type Selection */}
@@ -555,24 +549,7 @@ export default function BotPage() {
               </div>
             </div>
 
-            {/* SSID Input */}
-            <div>
-              <label className="block text-slate-400 text-xs mb-1.5">
-                SSID PocketOption{" "}
-                <span className="text-slate-600">(optionnel si SSID global disponible)</span>
-              </label>
-              <input
-                type="password"
-                value={ssid}
-                onChange={(e) => setSsid(e.target.value)}
-                disabled={isRunning}
-                placeholder="Votre SSID PocketOption..."
-                className="w-full bg-white/5 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors text-sm font-mono disabled:opacity-50"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Chiffre AES-256 et isole par session. Si vide, utilise le SSID global.
-              </p>
-            </div>
+            {/* Removed SSID Input */}
 
             {/* Profit Target */}
             <div>

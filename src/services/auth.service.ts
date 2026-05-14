@@ -30,6 +30,12 @@ export interface UserProfile {
   backtestingDaysGranted: number | null;
   profitTarget: string | null;
   lossLimit: string | null;
+  extensionApiKey: string | null;
+  extensionLastSync: Date | null;
+  extensionDeviceName: string | null;
+  extensionActive: boolean;
+  liveBalance: string | null;
+  pocketOptionUsername: string | null;
   createdAt: Date;
 }
 
@@ -144,11 +150,21 @@ export async function loginUser(
 }
 
 export async function getUserProfile(userId: number): Promise<UserProfile | null> {
-  const [user] = await db
+  let [user] = await db
     .select()
     .from(users)
     .where(eq(users.id, userId));
-  return user ? mapUser(user) : null;
+
+  if (!user) return null;
+
+  // Auto-generate extension API key if missing
+  if (!user.extensionApiKey) {
+    const newApiKey = `evt_live_${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}`;
+    await db.update(users).set({ extensionApiKey: newApiKey }).where(eq(users.id, userId));
+    user.extensionApiKey = newApiKey;
+  }
+
+  return mapUser(user);
 }
 
 export async function updateProfile(

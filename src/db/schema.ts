@@ -66,6 +66,10 @@ export const users = pgTable("users", {
   pocketOptionUid: varchar("pocket_option_uid", { length: 50 }),
   pocketOptionSsid: text("pocket_option_ssid"),
   ssidStatus: ssidStatusEnum("ssid_status").default("NOT_SET").notNull(),
+  // Chrome Extension Bridge
+  extensionApiKey: varchar("extension_api_key", { length: 100 }).unique(),
+  extensionLastSync: timestamp("extension_last_sync"),
+  extensionDeviceName: varchar("extension_device_name", { length: 100 }),
   // Trading config
   tradeMode: tradeModeEnum("trade_mode").default("DEMO").notNull(),
   demoBalance: numeric("demo_balance", { precision: 15, scale: 2 }).default(
@@ -74,9 +78,12 @@ export const users = pgTable("users", {
   demoTradeAmount: numeric("demo_trade_amount", { precision: 15, scale: 2 }).default(
     "1.00"
   ),
+  liveBalance: numeric("live_balance", { precision: 15, scale: 2 }).default("0.00"),
   liveTradeAmount: numeric("live_trade_amount", { precision: 15, scale: 2 }).default(
     "1.00"
   ),
+  pocketOptionUsername: varchar("pocket_option_username", { length: 100 }),
+  extensionActive: boolean("extension_active").default(false).notNull(),
   // User-defined trading limits
   profitTarget: numeric("profit_target", { precision: 15, scale: 2 }),
   lossLimit: numeric("loss_limit", { precision: 15, scale: 2 }),
@@ -200,6 +207,10 @@ export const botSessions = pgTable("bot_sessions", {
   compoundInitialAmount: numeric("compound_initial_amount", { precision: 15, scale: 2 }),
   // Global SSID tracking
   useGlobalSsid: boolean("use_global_ssid").default(false).notNull(),
+  // Tracking & Cooldown
+  cooldownUntil: timestamp("cooldown_until"),
+  lastTradeTimestamp: timestamp("last_trade_timestamp"),
+  lastSignalTimestamp: timestamp("last_signal_timestamp"),
   startedAt: timestamp("started_at").defaultNow().notNull(),
   stoppedAt: timestamp("stopped_at"),
 });

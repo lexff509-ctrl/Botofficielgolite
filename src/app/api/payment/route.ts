@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest, handleApiError } from "@/lib/auth";
-import { hasActiveSubscription, createPaymentRequest, getPayments, getWalletAddress, MONCASH_PLANS, MONCASH_INFO, reviewPayment } from "@/services/payment.service";
+import { hasActiveSubscription, createPaymentRequest, getPayments, getWalletAddress, MONCASH_PLANS, MONCASH_INFO, ZELLE_INFO, reviewPayment } from "@/services/payment.service";
 import { db } from "@/db";
 import { promoCodes, promoCodeUsage } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
       },
       moncashPlans: MONCASH_PLANS,
       moncashInfo: MONCASH_INFO,
+      zelleInfo: ZELLE_INFO,
       currency: "USDT TRC20",
     });
   } catch (error) {
@@ -65,9 +66,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Montant invalide" }, { status: 400 });
     }
 
-    // For USDT: require txHash or proof
+    // For USDT/ZELLE: require txHash or proof
     // For MonCash: require sender phone
     const isMoncash = currency === "MONCASH";
+    const isZelle = currency === "ZELLE";
+    
     if (!isAutoApprove && !isMoncash && !txHash && !proofFilePath) {
       return NextResponse.json({ error: "Hash de transaction ou preuve image requis" }, { status: 400 });
     }

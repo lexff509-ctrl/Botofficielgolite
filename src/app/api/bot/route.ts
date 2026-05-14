@@ -207,22 +207,22 @@ export async function POST(req: NextRequest) {
       }
 
       // SSID is REQUIRED
-      if (!rawSsid) {
-        return NextResponse.json(
-          { error: "Aucun SSID disponible. Ajoutez votre SSID dans votre profil ou demandez a l'admin de configurer le SSID global.", ssidMissing: true },
-          { status: 400 }
-        );
-      }
+        if (!rawSsid) {
+          return NextResponse.json(
+            { error: "Connexion PocketOption manquante. Veuillez ouvrir PocketOption avec l'extension 'BotOfficiel Bridge' active pour synchroniser votre session.", ssidMissing: true },
+            { status: 400 }
+          );
+        }
 
       const encryptedSsid = encryptSSID(rawSsid);
 
       // Pre-check: skip connection attempt if personal SSID is already known expired
-      if (!useGlobalSsid && user.ssidStatus === "EXPIRED" && !ssid) {
-        return NextResponse.json(
-          { error: "SSID expire. Veuillez mettre a jour votre SSID dans votre profil.", ssidExpired: true },
-          { status: 400 }
-        );
-      }
+        if (!useGlobalSsid && user.ssidStatus === "EXPIRED" && !ssid) {
+          return NextResponse.json(
+            { error: "Session PocketOption expirée. Veuillez simplement ouvrir un onglet PocketOption pour que le Bridge synchronise automatiquement votre session.", ssidExpired: true },
+            { status: 400 }
+          );
+        }
 
       // Connect to PocketOption (non-blocking: start in background, return immediately)
       const isDemoConnection = selectedMode === "DEMO";

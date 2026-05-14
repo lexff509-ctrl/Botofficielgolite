@@ -16,6 +16,7 @@ interface PaymentInfo {
   currency: string;
   moncashPlans?: Record<string, { months: number; priceHTG: number; label: string; savings?: string }>;
   moncashInfo?: { phone: string; validationName: string; htgRate: number };
+  zelleInfo?: { phone: string; name: string };
 }
 
 interface Payment {
@@ -43,7 +44,7 @@ export default function PaymentPage() {
   const [walletAddress, setWalletAddress] = useState("");
   const [payments, setPayments] = useState<Payment[]>([]);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<"USDT" | "MONCASH">("USDT");
+  const [paymentMethod, setPaymentMethod] = useState<"USDT" | "MONCASH" | "ZELLE">("USDT");
   const [txHash, setTxHash] = useState("");
   const [moncashSenderPhone, setMoncashSenderPhone] = useState("");
   const [moncashValidationName, setMoncashValidationName] = useState("");
@@ -85,6 +86,7 @@ export default function PaymentPage() {
           currency: paymentsData.currency,
           moncashPlans: paymentsData.moncashPlans,
           moncashInfo: paymentsData.moncashInfo,
+          zelleInfo: paymentsData.zelleInfo,
         });
       }
       if (walletData.wallet) {
@@ -186,6 +188,9 @@ export default function PaymentPage() {
         body.txHash = "PROMO_CODE_100%";
       } else if (paymentMethod === "USDT") {
         body.txHash = txHash;
+        body.proofFilePath = proofFilePath;
+      } else if (paymentMethod === "ZELLE") {
+        body.txHash = "";
         body.proofFilePath = proofFilePath;
       } else {
         body.moncashSenderPhone = moncashSenderPhone;
@@ -318,6 +323,17 @@ export default function PaymentPage() {
               <div className="font-bold text-white">MonCash</div>
               <div className="text-xs text-slate-400 mt-1">Haiti - paiement en Gourdes (HTG)</div>
             </button>
+            <button
+              onClick={() => { setPaymentMethod("ZELLE"); setSelectedPlan(null); }}
+              className={`p-4 rounded-xl border-2 text-left transition-all col-span-2 md:col-span-1 ${
+                paymentMethod === "ZELLE"
+                  ? "border-purple-500/70 bg-purple-500/10"
+                  : "border-slate-700 hover:border-slate-600"
+              }`}
+            >
+              <div className="font-bold text-white">Zelle</div>
+              <div className="text-xs text-slate-400 mt-1">Paiement bancaire - USD</div>
+            </button>
           </div>
         </div>
 
@@ -333,6 +349,8 @@ export default function PaymentPage() {
                   selectedPlan?.months === plan.months
                     ? paymentMethod === "MONCASH"
                       ? "border-amber-500/70 bg-amber-500/10"
+                      : paymentMethod === "ZELLE"
+                      ? "border-purple-500/70 bg-purple-500/10"
                       : "border-cyan-500/70 bg-cyan-500/10"
                     : "border-slate-700 hover:border-slate-600"
                 }`}
@@ -348,15 +366,15 @@ export default function PaymentPage() {
                     </div>
                   </div>
                   <div className="text-right">
-                    {paymentMethod === "USDT" ? (
+                    {paymentMethod === "USDT" || paymentMethod === "ZELLE" ? (
                       <>
-                        <div className="text-xl font-black text-cyan-400">
+                        <div className={`text-xl font-black ${paymentMethod === "ZELLE" ? "text-purple-400" : "text-cyan-400"}`}>
                           {discountPercent > 0 ? (
                             <span className="line-through text-slate-500 text-sm mr-2">${plan.price}</span>
                           ) : null}
                           ${getDiscountedPrice(plan.price).toFixed(2)}
                         </div>
-                        <div className="text-xs text-slate-400">USDT TRC20</div>
+                        <div className="text-xs text-slate-400">{paymentMethod === "ZELLE" ? "Zelle USD" : "USDT TRC20"}</div>
                       </>
                     ) : (
                       <>
@@ -418,6 +436,37 @@ export default function PaymentPage() {
                   <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
                     <div className="text-xs text-amber-400">
                       Envoyez le montant en Gourdes (HTG) au numero ci-dessus via MonCash, puis remplissez le formulaire.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {paymentMethod === "ZELLE" && paymentInfo?.zelleInfo && (
+              <div className="glass-card rounded-xl p-4 mb-4">
+                <div className="text-xs text-slate-400 mb-1">INFO ZELLE</div>
+                <div className="space-y-2">
+                  <div className="bg-white/5 rounded-lg p-3 border border-slate-700">
+                    <div className="text-xs text-slate-400">Numero Zelle</div>
+                    <div className="text-sm text-purple-400 font-bold font-mono">{paymentInfo.zelleInfo.phone}</div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(paymentInfo.zelleInfo!.phone);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 mt-1"
+                    >
+                      {copied ? "Copie!" : "Copier le numero"}
+                    </button>
+                  </div>
+                  <div className="bg-white/5 rounded-lg p-3 border border-slate-700">
+                    <div className="text-xs text-slate-400">Nom Zelle</div>
+                    <div className="text-sm text-white font-bold">{paymentInfo.zelleInfo.name}</div>
+                  </div>
+                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+                    <div className="text-xs text-purple-400">
+                      Envoyez le montant exact ($) au numero Zelle ci-dessus, puis uploadez obligatoirement la capture d'ecran comme preuve ci-dessous.
                     </div>
                   </div>
                 </div>
@@ -502,10 +551,10 @@ export default function PaymentPage() {
                 </>
               )}
 
-              {discountPercent < 100 && (
+              {discountPercent < 100 && (paymentMethod === "USDT" || paymentMethod === "ZELLE" || paymentMethod === "MONCASH") && (
                 <div>
                   <label className="block text-slate-400 text-xs mb-1.5">
-                    Preuve de paiement (image, optionnel)
+                    {paymentMethod === "ZELLE" ? "Preuve de paiement Zelle (OBLIGATOIRE)" : "Preuve de paiement (image, optionnel)"}
                   </label>
                 <input
                   type="file"
@@ -539,18 +588,21 @@ export default function PaymentPage() {
 
               <button
                 type="submit"
-                disabled={loading || !selectedPlan || (discountPercent < 100 && paymentMethod === "MONCASH" && !moncashSenderPhone)}
+                disabled={loading || !selectedPlan || (discountPercent < 100 && paymentMethod === "MONCASH" && !moncashSenderPhone) || (discountPercent < 100 && paymentMethod === "ZELLE" && !proofFile)}
                 className={`w-full py-3 rounded-xl font-bold transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed text-white ${
                   paymentMethod === "MONCASH"
                     ? "bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500"
+                    : paymentMethod === "ZELLE"
+                    ? "bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500"
                     : "bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500"
                 }`}
               >
                 {loading ? "Envoi en cours..." :
                  !selectedPlan ? "Selectionnez un plan" :
+                 (discountPercent < 100 && paymentMethod === "ZELLE" && !proofFile) ? "Uploadez une image" :
                  discountPercent >= 100 ? "Activer Gratuitement" :
-                 paymentMethod === "USDT"
-                   ? `Soumettre · $${getDiscountedPrice(selectedPlan.price).toFixed(2)} USDT`
+                 paymentMethod === "USDT" || paymentMethod === "ZELLE"
+                   ? `Soumettre · $${getDiscountedPrice(selectedPlan.price).toFixed(2)} USD${paymentMethod === "USDT" ? "T" : ""}`
                    : `Soumettre · ${getDiscountedPrice(selectedPlan.priceHTG || Math.round(selectedPlan.price * HTG_RATE)).toLocaleString()} G HTG`}
               </button>
 
@@ -578,9 +630,9 @@ export default function PaymentPage() {
                       {" "}&middot; {payment.planMonths} mois
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">
-                      {payment.currency === "MONCASH" ? "MonCash" : "USDT TRC20"} &middot; {new Date(payment.createdAt).toLocaleString("fr-FR")}
+                      {payment.currency === "MONCASH" ? "MonCash" : payment.currency === "ZELLE" ? "Zelle" : "USDT TRC20"} &middot; {new Date(payment.createdAt).toLocaleString("fr-FR")}
                     </div>
-                    {payment.txHash && payment.currency !== "MONCASH" && (
+                    {payment.txHash && payment.currency !== "MONCASH" && payment.currency !== "ZELLE" && (
                       <div className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-xs">
                         TX: {payment.txHash}
                       </div>

@@ -128,6 +128,9 @@ export class PocketOptionClient {
   private lastBalance: { balance: number; isDemo: number } | null = null;
   private assetData: Record<string, { payout: number }> = {};
 
+  // Mutex for trading
+  private tradeMutex = new AsyncMutex();
+
   // Heartbeat & Reconnection
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
   private lastPongAt = Date.now();
@@ -138,8 +141,10 @@ export class PocketOptionClient {
   private ssidExpired = false;
 
   // Trade Lock
-  private tradeMutex = new AsyncMutex();
   private prefetchedCookies: string[] = [];
+
+  // Track pending promises to reject them on disconnect (prevent memory leaks)
+  private pendingRequests = new Set<(err: Error) => void>();
 
   constructor(ssid: string, cookies?: string[]) {
     this.ssid = ssid;
@@ -179,15 +184,29 @@ export class PocketOptionClient {
   /** Promisified event listener, eliminating busy-waiting while loops */
   private async waitForEvent<T>(eventName: string, timeoutMs: number, predicate?: (data: T) => boolean): Promise<T> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      let isSettled = false;
+
+      const rejectHandler = (err: Error) => {
+        if (isSettled) return;
+        isSettled = true;
+        clearTimeout(timeout);
         this.internalEvents.off(eventName, listener);
-        reject(new Error(`Timeout waiting for internal event: ${eventName} (${timeoutMs}ms)`));
+        this.pendingRequests.delete(rejectHandler);
+        reject(err);
+      };
+      this.pendingRequests.add(rejectHandler);
+
+      const timeout = setTimeout(() => {
+        rejectHandler(new Error(`Timeout waiting for internal event: ${eventName} (${timeoutMs}ms)`));
       }, timeoutMs);
 
       const listener = (data: T) => {
         if (!predicate || predicate(data)) {
+          if (isSettled) return;
+          isSettled = true;
           clearTimeout(timeout);
           this.internalEvents.off(eventName, listener);
+          this.pendingRequests.delete(rejectHandler);
           resolve(data);
         }
       };
@@ -908,6 +927,15 @@ export class PocketOptionClient {
       this.socketIoHeartbeat = null;
     }
     this.expectedBinaryEvents = [];
+    
+    // Abort all hanging promises safely
+    for (const rejectFn of this.pendingRequests) {
+      try { rejectFn(new Error("Connection closed or cleaned up")); } catch {}
+    }
+    this.pendingRequests.clear();
+    
+    // Wipe all internal listeners to prevent phantom events
+    this.internalEvents.removeAllListeners();
   }
 
   // ============ Commands ============

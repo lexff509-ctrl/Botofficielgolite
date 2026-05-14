@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "BotOfficiel Bridge",
+  "version": "1.1.0",
+  "description": "Connexion automatisée PocketOption",
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "*://*.pocketoption.com/*",
+    "*://*.po.market/*",
+    "https://botofficielgolite.onrender.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.pocketoption.com/*", "*://*.po.market/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "icon.svg"
+  }
+}

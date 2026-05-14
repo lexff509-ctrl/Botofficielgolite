@@ -115,12 +115,15 @@ export default function AdminPaymentsPage() {
                         {payment.currency === "MONCASH" && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400">MONCASH</span>
                         )}
+                        {payment.currency === "ZELLE" && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-500/20 text-purple-400">ZELLE</span>
+                        )}
                       </div>
                       <div className="text-sm text-slate-400"><span className="text-white font-medium">{payment.username}</span> ({payment.userEmail})</div>
                       {payment.currency === "MONCASH" && payment.moncashSenderPhone && (
                         <div className="text-xs text-amber-400 font-mono">MonCash: {payment.moncashSenderPhone} {payment.moncashValidationName ? `(${payment.moncashValidationName})` : ""}</div>
                       )}
-                      {payment.txHash && payment.currency !== "MONCASH" && (
+                      {payment.txHash && payment.currency !== "MONCASH" && payment.currency !== "ZELLE" && (
                         <div className="text-xs text-slate-500 font-mono">TX: {payment.txHash}</div>
                       )}
                       {payment.proofFilePath && (
