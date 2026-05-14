@@ -310,12 +310,7 @@ export class PocketOptionClient {
   }
 
   private checkAuthFailure(host: string): boolean {
-    if (this.ssidExpired) {
-      const isDemoHost = host.includes("demo") || host.includes("try-demo");
-      if (isDemoHost === this.isDemo) return true;
-      this.ssidExpired = false;
-    }
-    return false;
+    return this.ssidExpired;
   }
 
   private connectDirect(host: string): Promise<void> {
@@ -590,27 +585,24 @@ export class PocketOptionClient {
   }
 
   private async handleNotAuthorized() {
+    console.warn(`[PO] Received NotAuthorized. SSID expired or invalid.`);
     this.ssidExpired = true;
     this.intentionallyClosed = true;
     this.state = ConnectionState.DISCONNECTED;
-    this.onSsidExpiredCallbacks.forEach((cb) => cb());
-
-    if (this.isDemo) {
+    
+    // Secure callback execution
+    for (const cb of this.onSsidExpiredCallbacks) {
       try {
-        const { getGlobalSsid } = await import("@/services/trading.service");
-        const fresh = await getGlobalSsid();
-        if (fresh && fresh !== this.ssid) {
-          this.ssid = fresh;
-          this.ssidExpired = false;
-          this.intentionallyClosed = false;
-          console.log('[PO] SSID refreshed automatically, reconnecting...');
-          this.connect(this.isDemo).catch(console.error);
-          return;
-        }
-      } catch (e) {
-        console.warn('[PO] Failed to auto-refresh SSID:', e);
+        if (typeof cb === "function") cb();
+      } catch (err) {
+        console.error("[PO] Error executing onSsidExpired callback:", err);
       }
     }
+
+    // Stop auto-refresh and connection immediately. Let the system wait for a new valid SSID.
+    // If the system still wants to refresh automatically, it must be triggered manually from the bot-runner or trading service.
+    // We do NOT attempt to reconnect from here to prevent infinite loop spamming.
+    console.warn(`[PO] Halting all reconnection attempts due to expired SSID.`);
 
     if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
     if (this.upgradeReject) this.upgradeReject(new Error("NotAuthorized: SSID invalide"));
@@ -631,7 +623,13 @@ export class PocketOptionClient {
         for (const [, sub] of this.activeSubscriptions) {
           this.changeSymbol(sub.asset, sub.size);
         }
-        this.onAuthCallbacks.forEach((cb) => cb());
+        for (const cb of this.onAuthCallbacks) {
+          try {
+            if (typeof cb === "function") cb();
+          } catch (err) {
+            console.error("[PO] Error executing onAuth callback:", err);
+          }
+        }
         break;
 
       case "successopenOrder":
@@ -733,7 +731,13 @@ export class PocketOptionClient {
       balance: bal,
       isDemo: Number(isDemo !== undefined ? isDemo : (this.isDemo ? 1 : 0)),
     };
-    this.onBalanceCallbacks.forEach((cb) => cb(this.lastBalance!));
+    for (const cb of this.onBalanceCallbacks) {
+      try {
+        if (typeof cb === "function") cb(this.lastBalance!);
+      } catch (err) {
+        console.error("[PO] Error executing onBalance callback:", err);
+      }
+    }
   }
 
   // ============ History & Tick Processing ============

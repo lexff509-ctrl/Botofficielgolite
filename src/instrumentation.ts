@@ -25,6 +25,17 @@ export async function register() {
       }
     };
 
+    // Global Crash Protection
+    process.on("uncaughtException", (err) => {
+      console.error("[CRASH] Uncaught Exception:", err);
+      SystemLogger.error("System/Crash", "Uncaught Exception", { error: err.message, stack: err.stack });
+    });
+
+    process.on("unhandledRejection", (reason, promise) => {
+      console.error("[CRASH] Unhandled Rejection at:", promise, "reason:", reason);
+      SystemLogger.error("System/Crash", "Unhandled Rejection", { reason: String(reason) });
+    });
+
     // Lancer la récupération en arrière-plan sans bloquer le démarrage du serveur Next.js
     // Render a besoin que le serveur réponde rapidement sur le port HTTP (timeout)
     recoverActiveSessions()
