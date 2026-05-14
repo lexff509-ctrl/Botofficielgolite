@@ -47,20 +47,25 @@ export async function POST(req: NextRequest) {
     const encryptedSsid = encryptSSID(ssid);
     const parsedUid = uid ? String(uid) : null;
 
-    // 4a. Champs stables — existent dans toutes les versions de la DB
-    const coreUpdate: any = {
+    // 4a. Champs CORE — types simples (text, varchar, timestamp) — 100% compatibles prod
+    await db.update(users).set({
       pocketOptionSsid: encryptedSsid,
       pocketOptionUid: parsedUid,
       extensionLastSync: new Date(),
       extensionDeviceName: deviceName || "Unknown Browser",
-      ssidStatus: "VALID",
       updatedAt: new Date(),
-    };
-    if (isDemo !== undefined) coreUpdate.tradeMode = isDemo ? "DEMO" : "LIVE";
+    }).where(eq(users.id, user.id));
 
-    await db.update(users).set(coreUpdate).where(eq(users.id, user.id));
+    // 4b. Champs ENUM (ssidStatus, tradeMode) — peuvent manquer en prod ancienne
+    try {
+      const enumUpdate: any = { ssidStatus: "VALID" };
+      if (isDemo !== undefined) enumUpdate.tradeMode = isDemo ? "DEMO" : "LIVE";
+      await db.update(users).set(enumUpdate).where(eq(users.id, user.id));
+    } catch (enumErr: any) {
+      console.warn("[ExtensionBridge] Enum fields skipped (type missing in prod DB):", enumErr.message);
+    }
 
-    // 4b. Nouveaux champs — ajoutés via migration. Try-catch si colonne absente en prod.
+    // 4c. Nouveaux champs — ajoutés via auto-migration. Try-catch si colonne absente en prod.
     try {
       const extUpdate: any = { extensionActive: true };
       if (username) extUpdate.pocketOptionUsername = username;
@@ -68,12 +73,11 @@ export async function POST(req: NextRequest) {
       if (liveBalance !== undefined) extUpdate.liveBalance = String(liveBalance);
       await db.update(users).set(extUpdate).where(eq(users.id, user.id));
     } catch (extErr: any) {
-      // Non-fatal: new columns not yet in DB — will be added by auto-migration on next deploy
-      console.warn("[ExtensionBridge] Extended fields update skipped (migration pending):", extErr.message);
+      console.warn("[ExtensionBridge] Extended fields skipped (migration pending):", extErr.message);
     }
 
-    // Mettre à jour le statut dans la couche trading (pour les dashboards React)
-    await updateSsidStatus(user.id, "VALID");
+    // Mettre à jour ssidStatus via fonction dédiée (fallback supplémentaire)
+    updateSsidStatus(user.id, "VALID").catch(() => {});
 
     // 5. Connecter PO avec les nouvelles données (Anti-doublon géré par connectPocketOption mutex)
     const isDemoConnection = isDemo !== undefined ? isDemo : (user.tradeMode === "DEMO");
