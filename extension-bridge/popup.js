@@ -1,4 +1,6 @@
-// popup.js — BotOfficiel Bridge
+// popup.js — BotOfficiel Bridge v1.1
+
+const STORAGE_KEYS = ["isConnected", "lastSyncStatus", "lastSyncTime", "lastSyncError", "lastUsername", "lastMode", "apiKey"];
 
 function formatTime(isoStr) {
   if (!isoStr) return "—";
@@ -7,11 +9,16 @@ function formatTime(isoStr) {
   } catch { return "—"; }
 }
 
+function refreshStatus() {
+  chrome.storage.local.get(STORAGE_KEYS, (data) => renderStatus(data));
+}
+
 function renderStatus(data) {
   const badge = document.getElementById("statusBadge");
   const dot = document.getElementById("statusDot");
   const text = document.getElementById("statusText");
   const infoRows = document.getElementById("infoRows");
+  if (!badge) return;
 
   const connected = data.isConnected === true;
   const hasKey = !!data.apiKey;
@@ -22,7 +29,7 @@ function renderStatus(data) {
     badge.className = "status-badge connected";
     dot.className = "dot green";
     text.textContent = "🟢 Bridge Connecté";
-  } else if (status === "no_api_key" || !hasKey) {
+  } else if (!hasKey || status === "no_api_key") {
     badge.className = "status-badge waiting";
     dot.className = "dot yellow";
     text.textContent = "⚙️ Clé API requise";
@@ -30,10 +37,14 @@ function renderStatus(data) {
     badge.className = "status-badge disconnected";
     dot.className = "dot red";
     text.textContent = "🔴 Erreur de sync";
+  } else if (hasKey) {
+    badge.className = "status-badge waiting";
+    dot.className = "dot yellow";
+    text.textContent = "⏳ Ouvrez PocketOption...";
   } else {
     badge.className = "status-badge waiting";
     dot.className = "dot yellow";
-    text.textContent = "⏳ En attente de PocketOption...";
+    text.textContent = "⏳ En attente...";
   }
 
   // Info rows
@@ -41,7 +52,7 @@ function renderStatus(data) {
     { label: "Dernier sync", value: formatTime(data.lastSyncTime), cls: connected ? "green" : "" },
     { label: "Mode", value: data.lastMode || "—", cls: data.lastMode === "LIVE" ? "green" : "yellow" },
     { label: "Utilisateur PO", value: data.lastUsername || "—", cls: "" },
-    { label: "Statut API", value: status === "success" ? "OK" : (status || "—"), cls: status === "success" ? "green" : "red" },
+    { label: "Statut", value: status === "success" ? "OK ✓" : (status || "—"), cls: status === "success" ? "green" : status === "error" ? "red" : "yellow" },
   ];
 
   infoRows.innerHTML = rows.map(r => `
@@ -51,25 +62,34 @@ function renderStatus(data) {
     </div>
   `).join("");
 
-  // Pre-fill API key if exists
-  if (data.apiKey) {
-    document.getElementById("apiKeyInput").value = data.apiKey;
+  // Pre-fill API key field only if empty
+  const input = document.getElementById("apiKeyInput");
+  if (data.apiKey && !input.value) {
+    input.value = data.apiKey;
   }
 }
 
-// Load current state
-chrome.storage.local.get(
-  ["isConnected", "lastSyncStatus", "lastSyncTime", "lastSyncError", "lastUsername", "lastMode", "apiKey"],
-  (data) => renderStatus(data)
-);
+// Initial load
+refreshStatus();
 
-// Save API key
-function saveKey() {
+// Auto-refresh every 2 seconds while popup is open
+setInterval(refreshStatus, 2000);
+
+// Bind save button directly — script loads at bottom of body so DOM is already ready
+// NO DOMContentLoaded needed. NO inline onclick (forbidden by Chrome MV3 CSP).
+document.getElementById("saveBtn").addEventListener("click", function () {
   const key = document.getElementById("apiKeyInput").value.trim();
-  if (!key) return;
-  chrome.storage.local.set({ apiKey: key }, () => {
-    const msg = document.getElementById("saveMsg");
-    msg.style.display = "block";
-    setTimeout(() => { msg.style.display = "none"; }, 2000);
-  });
-}
+  if (!key) {
+    document.getElementById("statusText").textContent = "⚠️ Collez votre clé d'abord";
+    return;
+  }
+  chrome.storage.local.set(
+    { apiKey: key, lastSyncStatus: "pending", isConnected: false },
+    function () {
+      const msg = document.getElementById("saveMsg");
+      msg.style.display = "block";
+      setTimeout(function () { msg.style.display = "none"; }, 2500);
+      refreshStatus();
+    }
+  );
+});

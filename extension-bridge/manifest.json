@@ -18,6 +18,12 @@
   "content_scripts": [
     {
       "matches": ["*://*.pocketoption.com/*", "*://*.po.market/*"],
+      "js": ["content-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://*.pocketoption.com/*", "*://*.po.market/*"],
       "js": ["content.js"],
       "run_at": "document_start"
     }
