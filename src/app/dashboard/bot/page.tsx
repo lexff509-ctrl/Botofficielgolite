@@ -165,6 +165,14 @@ export default function BotPage() {
     fetchSessions();
   }, [fetchUser, fetchSessions]);
 
+  // Poll user every 30s to pick up extensionActive / balance changes from Bridge
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchUser();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [fetchUser]);
+
   // Poll runner status while running
   useEffect(() => {
     if (!activeSession?.isRunning) return;
@@ -312,25 +320,41 @@ export default function BotPage() {
             </div>
             <div className="bg-white/5 rounded-xl p-3 border border-slate-700/30">
               <div className="text-xs text-slate-400 mb-1">Solde Live</div>
-              <div className="font-bold text-green-400 text-sm">${user?.liveBalance ? Number(user?.liveBalance).toLocaleString() : '0.00'}</div>
+              <div className="font-bold text-green-400 text-sm">
+                ${realBalance?.live ? realBalance.live.toLocaleString() : (user?.liveBalance ? Number(user?.liveBalance).toLocaleString() : '0.00')}
+              </div>
             </div>
             <div className="bg-white/5 rounded-xl p-3 border border-slate-700/30">
               <div className="text-xs text-slate-400 mb-1">Solde Demo</div>
-              <div className="font-bold text-blue-400 text-sm">${user?.demoBalance ? Number(user?.demoBalance).toLocaleString() : '0.00'}</div>
+              <div className="font-bold text-blue-400 text-sm">
+                ${realBalance?.demo ? realBalance.demo.toLocaleString() : (user?.demoBalance ? Number(user?.demoBalance).toLocaleString() : '0.00')}
+              </div>
             </div>
           </div>
           
-          {(!user?.extensionActive) && (
-             <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-yellow-400 text-sm flex items-start gap-3">
-               <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-               <div>
-                 <div className="font-bold mb-1">Extension non connectée</div>
-                 <p className="text-xs text-yellow-400/80">
-                   Installez l'extension Chrome Bridge et ouvrez un onglet PocketOption. La connexion et la synchronisation seront 100% automatiques. Plus besoin de saisir le SSID.
-                 </p>
-               </div>
-             </div>
-          )}
+          {(() => {
+            // Bridge is active if extensionActive=true OR if lastSync was within last 5 minutes
+            const lastSync = user?.extensionLastSync ? new Date(user.extensionLastSync as string).getTime() : 0;
+            const recentSync = lastSync > 0 && (Date.now() - lastSync) < 5 * 60 * 1000;
+            const bridgeOk = Boolean(user?.extensionActive) || recentSync;
+            return !bridgeOk ? (
+              <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-yellow-400 text-sm flex items-start gap-3">
+                <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <div>
+                  <div className="font-bold mb-1">Extension non connectée</div>
+                  <p className="text-xs text-yellow-400/80">
+                    Installez l&apos;extension Chrome Bridge et ouvrez un onglet PocketOption. La connexion et la synchronisation seront 100% automatiques. Plus besoin de saisir le SSID.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 text-sm flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                <span className="font-bold">Bridge Connecté</span>
+                <span className="text-emerald-400/60 text-xs ml-auto">Dernier sync: {lastSync ? new Date(lastSync).toLocaleTimeString('fr-FR') : '—'}</span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Bot Type Selection */}
