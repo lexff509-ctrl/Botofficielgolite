@@ -37,12 +37,14 @@
           const parsed = JSON.parse(jsonPart);
           if (Array.isArray(parsed) && parsed[1] && parsed[1].session) {
             const auth = parsed[1];
+            // ✅ Extraire le token de session brut, pas la frame entière
+            const rawSsid = auth.session;
             window.postMessage(
               {
                 type: "PO_BRIDGE_DATA",
                 payload: {
                   type: "AUTH",
-                  ssid: data,
+                  ssid: rawSsid,   // ← token brut uniquement
                   uid: auth.uid || 0,
                   isDemo: auth.isDemo !== 0 && auth.isDemo !== false,
                 },
