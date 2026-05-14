@@ -136,7 +136,7 @@ export class ConfidenceAgent {
 
     // V5 Thresholds: 75-100 (Strong), 60-75 (Valid), 50-60 (Weak but tradable)
     const THRESHOLD = 50;
-    const MARGIN = 10; // Différence minimale entre Achat et Vente pour éviter un conflit pur
+    const MARGIN = 5; // Différence minimale entre Achat et Vente (réduit pour moins de WAIT)
 
     if (finalBuyScore >= THRESHOLD && finalBuyScore > finalSellScore + MARGIN) {
       action = "BUY";

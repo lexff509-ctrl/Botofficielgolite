@@ -10,8 +10,8 @@ export class TechnicalAnalysisAgent {
    * Optimized for HFT and Micro-Timeframes.
    */
   public static analyze(candles: Candle[], asset: string, timeframe: string): MarketState {
-    if (!candles || candles.length < 30) {
-      throw new Error("TechnicalAnalysisAgent: Au moins 30 bougies sont nécessaires pour une analyse précise.");
+    if (!candles || candles.length < 10) {
+      throw new Error("TechnicalAnalysisAgent: Au moins 10 bougies sont nécessaires.");
     }
 
     const currentPrice = candles[candles.length - 1].close;
