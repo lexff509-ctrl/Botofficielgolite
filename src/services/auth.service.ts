@@ -37,6 +37,7 @@ export interface UserProfile {
   liveBalance: string | null;
   pocketOptionUsername: string | null;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 // Mapping function
@@ -45,6 +46,7 @@ function mapUser(user: typeof users.$inferSelect): UserProfile {
     ...user,
     subscriptionExpiresAt: user.subscriptionExpiresAt ? new Date(user.subscriptionExpiresAt) : null,
     createdAt: user.createdAt ? new Date(user.createdAt) : new Date(),
+    updatedAt: user.updatedAt ? new Date(user.updatedAt) : new Date(),
   };
 }
 
