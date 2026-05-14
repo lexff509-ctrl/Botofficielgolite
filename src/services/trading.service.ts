@@ -135,7 +135,7 @@ export async function generateAndSaveSignal(
 
     if (mtfCandles.length >= 30) {
       const mtfStrategy = await OrchestratorAgent.evaluate(mtfCandles as any, selectedAsset, higherTf, isOTC);
-      if (mtfStrategy.signal === strategy.signal && strategy.signal !== "WAIT") {
+      if (mtfStrategy.signal === strategy.signal) {
         mtfStatus = "ALIGNED";
         strategy.score = Math.min(99, strategy.score + 5);
         if (strategy.score >= 80) strategy.confidence = "HIGH";
