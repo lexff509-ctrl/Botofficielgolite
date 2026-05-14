@@ -1,4 +1,5 @@
 // background.js — BotOfficiel Bridge v1.1
+// ⚠️ Pour tester en local: remplacer par http://localhost:3000/api/extension/sync
 const API_URL = "https://botofficielgolite.onrender.com/api/extension/sync";
 let lastSyncedSsid = "";
 let isSyncing = false;
@@ -7,6 +8,13 @@ let latestBalance = { demo: 0, live: 0 };
 let username = "";
 let isDemoMode = true;
 let isConnected = false;
+
+// Badge helper — shows green ✓ or red ✗ on the extension icon in Chrome toolbar
+function setBadge(connected) {
+  chrome.action.setBadgeText({ text: connected ? "ON" : "OFF" });
+  chrome.action.setBadgeBackgroundColor({ color: connected ? "#22c55e" : "#ef4444" });
+}
+setBadge(false); // Default: disconnected on startup
 
 // Listen for data from content script
 chrome.runtime.onMessage.addListener((message) => {
@@ -87,6 +95,7 @@ async function syncToServer(data) {
     if (res.ok) {
       if (data.ssid) lastSyncedSsid = data.ssid;
       isConnected = true;
+      setBadge(true);
       await chrome.storage.local.set({
         lastSyncStatus: "success",
         lastSyncTime: new Date().toISOString(),
@@ -99,11 +108,13 @@ async function syncToServer(data) {
     } else {
       const err = await res.json().catch(() => ({ error: "Unknown error" }));
       isConnected = false;
+      setBadge(false);
       await chrome.storage.local.set({ lastSyncStatus: "error", lastSyncError: err.error, isConnected: false });
       console.error("[BRIDGE] sync fail:", err.error);
     }
   } catch (e) {
     isConnected = false;
+    setBadge(false);
     await chrome.storage.local.set({ lastSyncStatus: "error", lastSyncError: e.message, isConnected: false });
     console.error("[BRIDGE] disconnected - network error:", e.message);
   } finally {

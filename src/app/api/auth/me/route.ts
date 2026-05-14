@@ -24,6 +24,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
     }
 
+    // Compute real-time bridge status: active only if synced within last 5 minutes
+    const BRIDGE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const lastSync = user.extensionLastSync ? new Date(user.extensionLastSync).getTime() : 0;
+    const bridgeIsReallyActive = lastSync > 0 && (Date.now() - lastSync) < BRIDGE_TIMEOUT_MS;
+
     return NextResponse.json({
       user: {
         id: user.id,
@@ -47,7 +52,7 @@ export async function GET(req: NextRequest) {
         extensionApiKey: user.extensionApiKey,
         extensionLastSync: user.extensionLastSync,
         extensionDeviceName: user.extensionDeviceName,
-        extensionActive: user.extensionActive,
+        extensionActive: bridgeIsReallyActive, // Real-time: false if no sync for >5min
         liveBalance: user.liveBalance,
         pocketOptionUsername: user.pocketOptionUsername,
       },
