@@ -47,26 +47,30 @@ export async function POST(req: NextRequest) {
     const encryptedSsid = encryptSSID(ssid);
     const parsedUid = uid ? String(uid) : null;
 
-    // 4. Mettre à jour la base de données
-    const updateData: any = {
+    // 4a. Champs stables — existent dans toutes les versions de la DB
+    const coreUpdate: any = {
       pocketOptionSsid: encryptedSsid,
       pocketOptionUid: parsedUid,
       extensionLastSync: new Date(),
       extensionDeviceName: deviceName || "Unknown Browser",
-      extensionActive: true,
       ssidStatus: "VALID",
       updatedAt: new Date(),
     };
+    if (isDemo !== undefined) coreUpdate.tradeMode = isDemo ? "DEMO" : "LIVE";
 
-    if (username) updateData.pocketOptionUsername = username;
-    if (demoBalance !== undefined) updateData.demoBalance = String(demoBalance);
-    if (liveBalance !== undefined) updateData.liveBalance = String(liveBalance);
-    if (isDemo !== undefined) updateData.tradeMode = isDemo ? "DEMO" : "LIVE";
+    await db.update(users).set(coreUpdate).where(eq(users.id, user.id));
 
-    await db
-      .update(users)
-      .set(updateData)
-      .where(eq(users.id, user.id));
+    // 4b. Nouveaux champs — ajoutés via migration. Try-catch si colonne absente en prod.
+    try {
+      const extUpdate: any = { extensionActive: true };
+      if (username) extUpdate.pocketOptionUsername = username;
+      if (demoBalance !== undefined) extUpdate.demoBalance = String(demoBalance);
+      if (liveBalance !== undefined) extUpdate.liveBalance = String(liveBalance);
+      await db.update(users).set(extUpdate).where(eq(users.id, user.id));
+    } catch (extErr: any) {
+      // Non-fatal: new columns not yet in DB — will be added by auto-migration on next deploy
+      console.warn("[ExtensionBridge] Extended fields update skipped (migration pending):", extErr.message);
+    }
 
     // Mettre à jour le statut dans la couche trading (pour les dashboards React)
     await updateSsidStatus(user.id, "VALID");
