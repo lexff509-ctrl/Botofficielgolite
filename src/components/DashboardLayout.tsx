@@ -13,6 +13,10 @@ interface User {
   demoBalance?: string;
   backtestingDaysGranted?: number;
   ssidStatus?: string;
+  extensionActive?: boolean;
+  extensionLastSync?: string;
+  updatedAt?: string;
+  pocketOptionUid?: string;
 }
 
 interface Props {
@@ -44,23 +48,29 @@ export default function DashboardLayout({ children }: Props) {
   const pathname = usePathname();
 
   useEffect(() => {
-    // Fetch user from cookie-based endpoint
-    fetch("/api/auth/me")
-      .then((r) => {
-        if (r.status === 401) {
+    const fetchUser = () => {
+      fetch("/api/auth/me")
+        .then((r) => {
+          if (r.status === 401) {
+            router.push("/");
+            return null;
+          }
+          return r.json();
+        })
+        .then((data) => {
+          if (data?.user) {
+            setUser(data.user);
+          }
+        })
+        .catch(() => {
           router.push("/");
-          return null;
-        }
-        return r.json();
-      })
-      .then((data) => {
-        if (data?.user) {
-          setUser(data.user);
-        }
-      })
-      .catch(() => {
-        router.push("/");
-      });
+        });
+    };
+
+    fetchUser();
+    // Poll every 30s to refresh bridge/SSID status automatically
+    const interval = setInterval(fetchUser, 30000);
+    return () => clearInterval(interval);
   }, [router]);
 
   const handleLogout = async () => {
@@ -195,23 +205,32 @@ export default function DashboardLayout({ children }: Props) {
           </div>
         </header>
 
-        {/* SSID Expired Alert */}
-        {user.ssidStatus === "EXPIRED" && (
-          <div className="bg-red-500/10 border-b border-red-500/30 px-4 lg:px-6 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-red-400 text-lg">&#9888;</span>
-              <span className="text-red-400 text-sm font-medium">
-                Votre SSID PocketOption a expiré. Le bot a été mis en pause.
-              </span>
+        {/* SSID Expired Alert — only shown if Bridge is NOT active */}
+        {user.ssidStatus === "EXPIRED" && !user.extensionActive && (() => {
+          // Compute bridge status same way as /api/auth/me
+          const TIMEOUT = 10 * 60 * 1000;
+          const lastSyncTs = user.extensionLastSync ? new Date(user.extensionLastSync).getTime() : 0;
+          const updatedTs = user.updatedAt ? new Date(user.updatedAt).getTime() : 0;
+          const bridgeActive = (lastSyncTs > 0 && Date.now() - lastSyncTs < TIMEOUT)
+            || (!!user.pocketOptionUid && updatedTs > 0 && Date.now() - updatedTs < TIMEOUT);
+          if (bridgeActive) return null; // Bridge is managing SSID — hide banner
+          return (
+            <div className="bg-red-500/10 border-b border-red-500/30 px-4 lg:px-6 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-red-400 text-lg">&#9888;</span>
+                <span className="text-red-400 text-sm font-medium">
+                  Session PocketOption expirée. Ouvrez un onglet PocketOption avec l&apos;extension Bridge.
+                </span>
+              </div>
+              <a
+                href="/dashboard/profile"
+                className="bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold px-4 py-1.5 rounded-lg transition-colors"
+              >
+                Voir le Bridge
+              </a>
             </div>
-            <a
-              href="/dashboard/profile"
-              className="bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold px-4 py-1.5 rounded-lg transition-colors"
-            >
-              Mettre à jour le SSID
-            </a>
-          </div>
-        )}
+          );
+        })()}
 
         {/* SSID Unknown Warning */}
         {user.ssidStatus === "UNKNOWN" && (

@@ -219,13 +219,25 @@ export async function POST(req: NextRequest) {
       const encryptedSsid = encryptSSID(rawSsid);
 
       // Pre-check: skip connection attempt if personal SSID is already known expired
-        if (!useGlobalSsid && user.ssidStatus === "EXPIRED" && !ssid) {
-          console.error(`[Bot API] SSID expired for user ${payload.userId}`);
-          return NextResponse.json(
-            { error: "Session PocketOption expirée. Ouvrez simplement un onglet PocketOption pour que le Bridge synchronise automatiquement.", ssidExpired: true },
-            { status: 400 }
-          );
-        }
+      // EXCEPTION: si le Bridge a synchronisé récemment (<10min), le SSID est frais — on ignore le statut EXPIRED
+      const BRIDGE_TIMEOUT_MS = 10 * 60 * 1000;
+      const lastSyncTs = user.extensionLastSync ? new Date(user.extensionLastSync).getTime() : 0;
+      const updatedTs = user.updatedAt ? new Date(user.updatedAt).getTime() : 0;
+      const bridgeRecentlyActive =
+        (lastSyncTs > 0 && Date.now() - lastSyncTs < BRIDGE_TIMEOUT_MS) ||
+        (!!user.pocketOptionUid && updatedTs > 0 && Date.now() - updatedTs < BRIDGE_TIMEOUT_MS);
+
+      if (!useGlobalSsid && user.ssidStatus === "EXPIRED" && !ssid && !bridgeRecentlyActive) {
+        console.error(`[Bot API] SSID expired for user ${payload.userId} (bridge inactive)`);
+        return NextResponse.json(
+          { error: "Session PocketOption expirée. Ouvrez simplement un onglet PocketOption pour que le Bridge synchronise automatiquement.", ssidExpired: true },
+          { status: 400 }
+        );
+      }
+
+      if (bridgeRecentlyActive && user.ssidStatus === "EXPIRED") {
+        console.log(`[Bot API] Bridge actif pour user ${payload.userId} — SSID frais, bypass du statut EXPIRED`);
+      }
 
       // Connect to PocketOption (non-blocking: start in background, return immediately)
       const isDemoConnection = selectedMode === "DEMO";

@@ -55,24 +55,34 @@ export async function POST(req: NextRequest) {
         extensionLastSync: new Date(),
         extensionDeviceName: deviceName || "Unknown Browser",
         updatedAt: new Date(),
+        ssidStatus: "VALID",   // ← toujours inclus dans le bloc principal
       }).where(eq(users.id, user.id));
     } catch {
-      // Fallback: colonnes extension absentes en prod — mettre à jour seulement les champs originaux
+      // Fallback: colonnes extension absentes en prod
       console.warn("[ExtensionBridge] Extension columns missing, using minimal update");
-      await db.update(users).set({
-        pocketOptionSsid: encryptedSsid,
-        pocketOptionUid: parsedUid,
-        updatedAt: new Date(),
-      }).where(eq(users.id, user.id));
+      try {
+        await db.update(users).set({
+          pocketOptionSsid: encryptedSsid,
+          pocketOptionUid: parsedUid,
+          updatedAt: new Date(),
+          ssidStatus: "VALID",  // ← inclus aussi dans le fallback
+        }).where(eq(users.id, user.id));
+      } catch {
+        // dernier recours: uniquement SSID
+        await db.update(users).set({
+          pocketOptionSsid: encryptedSsid,
+          updatedAt: new Date(),
+        }).where(eq(users.id, user.id));
+      }
     }
 
-    // 4b. Champs ENUM (ssidStatus, tradeMode) — peuvent manquer en prod ancienne
+    // 4b. Champs ENUM (tradeMode) — séparés car ils peuvent manquer en prod ancienne
     try {
-      const enumUpdate: any = { ssidStatus: "VALID" };
-      if (isDemo !== undefined) enumUpdate.tradeMode = isDemo ? "DEMO" : "LIVE";
-      await db.update(users).set(enumUpdate).where(eq(users.id, user.id));
+      if (isDemo !== undefined) {
+        await db.update(users).set({ tradeMode: isDemo ? "DEMO" : "LIVE" }).where(eq(users.id, user.id));
+      }
     } catch (enumErr: any) {
-      console.warn("[ExtensionBridge] Enum fields skipped (type missing in prod DB):", enumErr.message);
+      console.warn("[ExtensionBridge] tradeMode enum field skipped:", enumErr.message);
     }
 
     // 4c. Nouveaux champs — ajoutés via auto-migration. Try-catch si colonne absente en prod.
