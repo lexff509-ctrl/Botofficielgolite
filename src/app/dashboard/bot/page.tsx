@@ -337,10 +337,12 @@ export default function BotPage() {
             // Signal 1: extensionActive from API (requires DB column)
             const apiActive = Boolean(user?.extensionActive);
             // Signal 2: extensionLastSync (requires column)
-            const lastSyncTs = user?.extensionLastSync ? new Date(user.extensionLastSync as string).getTime() : 0;
+            const rawLastSync = user?.extensionLastSync;
+            const lastSyncTs = rawLastSync ? new Date(String(rawLastSync)).getTime() : 0;
             const syncedRecently = lastSyncTs > 0 && (Date.now() - lastSyncTs) < TIMEOUT;
             // Signal 3: pocketOptionUid + updatedAt fallback (works even without extension_last_sync column)
-            const updatedTs = user?.updatedAt ? new Date(user.updatedAt as string).getTime() : 0;
+            const rawUpdatedAt = user?.updatedAt;
+            const updatedTs = rawUpdatedAt ? new Date(String(rawUpdatedAt)).getTime() : 0;
             const uidFallback = Boolean(user?.pocketOptionUid) && updatedTs > 0 && (Date.now() - updatedTs) < TIMEOUT;
             const bridgeOk = apiActive || syncedRecently || uidFallback;
             const displayTime = lastSyncTs || updatedTs;

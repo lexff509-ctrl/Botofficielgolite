@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     const syncedRecently = lastSyncTs > 0 && (Date.now() - lastSyncTs) < BRIDGE_TIMEOUT_MS;
 
     // Signal 2: pocketOptionUid + updatedAt (fallback when extension_last_sync column doesn't exist yet)
-    const updatedTs = user.updatedAt ? new Date(user.updatedAt as string).getTime() : 0;
+    const updatedTs = user.updatedAt ? user.updatedAt.getTime() : 0;
     const hasUid = !!user.pocketOptionUid;
     const uidUpdatedRecently = hasUid && updatedTs > 0 && (Date.now() - updatedTs) < BRIDGE_TIMEOUT_MS;
 

@@ -27,23 +27,31 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Fetch user profile and stats
-    Promise.all([
-      fetch("/api/auth/me").then((r) => r.json()),
-      fetch("/api/trades/stats").then((r) => r.json()),
-    ]).then(([userData, statsData]) => {
-      if (userData.user) setUser(userData.user);
-      if (statsData.stats) {
-        setStats(statsData.stats);
-        setEquityCurve(statsData.equityCurve || []);
-      }
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    const load = () => {
+      Promise.all([
+        fetch("/api/auth/me").then((r) => r.json()),
+        fetch("/api/trades/stats").then((r) => r.json()),
+      ]).then(([userData, statsData]) => {
+        if (userData.user) setUser(userData.user);
+        if (statsData.stats) {
+          setStats(statsData.stats);
+          setEquityCurve(statsData.equityCurve || []);
+        }
+        setLoading(false);
+      }).catch(() => setLoading(false));
+    };
+
+    load(); // Initial load
+    // Poll every 30s to keep balances in sync with Bridge data
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   const subscriptionStatus = user?.subscriptionStatus as string;
-  const demoBalance = user?.demoBalance as string;
-  const tradeMode = user?.tradeMode as string;
+  const demoBalance = user?.demoBalance as string | null;
+  const liveBalance = user?.liveBalance as string | null;
+  const tradeMode   = user?.tradeMode as string;
+  const currentBalance = tradeMode === "LIVE" ? liveBalance : demoBalance;
 
   const statusInfo: Record<string, { label: string; color: string; desc: string }> = {
     FREE: { label: "Gratuit", color: "text-slate-400", desc: "Accès limité" },
@@ -127,10 +135,21 @@ export default function DashboardPage() {
                 <div className="text-xs text-slate-500 font-medium">{tradeMode === "LIVE" ? "Exécution réelle sur le marché" : "Environnement de test sécurisé"}</div>
               </div>
             </div>
-            {tradeMode === "DEMO" && demoBalance && (
+            {currentBalance && (
               <div className="mt-6 glass-morphism rounded-2xl p-4 border-blue-500/10 relative overflow-hidden">
-                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Solde Virtuel</div>
-                <div className="text-2xl font-black text-blue-400 tracking-tighter mt-1">${parseFloat(demoBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                  {tradeMode === "LIVE" ? "Solde Réel" : "Solde Virtuel"}
+                </div>
+                <div className={`text-2xl font-black tracking-tighter mt-1 ${tradeMode === "LIVE" ? "text-emerald-400" : "text-blue-400"}`}>
+                  ${parseFloat(currentBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                {/* Show the other balance as secondary */}
+                {tradeMode === "LIVE" && demoBalance && (
+                  <div className="text-[10px] text-slate-500 mt-1">Demo: ${parseFloat(demoBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                )}
+                {tradeMode !== "LIVE" && liveBalance && parseFloat(liveBalance) > 0 && (
+                  <div className="text-[10px] text-slate-500 mt-1">Live: ${parseFloat(liveBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                )}
                 <div className="absolute top-1/2 -right-4 -translate-y-1/2 text-4xl opacity-5 font-black tracking-tighter">CASH</div>
               </div>
             )}
