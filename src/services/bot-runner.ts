@@ -217,22 +217,6 @@ export class BotRunner {
     };
   }
 
-  pause(reason?: string): void {
-    if (!this.isPaused) {
-      this.isPaused = true;
-      this.pauseReason = reason || "Manuel / Système";
-      console.log(`[BotRunner] Bot paused for user ${this.userId} (${this.asset}): ${this.pauseReason}`);
-    }
-  }
-
-  resume(): void {
-    if (this.isPaused) {
-      this.isPaused = false;
-      this.pauseReason = null;
-      console.log(`[BotRunner] Bot resumed for user ${this.userId} (${this.asset})`);
-    }
-  }
-
   start(): void {
     if (this.intervalHandle) return;
 
