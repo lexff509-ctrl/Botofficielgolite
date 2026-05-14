@@ -47,14 +47,24 @@ export async function POST(req: NextRequest) {
     const encryptedSsid = encryptSSID(ssid);
     const parsedUid = uid ? String(uid) : null;
 
-    // 4a. Champs CORE — types simples (text, varchar, timestamp) — 100% compatibles prod
-    await db.update(users).set({
-      pocketOptionSsid: encryptedSsid,
-      pocketOptionUid: parsedUid,
-      extensionLastSync: new Date(),
-      extensionDeviceName: deviceName || "Unknown Browser",
-      updatedAt: new Date(),
-    }).where(eq(users.id, user.id));
+    // 4a. Champs CORE — essayer avec les champs extension, fallback sur minimum absolu
+    try {
+      await db.update(users).set({
+        pocketOptionSsid: encryptedSsid,
+        pocketOptionUid: parsedUid,
+        extensionLastSync: new Date(),
+        extensionDeviceName: deviceName || "Unknown Browser",
+        updatedAt: new Date(),
+      }).where(eq(users.id, user.id));
+    } catch {
+      // Fallback: colonnes extension absentes en prod — mettre à jour seulement les champs originaux
+      console.warn("[ExtensionBridge] Extension columns missing, using minimal update");
+      await db.update(users).set({
+        pocketOptionSsid: encryptedSsid,
+        pocketOptionUid: parsedUid,
+        updatedAt: new Date(),
+      }).where(eq(users.id, user.id));
+    }
 
     // 4b. Champs ENUM (ssidStatus, tradeMode) — peuvent manquer en prod ancienne
     try {

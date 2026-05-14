@@ -44,6 +44,8 @@ export async function register() {
         await db.execute(sql`
           ALTER TABLE users
             ADD COLUMN IF NOT EXISTS extension_active BOOLEAN NOT NULL DEFAULT false,
+            ADD COLUMN IF NOT EXISTS extension_last_sync TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS extension_device_name VARCHAR(100),
             ADD COLUMN IF NOT EXISTS live_balance NUMERIC(15,2) DEFAULT '0.00',
             ADD COLUMN IF NOT EXISTS pocket_option_username VARCHAR(100),
             ADD COLUMN IF NOT EXISTS cooldown_until TIMESTAMP,
