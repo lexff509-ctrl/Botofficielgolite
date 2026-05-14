@@ -36,6 +36,28 @@ export async function register() {
       SystemLogger.error("System/Crash", "Unhandled Rejection", { reason: String(reason) });
     });
 
+    // ─── Auto-migration: Add missing columns safely (idempotent) ────────────
+    // Runs on every startup. IF NOT EXISTS means it's safe to run multiple times.
+    import("@/db").then(async ({ db }) => {
+      try {
+        const { sql } = await import("drizzle-orm");
+        await db.execute(sql`
+          ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS extension_active BOOLEAN NOT NULL DEFAULT false,
+            ADD COLUMN IF NOT EXISTS live_balance NUMERIC(15,2) DEFAULT '0.00',
+            ADD COLUMN IF NOT EXISTS pocket_option_username VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS cooldown_until TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS profit_target NUMERIC(15,2),
+            ADD COLUMN IF NOT EXISTS loss_limit NUMERIC(15,2),
+            ADD COLUMN IF NOT EXISTS backtesting_days_granted INTEGER DEFAULT 0
+        `);
+        console.log("[Migration] Auto-migration OK — all columns verified");
+      } catch (err: any) {
+        // Non-fatal: log but don't crash the server
+        console.warn("[Migration] Auto-migration warning:", err.message);
+      }
+    }).catch(() => {});
+
     // Lancer la récupération en arrière-plan sans bloquer le démarrage du serveur Next.js
     // Render a besoin que le serveur réponde rapidement sur le port HTTP (timeout)
     recoverActiveSessions()
@@ -52,3 +74,4 @@ export async function register() {
       });
   }
 }
+
