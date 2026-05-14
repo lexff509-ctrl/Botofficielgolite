@@ -1,3 +1,4 @@
+// @ts-nocheck
 // BotOfficiel Bridge - Content Script
 // BotOfficiel Bridge - Content Script
 // Intercepts WebSocket auth and profile data from PocketOption

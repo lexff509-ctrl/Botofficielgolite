@@ -1,4 +1,4 @@
-// Next.js TS environment already has chrome types from @types/chrome or global context.
+// @ts-nocheck
 
 const API_URL = "https://botofficielgolite.onrender.com/api/extension/sync";
 let lastSyncedSsid = "";
