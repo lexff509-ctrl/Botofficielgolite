@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
         .orderBy(desc(botSessions.startedAt))
         .limit(1);
 
-      if (lastSession) {
+      if (lastSession && lastSession.isRunning) {
         runner = startBotRunner({
           userId: user.id,
           botType: lastSession.botType,
@@ -127,12 +127,14 @@ export async function POST(req: NextRequest) {
           compoundTradesTarget: lastSession.compoundTradesTarget || 0,
           compoundPayoutRate: 0.92,
         });
-        
+
         await db.update(botSessions)
           .set({ isRunning: true, stoppedAt: null })
           .where(eq(botSessions.id, lastSession.id));
-          
+
         SystemLogger.info("ExtensionBridge", `BotRunner auto-démarré pour l'utilisateur ${user.id} via Bridge`);
+      } else if (lastSession && !lastSession.isRunning) {
+        SystemLogger.info("ExtensionBridge", `Dernière session utilisateur ${user.id} était arrêtée - pas de relance automatique`);
       }
     }
 

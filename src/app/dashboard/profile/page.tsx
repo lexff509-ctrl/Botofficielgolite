@@ -289,7 +289,17 @@ export default function ProfilePage() {
               </div>
               <div>
                 <h3 className="text-lg font-bold text-white">BotOfficiel Bridge</h3>
-                <p className="text-slate-400 text-xs">Connexion automatique via extension Chrome</p>
+                <p className="text-slate-400 text-xs mb-3">Connexion automatique via extension Chrome</p>
+                <a 
+                  href="/downloads/botofficiel-bridge.zip" 
+                  download
+                  className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Télécharger Bridge Extension
+                </a>
               </div>
             </div>
 
@@ -345,16 +355,98 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              {/* DOWNLOAD & INSTRUCTIONS */}
-              <div className="bg-white/5 rounded-xl p-5 border border-slate-800">
-                <h4 className="text-sm font-bold text-white mb-2">Comment l&apos;utiliser ?</h4>
-                <ol className="text-xs text-slate-400 space-y-3 ml-4 list-decimal">
-                  <li>
-                    <a href="/downloads/botofficiel-bridge.zip" className="text-cyan-400 hover:underline font-bold">Téléchargez l&apos;extension ici</a> et installez-la dans Chrome.
-                  </li>
-                  <li>Ouvrez l&apos;extension et collez votre <strong>Clé API Extension</strong> ci-dessus.</li>
-                  <li>Ouvrez simplement <strong>PocketOption</strong> dans un onglet. La connexion se fera automatiquement.</li>
-                </ol>
+              {/* VISUAL GUIDE */}
+              <div className="rounded-xl border border-slate-700 overflow-hidden">
+                <div className="bg-slate-800/60 px-5 py-3 border-b border-slate-700">
+                  <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">📋 Guide de connexion — 4 étapes</div>
+                </div>
+
+                {/* Step 1 */}
+                <div className="flex gap-4 p-4 border-b border-slate-800/60 hover:bg-white/3 transition-colors">
+                  <div className="flex-shrink-0 w-9 h-9 rounded-full bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center">
+                    <span className="text-cyan-400 font-black text-sm">1</span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-bold text-white mb-1">Téléchargez l&apos;extension Chrome</div>
+                    <p className="text-xs text-slate-400 leading-relaxed mb-2">
+                      Cliquez sur le bouton ci-dessus pour télécharger le fichier <span className="font-mono text-cyan-400">botofficiel-bridge.zip</span>.
+                      Décompressez-le dans un dossier sur votre ordinateur.
+                    </p>
+                    <a
+                      href="/downloads/botofficiel-bridge.zip"
+                      download
+                      className="inline-flex items-center gap-1.5 text-xs text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 rounded-lg hover:bg-cyan-500/20 transition-colors font-bold"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Télécharger botofficiel-bridge.zip
+                    </a>
+                  </div>
+                </div>
+
+                {/* Step 2 */}
+                <div className="flex gap-4 p-4 border-b border-slate-800/60 hover:bg-white/3 transition-colors">
+                  <div className="flex-shrink-0 w-9 h-9 rounded-full bg-violet-500/20 border border-violet-500/40 flex items-center justify-center">
+                    <span className="text-violet-400 font-black text-sm">2</span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-bold text-white mb-1">Installez l&apos;extension dans Chrome</div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Ouvrez Chrome et allez à l&apos;adresse{" "}
+                      <span className="font-mono text-violet-400">chrome://extensions</span>.
+                      Activez le{" "}
+                      <span className="font-bold text-white">Mode développeur</span>{" "}
+                      (bouton en haut à droite).
+                      Cliquez sur{" "}
+                      <span className="font-bold text-white">&quot;Charger l&apos;extension non empaquetée&quot;</span>{" "}
+                      et sélectionnez le dossier décompressé.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 3 */}
+                <div className="flex gap-4 p-4 border-b border-slate-800/60 hover:bg-white/3 transition-colors">
+                  <div className="flex-shrink-0 w-9 h-9 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
+                    <span className="text-amber-400 font-black text-sm">3</span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-bold text-white mb-1">Configurez votre Clé API</div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Cliquez sur l&apos;icône de l&apos;extension dans la barre Chrome.
+                      Copiez votre{" "}
+                      <span className="font-bold text-amber-400">Clé API Extension</span>{" "}
+                      affichée ci-dessus et collez-la dans l&apos;extension.
+                      Appuyez sur <span className="font-bold text-white">Sauvegarder</span>.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Step 4 */}
+                <div className="flex gap-4 p-4 hover:bg-white/3 transition-colors">
+                  <div className="flex-shrink-0 w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                    <span className="text-emerald-400 font-black text-sm">4</span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-bold text-white mb-1">Ouvrez PocketOption — tout est automatique !</div>
+                    <p className="text-xs text-slate-400 leading-relaxed mb-2">
+                      Accédez à{" "}
+                      <a href="https://pocketoption.com" target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:underline font-bold">
+                        pocketoption.com
+                      </a>{" "}
+                      et connectez-vous à votre compte.
+                      L&apos;extension détecte automatiquement votre session et synchronise votre compte avec BotOfficiel.
+                      Le statut{" "}
+                      <span className="text-emerald-400 font-bold">🟢 Bridge Connected</span>{" "}
+                      apparaîtra dans votre dashboard dans les 10 secondes.
+                    </p>
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                      <p className="text-xs text-emerald-400">
+                        ✅ Aucun SSID à copier-coller. Connexion 100% automatique et sécurisée.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

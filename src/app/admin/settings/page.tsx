@@ -225,11 +225,21 @@ export default function AdminSettingsPage() {
               <p className="text-slate-400 text-xs">La plateforme utilise désormais l&apos;extension Chrome pour les connexions clients.</p>
             </div>
           </div>
-          <p className="text-sm text-slate-300 leading-relaxed">
+          <p className="text-sm text-slate-300 leading-relaxed mb-4">
             Le système de SSID Global a été retiré au profit du <strong>BotOfficiel Bridge</strong>. 
-            Chaque utilisateur se connecte désormais via son propre navigateur, ce qui garantit une stabilité 24/7 et évite les blocages d&apos;IP par PocketOption. 
-            Assurez-vous que vos clients téléchargent bien l&apos;extension depuis leur profil.
+            Chaque utilisateur se connecte désormais via son propre navigateur, ce qui garantit une stabilité 24/7 et évite les blocages d'IP par PocketOption. 
+            Assurez-vous que vos clients téléchargent bien l'extension depuis leur profil.
           </p>
+          <a 
+            href="/downloads/botofficiel-bridge.zip" 
+            download
+            className="inline-flex items-center gap-2 bg-violet-500 hover:bg-violet-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Télécharger Bridge Extension (ZIP)
+          </a>
         </div>
 
         {/* Payout Rate */}
