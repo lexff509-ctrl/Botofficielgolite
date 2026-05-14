@@ -110,7 +110,7 @@ async function syncToServer(data) {
       isConnected = false;
       setBadge(false);
       await chrome.storage.local.set({ lastSyncStatus: "error", lastSyncError: err.error, isConnected: false });
-      console.error("[BRIDGE] sync fail:", err.error);
+      console.error("[BRIDGE] sync fail:", err.error, "→ CAUSE:", err.hint || "(no detail)");
     }
   } catch (e) {
     isConnected = false;

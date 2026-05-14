@@ -151,11 +151,10 @@ export async function POST(req: NextRequest) {
     });
 
   } catch (error: any) {
-    // Ne jamais faire crasher le serveur
-    console.error("[ExtensionBridge] Erreur critique:", error);
-    SystemLogger.error("ExtensionBridge", "Erreur lors de la synchronisation", { error: error.message });
+    console.error("[ExtensionBridge] Erreur critique:", error?.message, error?.stack);
+    SystemLogger.error("ExtensionBridge", "Erreur lors de la synchronisation", { error: error.message, stack: error.stack });
     return NextResponse.json(
-      { error: "Erreur interne du serveur" },
+      { error: "Erreur interne du serveur", hint: error?.message?.substring(0, 300) },
       { status: 500 }
     );
   }
