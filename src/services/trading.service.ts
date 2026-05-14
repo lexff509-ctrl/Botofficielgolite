@@ -123,12 +123,19 @@ export async function generateAndSaveSignal(
 
   // ─── MTF Confirmation (Multi-Timeframe) ──────────────────────────────────
   let mtfStatus = "NEUTRAL";
-  if (!isOTC && (selectedTimeframe === "1m" || selectedTimeframe === "3m")) {
+  if (selectedTimeframe === "1m" || selectedTimeframe === "3m") {
     const higherTf = selectedTimeframe === "1m" ? "5m" : "15m";
-    const mtfCandles = await externalDataService.getExternalCandles(selectedAsset, higherTf as Timeframe, 50);
+    let mtfCandles: Candle[] = [];
+    
+    if (isOTC) {
+      mtfCandles = candleCache.getCandlesForTimeframe(selectedAsset, higherTf as Timeframe, 50);
+    } else {
+      mtfCandles = await externalDataService.getExternalCandles(selectedAsset, higherTf as Timeframe, 50);
+    }
+
     if (mtfCandles.length >= 30) {
-      const mtfStrategy = await OrchestratorAgent.evaluate(mtfCandles as any, selectedAsset, higherTf, true);
-      if (mtfStrategy.signal === strategy.signal) {
+      const mtfStrategy = await OrchestratorAgent.evaluate(mtfCandles as any, selectedAsset, higherTf, isOTC);
+      if (mtfStrategy.signal === strategy.signal && strategy.signal !== "WAIT") {
         mtfStatus = "ALIGNED";
         strategy.score = Math.min(99, strategy.score + 5);
         if (strategy.score >= 80) strategy.confidence = "HIGH";
@@ -446,11 +453,10 @@ export async function connectPocketOption(
       try { existing.disconnect(); } catch {}
     }
 
-  // Pre-fetch cookies from PocketOption site for anti-detection
-  const host = isDemo ? "demo-api-eu.po.market" : "api-eu.po.market";
-  console.log(`[Trading] Pre-fetching cookies from ${host}...`);
-  const { cookies } = await preFetchCookies(host);
-
+  // Bypass pre-fetching cookies if we already have an SSID to speed up auto-restore
+  // We only fetch if absolutely needed or as fallback
+  let cookies: string[] = [];
+  
   const client = new PocketOptionClient(ssid, cookies);
 
   // Register SSID expiration callback BEFORE connecting

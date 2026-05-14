@@ -542,9 +542,36 @@ export class PocketOptionClient {
     if (message.startsWith("40")) {
       this.state = ConnectionState.AUTHENTICATING;
       let authMessage = this.ssid;
+      
+      // If SSID is just the raw session token, format it into the strict Socket.IO auth payload
       if (!this.ssid.startsWith('42["auth"')) {
-        authMessage = `42["auth",{"session":"${this.ssid}","isDemo":${this.isDemo ? 1 : 0},"uid":0,"platform":2,"isFastHistory":true,"isOptimized":true}]`;
+        authMessage = '42' + JSON.stringify([
+          "auth",
+          {
+            session: this.ssid,
+            isDemo: this.isDemo ? 1 : 0,
+            uid: 0, // Fallback uid
+            platform: 2,
+            isFastHistory: true,
+            isOptimized: true
+          }
+        ]);
+      } else {
+        // Enforce isDemo flag dynamically even if pre-formatted
+        try {
+          const parsed = JSON.parse(this.ssid.substring(2));
+          if (Array.isArray(parsed) && parsed[1] && typeof parsed[1] === "object") {
+            parsed[1].isDemo = this.isDemo ? 1 : 0;
+            parsed[1].platform = 2;
+            parsed[1].isFastHistory = true;
+            parsed[1].isOptimized = true;
+            authMessage = '42' + JSON.stringify(parsed);
+          }
+        } catch (e) {
+          // Keep original if parsing fails
+        }
       }
+      
       this.ws?.send(authMessage);
       return;
     }
