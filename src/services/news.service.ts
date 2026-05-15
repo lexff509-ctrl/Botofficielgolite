@@ -22,8 +22,10 @@ export class NewsService {
 
     try {
       console.log("[NewsService] Fetching ForexFactory JSON feed...");
-      // Using a public proxy for ForexFactory JSON (often used by open source bots)
-      const res = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json");
+      // Fix 5: strict 2.5s timeout — never block signal pipeline
+      const res = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
+        signal: AbortSignal.timeout(2500)
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       
       const data = await res.json();
@@ -32,7 +34,7 @@ export class NewsService {
         this.cache = data.map((item: any) => ({
           title: item.title,
           country: item.country,
-          date: item.date, // ISO string
+          date: item.date,
           impact: item.impact,
           forecast: item.forecast,
           previous: item.previous
@@ -41,8 +43,13 @@ export class NewsService {
         console.log(`[NewsService] Loaded ${this.cache.length} news events.`);
       }
       return this.cache;
-    } catch (err) {
-      console.error("[NewsService] Failed to fetch news:", err);
+    } catch (err: any) {
+      // Timeout or network error — use stale cache silently
+      if (err?.name === "TimeoutError") {
+        console.warn("[NewsService] Fetch timeout (2.5s) — using cached data");
+      } else {
+        console.error("[NewsService] Failed to fetch news:", err);
+      }
       return this.cache; // Fallback to stale cache
     }
   }

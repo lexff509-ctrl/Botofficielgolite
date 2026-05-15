@@ -37,17 +37,12 @@ export class OrchestratorAgent {
       // ═══════════════════════════════════════════════════════════════════
       // ÉTAPE 3 : Biais Macro (News) — parallèle avec Sentiment
       // ═══════════════════════════════════════════════════════════════════
-      const [newsBias, sentiment] = await Promise.all([
-        NewsAgent.analyze(asset),
-        MarketSentimentAgent.analyze(
-          asset,
-          null, // newsBias will be merged after
-          marketState.indicators.rsi
-        )
-      ]);
+      // ÉTAPE 3 : News + Sentiment en parallèle (news d'abord, sentiment ensuite avec biais)
+      // ═══════════════════════════════════════════════════════════════════
+      const newsBias = await NewsAgent.analyze(asset);
       marketState.newsBias = newsBias;
 
-      // Recompute sentiment with news bias included
+      // Fix 4: Single Sentiment call (avec newsBias) — supprime le doublon inutile
       const sentimentFull = await MarketSentimentAgent.analyze(
         asset,
         newsBias,

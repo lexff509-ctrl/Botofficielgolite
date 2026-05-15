@@ -95,11 +95,12 @@ export class BotRunner {
   private isReconnecting = false;
 
   // ─── Connection State Machine ───────────────────────────────────────────
-  private ssidExpiredFinal = false;      // FINAL state — no reconnect ever
+  private ssidExpiredFinal = false;
   private reconnectAttempts = 0;
-  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private readonly MAX_RECONNECT_ATTEMPTS = 15;  // Fix 3: was 5, too low for Render
   private lastReconnectAt = 0;
-  private readonly MIN_RECONNECT_COOLDOWN_MS = 8000; // 8s min between reconnects
+  private readonly MIN_RECONNECT_COOLDOWN_MS = 8000;
+  private isTickRunning = false; // Fix 1: prevent re-entrant tick
 
   // New Strategy State Management
   private lastProcessedTimestamp = 0;
@@ -268,13 +269,17 @@ export class BotRunner {
     console.log(`[BotRunner] Starting loop for user ${this.userId} with interval ${intervalMs}ms`);
     this.intervalHandle = setInterval(() => {
       if (this.stopped || this.isPaused) return;
-      this.tick().catch((err) => {
-        console.error(`[BotRunner] Tick error for user ${this.userId}:`, err);
-        this.consecutiveErrors++;
-        if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          this.pause("Trop d'erreurs consécutives");
-        }
-      });
+      if (this.isTickRunning) return; // Fix 1: skip if previous tick still running
+      this.isTickRunning = true;
+      this.tick()
+        .catch((err) => {
+          console.error(`[BotRunner] Tick error for user ${this.userId}:`, err);
+          this.consecutiveErrors++;
+          if (this.consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            this.pause("Trop d'erreurs consécutives");
+          }
+        })
+        .finally(() => { this.isTickRunning = false; });
     }, intervalMs);
 
     // Run first tick after a short delay to let data start flowing
@@ -316,6 +321,9 @@ export class BotRunner {
     this.isPaused = false;
     this.pauseReason = null;
     this.consecutiveErrors = 0;
+    this.reconnectAttempts = 0;  // Fix 2: reset so Bridge sync doesn't trigger immediate re-pause
+    this.isTickRunning = false;  // Fix 1: unblock tick if frozen
+    console.log(`[BotRunner] Resumed for user ${this.userId}`);
   }
 
   resetCompound(): void {
