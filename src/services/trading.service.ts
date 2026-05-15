@@ -472,7 +472,7 @@ export async function connectPocketOption(
   // We only fetch if absolutely needed or as fallback
   let cookies: string[] = [];
   
-  const client = new PocketOptionClient(ssid, cookies);
+  const client = new PocketOptionClient(ssid, isDemo, cookies);
 
   // Register SSID expiration callback BEFORE connecting
   client.onSsidExpired(() => {
@@ -557,7 +557,7 @@ export async function connectSharedPocketOption(
   console.log(`[Trading] Using host for shared client: ${host} (demo=${isDemo})`);
   const { cookies } = await preFetchCookies(host);
 
-  const client = new PocketOptionClient(ssid, cookies);
+  const client = new PocketOptionClient(ssid, isDemo, cookies);
 
   // Register SSID expiration callback
   client.onSsidExpired(() => {

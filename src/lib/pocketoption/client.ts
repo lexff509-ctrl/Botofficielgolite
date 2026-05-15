@@ -182,8 +182,9 @@ export class PocketOptionClient {
   // Track pending promises to reject them on disconnect (prevent memory leaks)
   private pendingRequests = new Set<(err: Error) => void>();
 
-  constructor(ssid: string, cookies?: string[]) {
+  constructor(ssid: string, isDemo?: boolean, cookies?: string[]) {
     this.ssid = ssid;
+    if (isDemo !== undefined) this.isDemo = isDemo;
     if (cookies) this.prefetchedCookies = [...cookies];
 
     // Increase max listeners for multi-agent support
@@ -374,43 +375,46 @@ export class PocketOptionClient {
   private connectDirect(host: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
-      
+      let settled = false;
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (this.connectionTimeout) { clearTimeout(this.connectionTimeout); this.connectionTimeout = null; }
+        if (err) reject(err); else resolve();
+      };
+
       try {
         const wsHeaders: Record<string, string> = { ...CONN_WS_HEADERS, Host: host };
         if (this.prefetchedCookies.length > 0) wsHeaders["Cookie"] = this.prefetchedCookies.join("; ");
 
-        this.ws = new WebSocket(wsUrl, {
+        const ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
           handshakeTimeout: 10000,
           perMessageDeflate: true,
           followRedirects: true,
         });
-
+        this.ws = ws;
         this.upgradeResolve = resolve;
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          reject(new Error("Connection timeout (10s)"));
-          this.ws?.close();
+          settle(new Error("Connection timeout (10s)"));
+          this.safeCloseWs(ws);
         }, 10000);
 
-        this.ws.on("open", () => {
-          this.state = ConnectionState.WS_OPEN;
+        ws.on("open", () => { this.state = ConnectionState.WS_OPEN; });
+        ws.on("message", (raw: WebSocket.Data) => { try { this.handleRawMessage(raw); } catch {} });
+        ws.on("close", () => {
+          if (!settled) settle(new Error("Disconnected before READY"));
+          if (this.ws === ws) this.handleDisconnect();
         });
-
-        this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
-        this.ws.on("close", (code: number, reason: Buffer) => this.handleDisconnect());
-        this.ws.on("error", (err: Error) => {
-          if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-          if (this.ws) {
-            this.ws.removeAllListeners();
-            try { this.ws.terminate(); } catch {}
-            this.ws = null;
-          }
-          reject(err);
+        ws.on("error", (err: Error) => {
+          settle(err);
+          if (this.ws === ws) { this.ws = null; }
+          this.safeCloseWs(ws);
         });
-      } catch (err) {
-        reject(err);
+      } catch (err: any) {
+        settle(err);
       }
     });
   }
@@ -426,6 +430,14 @@ export class PocketOptionClient {
     this.state = ConnectionState.UPGRADING;
     return new Promise((resolve, reject) => {
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
+      let settled = false;
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (this.connectionTimeout) { clearTimeout(this.connectionTimeout); this.connectionTimeout = null; }
+        if (err) reject(err); else resolve();
+      };
+
       try {
         const allCookies = [...this.prefetchedCookies, ...cookies];
         const wsOptions: WebSocket.ClientOptions = {
@@ -437,29 +449,29 @@ export class PocketOptionClient {
           handshakeTimeout: 10000,
         };
 
-        this.ws = new WebSocket(wsUrl, wsOptions);
+        const ws = new WebSocket(wsUrl, wsOptions);
+        this.ws = ws;
         this.upgradeResolve = resolve;
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          reject(new Error("Upgrade timeout (10s)"));
-          this.ws?.close();
+          settle(new Error("Upgrade timeout (10s)"));
+          this.safeCloseWs(ws);
         }, 10000);
 
-        this.ws.on("open", () => {
-          this.state = ConnectionState.WS_OPEN;
-          this.ws?.send("2probe");
+        ws.on("open", () => { this.state = ConnectionState.WS_OPEN; ws.send("2probe"); });
+        ws.on("message", (raw: WebSocket.Data) => { try { this.handleRawMessage(raw); } catch {} });
+        ws.on("close", () => {
+          if (!settled) settle(new Error("Disconnected before READY"));
+          if (this.ws === ws) this.handleDisconnect();
         });
-
-        this.ws.on("message", (raw: WebSocket.Data) => this.handleRawMessage(raw));
-        this.ws.on("close", (code: number, reason: Buffer) => this.handleDisconnect());
-        this.ws.on("error", (err: Error) => {
-          if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-          this.handleDisconnect();
-          reject(err);
+        ws.on("error", (err: Error) => {
+          settle(err);
+          if (this.ws === ws) { this.ws = null; }
+          this.safeCloseWs(ws);
         });
-      } catch (err) {
-        reject(err);
+      } catch (err: any) {
+        settle(err);
       }
     });
   }
@@ -936,6 +948,19 @@ export class PocketOptionClient {
 
   // ============ Disconnect & Cleanup ============
 
+  /** Safely close a WebSocket without triggering recursive handlers */
+  private safeCloseWs(ws: WebSocket): void {
+    try {
+      // Remove all listeners BEFORE closing to prevent recursive handleDisconnect
+      ws.removeAllListeners();
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    } catch {
+      // Ignore — socket already gone
+    }
+  }
+
   private handleDisconnect(): void {
     // Anti-race: Only one disconnect handler should run at a time
     const prevState = this.state;
@@ -959,7 +984,7 @@ export class PocketOptionClient {
     this.cleanup();
 
     if (this.ws) {
-      try { this.ws.removeAllListeners(); this.ws.terminate(); } catch {}
+      this.safeCloseWs(this.ws);
       this.ws = null;
     }
 
@@ -1039,22 +1064,21 @@ export class PocketOptionClient {
   disconnect(): void {
     this.intentionallyClosed = true;
     this.state = ConnectionState.DISCONNECTED;
+    this.isReconnecting = false;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this.cleanup();
     if (this.ws) {
-      this.ws.close();
+      this.safeCloseWs(this.ws);
       this.ws = null;
     }
   }
 
   private cleanup(): void {
-    if (this.socketIoHeartbeat) {
-      clearInterval(this.socketIoHeartbeat);
-      this.socketIoHeartbeat = null;
-    }
-    if (this.zombieCheckInterval) {
-      clearInterval(this.zombieCheckInterval);
-      this.zombieCheckInterval = null;
-    }
+    if (this.socketIoHeartbeat) { clearInterval(this.socketIoHeartbeat); this.socketIoHeartbeat = null; }
+    if (this.zombieCheckInterval) { clearInterval(this.zombieCheckInterval); this.zombieCheckInterval = null; }
+    if (this.tickFlushInterval) { clearInterval(this.tickFlushInterval); this.tickFlushInterval = null; }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.connectionTimeout) { clearTimeout(this.connectionTimeout); this.connectionTimeout = null; }
     this.expectedBinaryEvents = [];
 
     // Abort all hanging promises safely

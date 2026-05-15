@@ -135,9 +135,20 @@ export async function POST(req: NextRequest) {
     // Mettre à jour ssidStatus via fonction dédiée (fallback supplémentaire)
     updateSsidStatus(user.id, "VALID").catch(() => {});
 
-    // 5. Connecter PO avec les nouvelles données (Anti-doublon géré par connectPocketOption mutex)
+    // 5. Connection Manager: refresh ou connect (remplace connectPocketOption direct)
     const isDemoConnection = isDemo !== undefined ? isDemo : (user.tradeMode === "DEMO");
-    connectPocketOption(user.id, ssid, isDemoConnection).catch(err => console.error("PO Connect Error on auto-start:", err));
+    try {
+      const { refreshSession } = await import("@/services/network/PocketOptionConnectionManager");
+      refreshSession(user.id, ssid, isDemoConnection).catch(err =>
+        console.error("[ExtensionBridge] ConnectionManager refresh error:", err.message)
+      );
+    } catch {
+      // Fallback si module pas encore chargé
+      connectPocketOption(user.id, ssid, isDemoConnection).catch(err =>
+        console.error("[ExtensionBridge] PO Connect Error on auto-start:", err)
+      );
+    }
+
 
     // 6. Relancer le bot si nécessaire (Automatique)
     let runner = getBotRunner(user.id);

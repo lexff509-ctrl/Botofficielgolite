@@ -89,6 +89,8 @@ export const users = pgTable("users", {
   lossLimit: numeric("loss_limit", { precision: 15, scale: 2 }),
   // Backtesting
   backtestingDaysGranted: integer("backtesting_days_granted").default(0),
+  // Legacy column — kept in schema to prevent accidental DROP during migrations
+  cooldownUntil: timestamp("cooldown_until"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

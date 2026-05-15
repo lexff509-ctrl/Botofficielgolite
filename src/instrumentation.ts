@@ -25,16 +25,42 @@ export async function register() {
       }
     };
 
-    // Global Crash Protection
-    process.on("uncaughtException", (err) => {
+    // ── Bulletproof Global Crash Guards ─────────────────────────────────────
+    // These MUST be registered early. Any unhandled error must NEVER kill Render.
+    const IGNORABLE_WS_ERRORS = [
+      "WebSocket was closed before the connection was established",
+      "WebSocket is not open",
+      "read ECONNRESET",
+      "write ECONNRESET",
+      "ECONNREFUSED",
+      "ETIMEDOUT",
+      "EHOSTUNREACH",
+      "socket hang up",
+      "Disconnected before READY",
+    ];
+
+    process.on("uncaughtException", (err: Error) => {
+      const msg = err?.message || String(err);
+      // Known WS network errors — log only, never crash
+      if (IGNORABLE_WS_ERRORS.some(e => msg.includes(e))) {
+        console.warn(`[PO-SafeGuard] Suppressed known WS error: ${msg}`);
+        return;
+      }
       console.error("[CRASH] Uncaught Exception:", err);
-      SystemLogger.error("System/Crash", "Uncaught Exception", { error: err.message, stack: err.stack });
+      SystemLogger.error("System/Crash", "Uncaught Exception", { error: msg, stack: err?.stack });
+      // Do NOT call process.exit() — let Node keep running
     });
 
-    process.on("unhandledRejection", (reason, promise) => {
-      console.error("[CRASH] Unhandled Rejection at:", promise, "reason:", reason);
-      SystemLogger.error("System/Crash", "Unhandled Rejection", { reason: String(reason) });
+    process.on("unhandledRejection", (reason: any) => {
+      const msg = reason?.message || String(reason);
+      if (IGNORABLE_WS_ERRORS.some(e => msg.includes(e))) {
+        console.warn(`[PO-SafeGuard] Suppressed WS rejection: ${msg}`);
+        return;
+      }
+      console.error("[CRASH] Unhandled Rejection:", reason);
+      SystemLogger.error("System/Crash", "Unhandled Rejection", { reason: msg });
     });
+
 
     // ─── Auto-migration: Add missing columns safely (idempotent) ────────────
     // Runs on every startup. IF NOT EXISTS means it's safe to run multiple times.
