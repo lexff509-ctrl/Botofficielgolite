@@ -304,6 +304,14 @@ export class PocketOptionClient {
     return this.assetData;
   }
 
+  getAccountData(): { balance: number | null; isDemo: number; closedDeals: unknown[] } {
+    return {
+      balance: this.lastBalance?.balance ?? null,
+      isDemo: this.lastBalance?.isDemo ?? (this.isDemo ? 1 : 0),
+      closedDeals: this.closedDealsData,
+    };
+  }
+
   static toPOSymbol(asset: string): string {
     if (asset.includes("(OTC)")) return asset.replace("/", "").replace(" (OTC)", "_otc");
     if (asset.includes("/")) return asset.replace("/", "");
@@ -389,7 +397,7 @@ export class PocketOptionClient {
 
         const ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
-          handshakeTimeout: 10000,
+          handshakeTimeout: 30000,
           perMessageDeflate: true,
           followRedirects: true,
         });
@@ -398,20 +406,35 @@ export class PocketOptionClient {
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          settle(new Error("Connection timeout (10s)"));
+          settle(new Error("Connection timeout (30s)"));
           this.safeCloseWs(ws);
-        }, 10000);
+        }, 30000);
 
         ws.on("open", () => { this.state = ConnectionState.WS_OPEN; });
-        ws.on("message", (raw: WebSocket.Data) => { try { this.handleRawMessage(raw); } catch {} });
+        ws.on("message", (raw: WebSocket.Data) => {
+          try {
+            this.handleRawMessage(raw);
+          } catch (err) {
+            console.error("[PO] Message handler error:", err);
+          }
+        });
         ws.on("close", () => {
-          if (!settled) settle(new Error("Disconnected before READY"));
-          if (this.ws === ws) this.handleDisconnect();
+          try {
+            if (!settled) settle(new Error("Disconnected before READY"));
+            if (this.ws === ws) this.handleDisconnect();
+          } catch (err) {
+            console.error("[PO] Close handler error:", err);
+          }
         });
         ws.on("error", (err: Error) => {
-          settle(err);
-          if (this.ws === ws) { this.ws = null; }
-          this.safeCloseWs(ws);
+          try {
+            console.warn(`[PO] WebSocket error:`, err.message);
+            settle(err);
+            if (this.ws === ws) { this.ws = null; }
+            this.safeCloseWs(ws);
+          } catch (err2) {
+            console.error("[PO] Error handler crashed:", err2);
+          }
         });
       } catch (err: any) {
         settle(err);
@@ -446,7 +469,7 @@ export class PocketOptionClient {
             Host: host,
             ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
           },
-          handshakeTimeout: 10000,
+          handshakeTimeout: 30000,
         };
 
         const ws = new WebSocket(wsUrl, wsOptions);
@@ -455,20 +478,35 @@ export class PocketOptionClient {
         this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          settle(new Error("Upgrade timeout (10s)"));
+          settle(new Error("Upgrade timeout (30s)"));
           this.safeCloseWs(ws);
-        }, 10000);
+        }, 30000);
 
         ws.on("open", () => { this.state = ConnectionState.WS_OPEN; ws.send("2probe"); });
-        ws.on("message", (raw: WebSocket.Data) => { try { this.handleRawMessage(raw); } catch {} });
+        ws.on("message", (raw: WebSocket.Data) => {
+          try {
+            this.handleRawMessage(raw);
+          } catch (err) {
+            console.error("[PO] Message handler error:", err);
+          }
+        });
         ws.on("close", () => {
-          if (!settled) settle(new Error("Disconnected before READY"));
-          if (this.ws === ws) this.handleDisconnect();
+          try {
+            if (!settled) settle(new Error("Disconnected before READY"));
+            if (this.ws === ws) this.handleDisconnect();
+          } catch (err) {
+            console.error("[PO] Close handler error:", err);
+          }
         });
         ws.on("error", (err: Error) => {
-          settle(err);
-          if (this.ws === ws) { this.ws = null; }
-          this.safeCloseWs(ws);
+          try {
+            console.warn(`[PO] WebSocket upgrade error:`, err.message);
+            settle(err);
+            if (this.ws === ws) { this.ws = null; }
+            this.safeCloseWs(ws);
+          } catch (err2) {
+            console.error("[PO] Error handler crashed:", err2);
+          }
         });
       } catch (err: any) {
         settle(err);
@@ -507,7 +545,7 @@ export class PocketOptionClient {
         });
       });
       req.on("error", (err: Error) => reject(new Error(`HTTP polling failed: ${err.message}`)));
-      req.setTimeout(10000, () => { req.destroy(); reject(new Error("HTTP polling timeout")); });
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error("HTTP polling timeout")); });
     });
   }
 
@@ -531,7 +569,7 @@ export class PocketOptionClient {
         res.on("end", () => resolve());
       });
       req.on("error", (err: Error) => reject(new Error(`POST failed: ${err.message}`)));
-      req.setTimeout(10000, () => { req.destroy(); reject(new Error("POST timeout")); });
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error("POST timeout")); });
       req.write(bodyBuf);
       req.end();
     });
@@ -555,7 +593,7 @@ export class PocketOptionClient {
         res.on("end", () => resolve(data));
       });
       req.on("error", (err: Error) => reject(new Error(`GET failed: ${err.message}`)));
-      req.setTimeout(10000, () => { req.destroy(); reject(new Error("GET timeout")); });
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error("GET timeout")); });
       req.end();
     });
   }
@@ -740,6 +778,15 @@ export class PocketOptionClient {
         for (const [, sub] of this.activeSubscriptions) {
           this.changeSymbol(sub.asset, sub.size);
         }
+
+        // Auto-fetch account data after successful auth
+        try {
+          this.getBalances();
+          this.internalEvents.emit("reconnected", { isDemo: this.isDemo });
+        } catch (err) {
+          console.error("[PO] Error fetching account data after reconnect:", err);
+        }
+
         for (const cb of this.onAuthCallbacks) {
           try {
             if (typeof cb === "function") cb();
@@ -951,13 +998,12 @@ export class PocketOptionClient {
   /** Safely close a WebSocket without triggering recursive handlers */
   private safeCloseWs(ws: WebSocket): void {
     try {
-      // Remove all listeners BEFORE closing to prevent recursive handleDisconnect
       ws.removeAllListeners();
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
-    } catch {
-      // Ignore — socket already gone
+    } catch (err) {
+      console.warn(`[PO] safeCloseWs error (ignored):`, (err as Error).message);
     }
   }
 

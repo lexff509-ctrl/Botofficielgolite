@@ -13,6 +13,11 @@
 import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { invalidateHostCache } from "@/lib/pocketoption/connection";
 import { SystemLogger } from "@/lib/system-logger";
+import { EventEmitter } from "events";
+
+// Global event bus for connection state changes
+export const connectionEvents = new EventEmitter();
+connectionEvents.setMaxListeners(100);
 
 // ── State Machine ──────────────────────────────────────────────────────────────
 export type ConnectionState =
@@ -77,12 +82,12 @@ interface ManagedSession {
 const sessions = new Map<number, ManagedSession>();
 
 // ── Backoff Schedule ───────────────────────────────────────────────────────────
-// 5s, 10s, 20s, 30s, 60s, 120s (capped)
-const BACKOFF_SCHEDULE = [5000, 10000, 20000, 30000, 60000, 120000];
+// 5s, 10s, 20s, 40s, 60s (capped) - strict exponential backoff
+const BACKOFF_SCHEDULE = [5000, 10000, 20000, 40000, 60000];
 
 function getBackoff(attempt: number): number {
   const base = BACKOFF_SCHEDULE[Math.min(attempt, BACKOFF_SCHEDULE.length - 1)];
-  const jitter = base * (0.8 + Math.random() * 0.4); // ±20% jitter (human-like)
+  const jitter = base * (0.8 + Math.random() * 0.4);
   return Math.round(jitter);
 }
 
@@ -175,6 +180,8 @@ export async function ensureConnected(
     session.lastActivityAt = Date.now();
     SystemLogger.info("ConnectionManager", `User ${userId} connected (${isDemo ? "DEMO" : "LIVE"})`);
     console.log(`[ConnMgr] ✅ User ${userId} READY`);
+    // Emit bridge:connected to trigger bot sync
+    connectionEvents.emit("bridge:connected", { userId, isDemo, isReconnect: false });
     return session.client;
   } catch (err: any) {
     console.error(`[ConnMgr] Connection failed for user ${userId}:`, err.message);
@@ -212,24 +219,28 @@ function _scheduleReconnect(session: ManagedSession): void {
   const delay = getBackoff(attempt);
   session.reconnectAttempts++;
 
-  // After 6 attempts → COOLDOWN for 5min then reset
-  if (attempt >= 6) {
+  // After 5 attempts → COOLDOWN for 60s then stop
+  if (attempt >= 5) {
     session.state = "COOLDOWN";
-    session.cooldownUntil = Date.now() + 5 * 60 * 1000;
+    session.cooldownUntil = Date.now() + 60 * 1000; // 60s cooldown
     invalidateHostCache();
-    console.warn(`[ConnMgr] User ${session.userId} entered COOLDOWN (5min) after ${attempt} attempts`);
+    console.warn(`[ConnMgr] User ${session.userId} entered COOLDOWN (60s) after ${attempt} attempts — STOPPING retries`);
+
+    // Emit cooldown event with remaining time
+    connectionEvents.emit("connection:cooldown", { userId: session.userId, cooldownMs: 60000 });
 
     setTimeout(() => {
       if (session.state === "COOLDOWN") {
         session.state = "IDLE";
         session.reconnectAttempts = 0;
         console.log(`[ConnMgr] User ${session.userId} COOLDOWN over — ready for next sync`);
+        connectionEvents.emit("connection:cooldown-over", { userId: session.userId });
       }
-    }, 5 * 60 * 1000);
+    }, 60 * 1000);
     return;
   }
 
-  console.log(`[ConnMgr] Scheduling reconnect for user ${session.userId} in ${Math.round(delay / 1000)}s (attempt ${attempt + 1})`);
+  console.log(`[ConnMgr] Scheduling reconnect for user ${session.userId} in ${Math.round(delay / 1000)}s (attempt ${attempt + 1}/5)`);
 
   setTimeout(async () => {
     if (session.state === "BLOCKED" || session.state === "COOLDOWN") return;
@@ -242,6 +253,8 @@ function _scheduleReconnect(session: ManagedSession): void {
       session.connectedAt = Date.now();
       session.reconnectAttempts = 0;
       console.log(`[ConnMgr] ✅ User ${session.userId} reconnected`);
+      // Emit bridge:connected to trigger bot resume
+      connectionEvents.emit("bridge:connected", { userId: session.userId, isDemo: session.isDemo });
     } catch (err: any) {
       console.warn(`[ConnMgr] Reconnect attempt ${attempt + 1} failed: ${err.message}`);
       session.state = "RECONNECTING";

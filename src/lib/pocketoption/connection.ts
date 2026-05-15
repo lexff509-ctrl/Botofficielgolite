@@ -104,7 +104,7 @@ interface HostCacheEntry {
 }
 
 let reachableHostsCache: HostCacheEntry[] = [];
-const CACHE_TTL = 3 * 60 * 1000; // 3 minutes (reduced for faster recovery)
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes (critical for stability)
 
 // ============ Monitoring Stats (Institutional Grade) ============
 
@@ -195,7 +195,7 @@ export function testHostReachable(host: string): Promise<string> {
       recordHostResult(host, false, 0);
       resolve("");
     });
-    req.setTimeout(3000, () => {
+    req.setTimeout(5000, () => {
       req.destroy();
       recordHostResult(host, false, 0);
       resolve("");
@@ -211,20 +211,18 @@ export function testHostReachable(host: string): Promise<string> {
 export async function discoverReachableHosts(isDemo: boolean): Promise<string[]> {
   const now = Date.now();
 
-  // Check cache - use cached hosts if still fresh
   const cached = reachableHostsCache.filter(
     (h) => h.isDemo === isDemo && now - h.timestamp < CACHE_TTL
   );
   if (cached.length > 0) {
-    // Sort by quality score (successRate / latency)
     cached.sort((a, b) => b.successRate - a.successRate);
+    console.log(`[PO-Discovery] Using ${cached.length} cached hosts (TTL: ${Math.round((CACHE_TTL - (now - cached[0].timestamp)) / 1000)}s remaining)`);
     return cached.map((h) => h.host);
   }
 
   const hosts = isDemo ? DEMO_HOST_ORDER : LIVE_HOST_ORDER;
   console.log(`[PO-Discovery] Testing ${hosts.length} ${isDemo ? "demo" : "live"} hosts in parallel...`);
 
-  // Test ALL hosts in parallel (faster discovery, wider net)
   const results = await Promise.all(
     hosts.map(async (host) => {
       const startTs = Date.now();
@@ -241,16 +239,24 @@ export async function discoverReachableHosts(isDemo: boolean): Promise<string[]>
   const reachable = results.filter((r) => r.reachable);
   console.log(`[PO-Discovery] ${reachable.length}/${hosts.length} hosts reachable`);
 
-  // Update cache with quality data
+  // If no hosts found, add fallback with lower score but still usable
+  if (reachable.length === 0) {
+    console.warn(`[PO-Discovery] ⚠ No hosts reachable! Adding fallback hosts...`);
+    const fallbackHosts = isDemo
+      ? [PO_REGIONS.DEMO, PO_REGIONS.DEMO_ALT, PO_REGIONS.EUROPA]
+      : [PO_REGIONS.EUROPA, PO_REGIONS.SEYCHELLES, PO_REGIONS.US_NORTH];
+
+    reachableHostsCache = fallbackHosts.map(host => ({
+      host, isDemo, timestamp: now, latencyMs: 5000, successRate: 0.3
+    }));
+    console.log(`[PO-Discovery] Using fallback hosts: ${fallbackHosts.join(", ")}`);
+    return fallbackHosts;
+  }
+
   reachableHostsCache = reachable.map(r => ({
-    host: r.host,
-    isDemo,
-    timestamp: now,
-    latencyMs: r.latencyMs,
-    successRate: 1.0,
+    host: r.host, isDemo, timestamp: now, latencyMs: r.latencyMs, successRate: 1.0
   }));
 
-  // Sort by latency (fastest first)
   reachableHostsCache.sort((a, b) => a.latencyMs - b.latencyMs);
 
   return reachableHostsCache.map(h => h.host);

@@ -41,13 +41,17 @@ export async function register() {
 
     process.on("uncaughtException", (err: Error) => {
       const msg = err?.message || String(err);
+      const stack = err?.stack || "";
+
       // Known WS network errors — log only, never crash
       if (IGNORABLE_WS_ERRORS.some(e => msg.includes(e))) {
         console.warn(`[PO-SafeGuard] Suppressed known WS error: ${msg}`);
         return;
       }
+
       console.error("[CRASH] Uncaught Exception:", err);
-      SystemLogger.error("System/Crash", "Uncaught Exception", { error: msg, stack: err?.stack });
+      console.error("[CRASH] Stack:", stack);
+      SystemLogger.error("System/Crash", "Uncaught Exception", { error: msg, stack });
       // Do NOT call process.exit() — let Node keep running
     });
 
@@ -59,6 +63,7 @@ export async function register() {
       }
       console.error("[CRASH] Unhandled Rejection:", reason);
       SystemLogger.error("System/Crash", "Unhandled Rejection", { reason: msg });
+      // Do NOT call process.exit() — let Node keep running
     });
 
 
