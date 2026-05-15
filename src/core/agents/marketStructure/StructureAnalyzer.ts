@@ -34,10 +34,13 @@ export class StructureAnalyzer {
       trendStrength = 20; // Weak direction
     }
 
-    // Volatility logic (Using BB width proxy)
+    // Volatility logic (BB width proxy)
+    // HIGH  > 0.005  = strong movement, ideal
+    // NORMAL 0.0004-0.005 = tradable range
+    // LOW   < 0.0004 = truly dead market (was 0.001 — too strict for OTC spreads)
     let volatility: "HIGH" | "NORMAL" | "LOW" = "NORMAL";
     if (ind.bollinger.width > 0.005) volatility = "HIGH";
-    else if (ind.bollinger.width < 0.001) volatility = "LOW";
+    else if (ind.bollinger.width < 0.0004) volatility = "LOW";
 
     return {
       support,

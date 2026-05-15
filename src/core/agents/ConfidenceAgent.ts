@@ -11,9 +11,11 @@ function computeMarketQuality(state: MarketState): MarketQuality {
   let score = 100;
   const issues: string[] = [];
 
-  // BLOCAGE DUR — volatilité morte
+  // V6: Volatility NEVER hard-blocks — penalty only (-10 LOW, 0 NORMAL, +15 HIGH)
   if (structure.volatility === "LOW") {
-    return { score: 0, isTradable: false, reason: "❌ Volatilité morte (LOW)" };
+    score -= 25; issues.push("Vol LOW");
+  } else if (structure.volatility === "HIGH") {
+    score += 0; // Bonus applied at Orchestrator level via VolatilityEngine
   }
 
   // EMA gap trop faible → marché sans direction
