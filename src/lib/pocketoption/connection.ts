@@ -56,29 +56,96 @@ export const PO_REGIONS: Record<string, string> = {
   ASIA:          "api-asia.po.market",
 };
 
-/** Preferred host order for demo connections */
+/** All demo hosts ordered by priority (broadest pool = higher chance of Render connectivity) */
 const DEMO_HOST_ORDER = [
   PO_REGIONS.DEMO,
   PO_REGIONS.DEMO_ALT,
   PO_REGIONS.EUROPA,
   PO_REGIONS.SEYCHELLES,
+  PO_REGIONS.US_NORTH,
+  PO_REGIONS.US_SOUTH,
+  PO_REGIONS.US2,
+  PO_REGIONS.US3,
+  PO_REGIONS.US4,
+  PO_REGIONS.ASIA,
+  PO_REGIONS.FRANCE,
+  PO_REGIONS.FRANCE2,
+  PO_REGIONS.INDIA,
+  PO_REGIONS.FINLAND,
+  PO_REGIONS.HONGKONG,
 ];
 
-/** Preferred host order for live connections */
+/** All live hosts ordered by priority */
 const LIVE_HOST_ORDER = [
   PO_REGIONS.EUROPA,
   PO_REGIONS.SEYCHELLES,
-  PO_REGIONS.FRANCE,
-  PO_REGIONS.FRANCE2,
   PO_REGIONS.US_NORTH,
   PO_REGIONS.US_SOUTH,
+  PO_REGIONS.US2,
+  PO_REGIONS.US3,
+  PO_REGIONS.US4,
+  PO_REGIONS.FRANCE,
+  PO_REGIONS.FRANCE2,
   PO_REGIONS.ASIA,
   PO_REGIONS.INDIA,
+  PO_REGIONS.FINLAND,
+  PO_REGIONS.HONGKONG,
+  PO_REGIONS.RUSSIA,
 ];
 
-/** Cache of reachable hosts (auto-discovered) */
-let reachableHostsCache: { host: string; isDemo: boolean; timestamp: number }[] = [];
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+// ============ Host Cache with Quality Scoring ============
+
+interface HostCacheEntry {
+  host: string;
+  isDemo: boolean;
+  timestamp: number;
+  latencyMs: number;    // Round-trip latency
+  successRate: number;  // 0-1, success rate over last N tests
+}
+
+let reachableHostsCache: HostCacheEntry[] = [];
+const CACHE_TTL = 3 * 60 * 1000; // 3 minutes (reduced for faster recovery)
+
+// ============ Monitoring Stats (Institutional Grade) ============
+
+interface HostStat {
+  host: string;
+  successCount: number;
+  failCount: number;
+  totalLatencyMs: number;
+  lastTestedAt: number;
+  lastReachable: boolean;
+}
+
+const hostStats: Map<string, HostStat> = new Map();
+
+function recordHostResult(host: string, success: boolean, latencyMs: number) {
+  const existing = hostStats.get(host) || {
+    host, successCount: 0, failCount: 0, totalLatencyMs: 0, lastTestedAt: 0, lastReachable: false
+  };
+  if (success) {
+    existing.successCount++;
+    existing.totalLatencyMs += latencyMs;
+  } else {
+    existing.failCount++;
+  }
+  existing.lastTestedAt = Date.now();
+  existing.lastReachable = success;
+  hostStats.set(host, existing);
+}
+
+export function getHostQualityReport(): Record<string, { successRate: number; avgLatencyMs: number; lastReachable: boolean }> {
+  const report: Record<string, any> = {};
+  for (const [host, stat] of hostStats.entries()) {
+    const total = stat.successCount + stat.failCount;
+    report[host] = {
+      successRate: total > 0 ? stat.successCount / total : 0,
+      avgLatencyMs: stat.successCount > 0 ? Math.round(stat.totalLatencyMs / stat.successCount) : 0,
+      lastReachable: stat.lastReachable,
+    };
+  }
+  return report;
+}
 
 export interface CookieResult {
   cookies: string[];
@@ -87,9 +154,10 @@ export interface CookieResult {
 
 /**
  * Test if a host is reachable by doing a quick HTTP polling handshake.
- * Returns the sid if reachable, empty string if not.
+ * Returns { reachable, latencyMs }.
  */
 export function testHostReachable(host: string): Promise<string> {
+  const startTs = Date.now();
   return new Promise((resolve) => {
     const req = https.get({
       hostname: host,
@@ -106,22 +174,30 @@ export function testHostReachable(host: string): Promise<string> {
       let body = "";
       res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
       res.on("end", () => {
+        const latency = Date.now() - startTs;
         if (res.statusCode === 200 && body.startsWith("0")) {
           try {
             const parsed = JSON.parse(body.substring(1));
+            recordHostResult(host, true, latency);
             resolve(parsed.sid || "ok");
           } catch {
+            recordHostResult(host, true, latency);
             resolve("ok");
           }
         } else {
-          resolve(""); // Host responded but not valid (e.g., Cloudflare 403)
+          recordHostResult(host, false, 0);
+          resolve("");
         }
       });
     });
 
-    req.on("error", () => resolve(""));
-    req.setTimeout(2000, () => { // Reduce to 2s
+    req.on("error", () => {
+      recordHostResult(host, false, 0);
+      resolve("");
+    });
+    req.setTimeout(3000, () => {
       req.destroy();
+      recordHostResult(host, false, 0);
       resolve("");
     });
   });
@@ -130,66 +206,66 @@ export function testHostReachable(host: string): Promise<string> {
 /**
  * Auto-discover reachable PocketOption hosts.
  * Tests the preferred hosts in parallel and returns those that respond.
+ * Uses a broader host pool for Render production compatibility.
  */
 export async function discoverReachableHosts(isDemo: boolean): Promise<string[]> {
-  // Check cache
   const now = Date.now();
+
+  // Check cache - use cached hosts if still fresh
   const cached = reachableHostsCache.filter(
     (h) => h.isDemo === isDemo && now - h.timestamp < CACHE_TTL
   );
   if (cached.length > 0) {
+    // Sort by quality score (successRate / latency)
+    cached.sort((a, b) => b.successRate - a.successRate);
     return cached.map((h) => h.host);
   }
 
   const hosts = isDemo ? DEMO_HOST_ORDER : LIVE_HOST_ORDER;
-  console.log(`[PO-Discovery] Testing ${hosts.length} ${isDemo ? "demo" : "live"} hosts...`);
+  console.log(`[PO-Discovery] Testing ${hosts.length} ${isDemo ? "demo" : "live"} hosts in parallel...`);
 
-  // Try primary host first (fast path) - if it works, return immediately
-  const primarySid = await testHostReachable(hosts[0]);
-  if (primarySid !== "") {
-    console.log(`[PO-Discovery] Primary host ${hosts[0]}: REACHABLE - using immediately`);
-    reachableHostsCache = [{ host: hosts[0], isDemo, timestamp: now }];
-    // Test remaining hosts in background for caching
-    const remaining = hosts.slice(1);
-    Promise.all(remaining.map(async (host) => {
-      const sid = await testHostReachable(host);
-      return { host, reachable: sid !== "" };
-    })).then(results => {
-      const moreHosts = results.filter(r => r.reachable).map(r => r.host);
-      reachableHostsCache = [{ host: hosts[0], isDemo, timestamp: now },
-        ...moreHosts.map(h => ({ host: h, isDemo, timestamp: now }))];
-      console.log(`[PO-Discovery] Background scan: ${moreHosts.length} more hosts reachable`);
-    }).catch(() => {});
-    return [hosts[0]];
-  }
-
-  // Primary failed, test all remaining in parallel
-  console.log(`[PO-Discovery] Primary host ${hosts[0]} unreachable, testing alternatives...`);
+  // Test ALL hosts in parallel (faster discovery, wider net)
   const results = await Promise.all(
-    hosts.slice(1).map(async (host) => {
+    hosts.map(async (host) => {
+      const startTs = Date.now();
       const sid = await testHostReachable(host);
+      const latencyMs = Date.now() - startTs;
       const reachable = sid !== "";
       if (reachable) {
-        console.log(`[PO-Discovery] ${host}: REACHABLE (sid=${sid.substring(0, 8)}...)`);
-      } else {
-        console.log(`[PO-Discovery] ${host}: unreachable`);
+        console.log(`[PO-Discovery] ✓ ${host}: REACHABLE (${latencyMs}ms)`);
       }
-      return { host, reachable };
+      return { host, reachable, latencyMs };
     })
   );
 
-  const reachable = results.filter((r) => r.reachable).map((r) => r.host);
+  const reachable = results.filter((r) => r.reachable);
+  console.log(`[PO-Discovery] ${reachable.length}/${hosts.length} hosts reachable`);
 
-  // Update cache
-  reachableHostsCache = reachable.map((host) => ({ host, isDemo, timestamp: now }));
+  // Update cache with quality data
+  reachableHostsCache = reachable.map(r => ({
+    host: r.host,
+    isDemo,
+    timestamp: now,
+    latencyMs: r.latencyMs,
+    successRate: 1.0,
+  }));
 
-  console.log(`[PO-Discovery] ${reachable.length}/${hosts.length - 1} alternative hosts reachable: ${reachable.join(", ")}`);
-  return reachable;
+  // Sort by latency (fastest first)
+  reachableHostsCache.sort((a, b) => a.latencyMs - b.latencyMs);
+
+  return reachableHostsCache.map(h => h.host);
+}
+
+/**
+ * Invalidate host cache to force fresh discovery on next connect.
+ */
+export function invalidateHostCache(): void {
+  reachableHostsCache = [];
+  console.log("[PO-Discovery] Host cache invalidated — will rediscover on next connect");
 }
 
 /**
  * Get the best host for a demo or live connection.
- * Tries the primary host first, then auto-discovers alternatives.
  */
 export async function getBestHost(isDemo: boolean): Promise<string> {
   const reachable = await discoverReachableHosts(isDemo);
@@ -198,12 +274,9 @@ export async function getBestHost(isDemo: boolean): Promise<string> {
 
 /**
  * Pre-fetch cookies from PocketOption site before WebSocket connection.
- * Mimics a real browser visit: navigate to the site first,
- * get cookies (including cf_clearance for Cloudflare), then connect WS.
  */
 export async function preFetchCookies(host: string): Promise<CookieResult> {
   return new Promise((resolve) => {
-    // Mission: Target main domain first as API hosts might not set full cookies
     const targetHost = "pocketoption.com";
     const options: https.RequestOptions = {
       hostname: targetHost,
@@ -218,22 +291,20 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
     const req = https.get(options, (res) => {
       const setCookies = res.headers["set-cookie"] || [];
       const cookies = setCookies.map((c: string) => c.split(";")[0]);
-      
       console.log(`[PO-Cookie] Got ${cookies.length} cookies from ${targetHost}`);
-      
-      res.on("data", () => {}); 
+      res.on("data", () => {});
       res.on("end", () => {
         resolve({ cookies, cookieHeader: cookies.join("; ") });
       });
     });
 
     req.on("error", (err: Error) => {
-      console.warn(`[PO-Cookie] Pre-fetch failed for ${host}: ${err.message}`);
+      console.warn(`[PO-Cookie] Pre-fetch failed: ${err.message}`);
       resolve({ cookies: [], cookieHeader: "" });
     });
 
-    req.setTimeout(5000, () => { // Reduce to 5s
-      console.warn(`[PO-Cookie] Pre-fetch timeout for ${host}`);
+    req.setTimeout(5000, () => {
+      console.warn(`[PO-Cookie] Pre-fetch timeout`);
       req.destroy();
       resolve({ cookies: [], cookieHeader: "" });
     });
@@ -241,13 +312,13 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
 }
 
 /**
- * Calculate reconnection delay with exponential backoff + jitter.
+ * Calculate reconnection delay with true exponential backoff + jitter.
  * Prevents thundering herd and looks more human-like.
- * Formula: base * 2^attempt + random jitter (75%-125%)
+ * Caps at maxDelay (default: 5 minutes for circuit breaker).
  */
-export function getReconnectDelay(attempt: number, maxDelay = 60000): number {
+export function getReconnectDelay(attempt: number, maxDelay = 300000): number {
   const base = 3000;
-  const exponentialDelay = base * Math.pow(2, attempt);
+  const exponentialDelay = base * Math.pow(2, Math.min(attempt, 8)); // cap exponent at 8 = ~12min base
   const jitter = exponentialDelay * (0.75 + Math.random() * 0.5);
   return Math.min(jitter, maxDelay);
 }

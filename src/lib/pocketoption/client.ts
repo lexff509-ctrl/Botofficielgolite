@@ -9,8 +9,10 @@ import {
   getTradeJitter,
   getBestHost,
   discoverReachableHosts,
+  invalidateHostCache,
   PO_REGIONS,
 } from "./connection";
+
 
 // ============ Types ============
 
@@ -87,6 +89,26 @@ const LEGACY_HOSTS = {
   real: "api-eu.po.market",
 };
 
+// Circuit breaker: after this many consecutive failures, enter long cooldown
+const CIRCUIT_BREAKER_THRESHOLD = 5;
+// Max consecutive failures before giving up entirely (waiting for Bridge)
+const MAX_HARD_FAILURES = 12;
+// Long cooldown delay when circuit is open (ms)
+const CIRCUIT_OPEN_DELAY = 5 * 60 * 1000; // 5 minutes
+
+// ============ Monitoring (Institutional Grade) ============
+
+export interface ConnectionMonitorStats {
+  reconnectCount: number;
+  consecutiveFailures: number;
+  uptimeMs: number;
+  lastConnectedAt: number | null;
+  lastDisconnectedAt: number | null;
+  avgReconnectMs: number;
+  circuitOpen: boolean;
+  zombieDetections: number;
+}
+
 // ============ Client ============
 
 export class PocketOptionClient {
@@ -133,12 +155,26 @@ export class PocketOptionClient {
 
   // Heartbeat & Reconnection
   private socketIoHeartbeat: ReturnType<typeof setInterval> | null = null;
+  private zombieCheckInterval: ReturnType<typeof setInterval> | null = null;
   private lastPongAt = Date.now();
   private pingInterval = 10000;
   private reconnectAttempts = 0;
-  private maxReconnectDelay = 30000;
+  private maxReconnectDelay = 300000; // 5 minutes max backoff
   private intentionallyClosed = false;
   private ssidExpired = false;
+
+  // Circuit Breaker: prevents infinite reconnect loops
+  private consecutiveFailures = 0;
+  private circuitOpen = false;
+  private isReconnecting = false;  // Prevents simultaneous reconnect attempts
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Monitoring stats
+  private reconnectCount = 0;
+  private lastConnectedAt: number | null = null;
+  private lastDisconnectedAt: number | null = null;
+  private reconnectTimestamps: number[] = [];
+  private zombieDetections = 0;
 
   // Trade Lock
   private prefetchedCookies: string[] = [];
@@ -219,14 +255,17 @@ export class PocketOptionClient {
   private startHeartbeats(): void {
     if (this.socketIoHeartbeat) clearInterval(this.socketIoHeartbeat);
     this.lastPongAt = Date.now();
+    this.lastConnectedAt = Date.now();
     let tickCounter = 0;
 
     this.socketIoHeartbeat = setInterval(() => {
       if (this.state !== ConnectionState.READY || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
+      // Zombie socket detection: socket reports OPEN but pong is dead
       const elapsed = Date.now() - this.lastPongAt;
-      if (elapsed > 40000) {
-        console.warn(`[PO] Pong timeout (${Math.round(elapsed / 1000)}s), forcing reconnect...`);
+      if (elapsed > 35000) {
+        console.warn(`[PO] Zombie detected! Pong timeout (${Math.round(elapsed / 1000)}s), forcing clean reconnect...`);
+        this.zombieDetections++;
         this.handleDisconnect();
         return;
       }
@@ -657,11 +696,31 @@ export class PocketOptionClient {
 
   // ============ Socket.IO Event Handler ============
 
+  getMonitorStats(): ConnectionMonitorStats {
+    const avgReconnect = this.reconnectTimestamps.length > 1
+      ? (this.reconnectTimestamps[this.reconnectTimestamps.length - 1] - this.reconnectTimestamps[0]) / (this.reconnectTimestamps.length - 1)
+      : 0;
+    return {
+      reconnectCount: this.reconnectCount,
+      consecutiveFailures: this.consecutiveFailures,
+      uptimeMs: this.lastConnectedAt ? Date.now() - this.lastConnectedAt : 0,
+      lastConnectedAt: this.lastConnectedAt,
+      lastDisconnectedAt: this.lastDisconnectedAt,
+      avgReconnectMs: Math.round(avgReconnect),
+      circuitOpen: this.circuitOpen,
+      zombieDetections: this.zombieDetections,
+    };
+  }
+
   private handleSocketIOEvent(eventName: string, eventData: any): void {
     switch (eventName) {
       case "successauth":
         this.state = ConnectionState.READY;
+        // Reset circuit breaker on successful auth
         this.reconnectAttempts = 0;
+        this.consecutiveFailures = 0;
+        this.circuitOpen = false;
+        this.isReconnecting = false;
         this.startHeartbeats();
         if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
         if (this.upgradeResolve) this.upgradeResolve();
@@ -878,16 +937,21 @@ export class PocketOptionClient {
   // ============ Disconnect & Cleanup ============
 
   private handleDisconnect(): void {
-    console.log(`[PO] handleDisconnect called. State was: ${this.state}, intentionallyClosed: ${this.intentionallyClosed}`);
-    // Allow reconnects even if dropped during AUTHENTICATING
-    const wasConnecting = this.state === ConnectionState.CONNECTING;
+    // Anti-race: Only one disconnect handler should run at a time
+    const prevState = this.state;
+    if (this.state === ConnectionState.DISCONNECTED && !this.ws) {
+      return; // Already cleaned up
+    }
+    console.log(`[PO] handleDisconnect called. State was: ${prevState}, intentionallyClosed: ${this.intentionallyClosed}`);
+    this.lastDisconnectedAt = Date.now();
     this.state = ConnectionState.DISCONNECTED;
-    
+
     if (this.upgradeReject) {
       this.upgradeReject(new Error("Disconnected before READY"));
     }
     this.upgradeResolve = null;
     this.upgradeReject = null;
+
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
       this.connectionTimeout = null;
@@ -895,24 +959,81 @@ export class PocketOptionClient {
     this.cleanup();
 
     if (this.ws) {
-      try { this.ws.terminate(); } catch {}
+      try { this.ws.removeAllListeners(); this.ws.terminate(); } catch {}
       this.ws = null;
     }
 
-    // CRITICAL: Never reconnect if SSID is expired — prevents infinite loop
-    if (!this.intentionallyClosed && !wasConnecting && !this.ssidExpired) {
-      const delay = getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);
-      this.reconnectAttempts++;
-      console.log(`[PO] Dropped! Reconnecting in ${delay}ms...`);
-      setTimeout(() => {
-        // Double-check ssidExpired before actually reconnecting (may have expired during the delay)
-        if (this.state === ConnectionState.DISCONNECTED && !this.intentionallyClosed && !this.ssidExpired) {
-          this.connect(this.isDemo).catch(() => {});
-        }
-      }, delay);
-    } else if (this.ssidExpired) {
-      console.warn(`[PO] Halting auto-reconnect: SSID is expired. Waiting for new session from Bridge.`);
+    // Never reconnect if SSID expired or closed intentionally
+    if (this.intentionallyClosed || this.ssidExpired) {
+      if (this.ssidExpired) {
+        console.warn(`[PO] Halting auto-reconnect: SSID expired. Waiting for Bridge sync.`);
+      }
+      this.isReconnecting = false;
+      return;
     }
+
+    // Anti-simultaneous-reconnect guard
+    if (this.isReconnecting) {
+      console.log(`[PO] Reconnect already scheduled, skipping duplicate.`);
+      return;
+    }
+
+    // Circuit breaker: increment and check threshold
+    this.consecutiveFailures++;
+    this.reconnectCount++;
+    this.reconnectTimestamps.push(Date.now());
+    if (this.reconnectTimestamps.length > 20) this.reconnectTimestamps.shift();
+
+    // Hard limit: if too many failures, enter circuit-open state
+    if (this.consecutiveFailures >= MAX_HARD_FAILURES) {
+      console.error(`[PO] Circuit HARD OPEN after ${this.consecutiveFailures} consecutive failures. ` +
+        `Waiting for Bridge to provide a fresh session.`);
+      this.circuitOpen = true;
+      this.isReconnecting = false;
+      // Signal bot runner (via ssidExpired flag) to pause until Bridge re-syncs
+      this.ssidExpired = true;
+      for (const cb of this.onSsidExpiredCallbacks) {
+        try { if (typeof cb === "function") cb(); } catch {}
+      }
+      return;
+    }
+
+    // Circuit breaker: after threshold, use long cooldown
+    const isSoftOpen = this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD;
+    if (isSoftOpen && !this.circuitOpen) {
+      console.warn(`[PO] Circuit soft-open after ${this.consecutiveFailures} failures — will retry in 5 minutes.`);
+      this.circuitOpen = true;
+    }
+
+    const delay = this.circuitOpen
+      ? CIRCUIT_OPEN_DELAY
+      : getReconnectDelay(this.reconnectAttempts, this.maxReconnectDelay);
+
+    this.reconnectAttempts++;
+    this.isReconnecting = true;
+
+    // Cancel any existing scheduled reconnect
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    console.log(`[PO] Scheduling reconnect in ${Math.round(delay / 1000)}s (attempt ${this.reconnectAttempts}, failures: ${this.consecutiveFailures})...`);
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.isReconnecting = false;
+      if (this.state === ConnectionState.DISCONNECTED && !this.intentionallyClosed && !this.ssidExpired) {
+        // Invalidate host cache so we rediscover on reconnect
+        if (this.circuitOpen) {
+          invalidateHostCache();
+          this.circuitOpen = false;
+          console.log(`[PO] Circuit reset — attempting fresh discovery...`);
+        }
+        this.connect(this.isDemo).catch((err) => {
+          console.error(`[PO] Reconnect failed:`, err.message);
+        });
+      }
+    }, delay);
   }
 
   disconnect(): void {
@@ -930,14 +1051,18 @@ export class PocketOptionClient {
       clearInterval(this.socketIoHeartbeat);
       this.socketIoHeartbeat = null;
     }
+    if (this.zombieCheckInterval) {
+      clearInterval(this.zombieCheckInterval);
+      this.zombieCheckInterval = null;
+    }
     this.expectedBinaryEvents = [];
-    
+
     // Abort all hanging promises safely
     for (const rejectFn of this.pendingRequests) {
       try { rejectFn(new Error("Connection closed or cleaned up")); } catch {}
     }
     this.pendingRequests.clear();
-    
+
     // Wipe all internal listeners to prevent phantom events
     this.internalEvents.removeAllListeners();
   }

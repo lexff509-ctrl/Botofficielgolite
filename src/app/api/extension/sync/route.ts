@@ -9,6 +9,20 @@ import { getBotRunner, startBotRunner } from "@/services/bot-runner";
 import { botSessions } from "@/db/schema";
 import { desc } from "drizzle-orm";
 
+// ============ Intelligent Session Cache (Anti-spam) ============
+// Prevents the extension from spamming the server with identical syncs
+const sessionCache = new Map<string, { ssidHash: string; lastSync: number }>();
+const SYNC_COOLDOWN_MS = 45 * 1000; // Min 45s between identical syncs
+
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < Math.min(str.length, 50); i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash.toString(36);
+}
+
 export async function POST(req: NextRequest) {
   try {
     // Basic anti-spam: check content length
@@ -28,7 +42,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "SSID manquant ou invalide" }, { status: 400 });
     }
 
-    // 2. Chercher l'utilisateur avec cette API Key
+    // 2. Rate-limit: skip if same SSID synced recently
+    const ssidHash = simpleHash(ssid);
+    const cached = sessionCache.get(apiKey);
+    const now = Date.now();
+    if (cached && cached.ssidHash === ssidHash && (now - cached.lastSync) < SYNC_COOLDOWN_MS) {
+      // Return success but skip expensive DB/bot operations
+      return NextResponse.json({
+        success: true,
+        message: "Session déjà synchronisée (cache)",
+        cached: true,
+        lastSync: new Date(cached.lastSync).toISOString()
+      });
+    }
+
+    // Update cache immediately
+    sessionCache.set(apiKey, { ssidHash, lastSync: now });
+    // Clean old entries to prevent memory leak
+    if (sessionCache.size > 500) {
+      const oldest = Array.from(sessionCache.entries()).sort((a, b) => a[1].lastSync - b[1].lastSync)[0];
+      if (oldest) sessionCache.delete(oldest[0]);
+    }
+
+
     const [user] = await db
       .select()
       .from(users)
