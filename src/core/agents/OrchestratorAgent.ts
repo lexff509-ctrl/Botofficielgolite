@@ -22,7 +22,14 @@ export class OrchestratorAgent {
    * Évalue un signal de trading en utilisant tous les agents IA.
    * Fallback automatique si données insuffisantes.
    */
-  public static async evaluate(candles: Candle[], asset: string, timeframe: string, isOtc: boolean = false) {
+  public static async evaluate(candles: Candle[], asset: string, timeframe: string, isOtc: boolean = false): Promise<any> {
+    return Promise.race([
+      this._evaluateInternal(candles, asset, timeframe, isOtc),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("OrchestratorAgent timeout (5s)")), 5000))
+    ]).catch(() => this._getFallbackSignal(candles, asset, timeframe));
+  }
+
+  private static async _evaluateInternal(candles: Candle[], asset: string, timeframe: string, isOtc: boolean): Promise<any> {
     try {
       // ═══════════════════════════════════════════════════════════════════
       // ÉTAPE 1 : Analyse Technique (Indicateurs bruts)
@@ -187,5 +194,29 @@ export class OrchestratorAgent {
         metrics: {}
       };
     }
+  }
+
+  private static _getFallbackSignal(candles: Candle[], asset: string, timeframe: string): any {
+    if (candles.length >= 5) {
+      try {
+        const fallback = evaluateBollingerStochSignal(candles as any);
+        return {
+          signal: fallback.signal as "BUY" | "SELL" | "WAIT",
+          confidence: (fallback.confidence === "HIGH" ? "HIGH" : fallback.confidence === "MEDIUM" ? "MEDIUM" : "LOW") as "HIGH" | "MEDIUM" | "LOW",
+          score: fallback.confidence === "HIGH" ? 75 : fallback.confidence === "MEDIUM" ? 62 : 51,
+          reason: `[Fallback — timeout] ${fallback.signal} — ${fallback.reason}`,
+          isReversal: false,
+          metrics: {}
+        };
+      } catch {}
+    }
+    return {
+      signal: "WAIT" as "BUY" | "SELL" | "WAIT",
+      confidence: "LOW" as "HIGH" | "MEDIUM" | "LOW",
+      score: 0,
+      reason: "WAIT: Timeout ou données insuffisantes",
+      isReversal: false,
+      metrics: {}
+    };
   }
 }

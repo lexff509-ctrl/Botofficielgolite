@@ -30,28 +30,47 @@ export interface CombinedSentiment {
 // Cache Fear & Greed to avoid hammering the free API
 let fngCache: { value: number; label: string; timestamp: number } | null = null;
 const FNG_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+let fngCircuitBreakerTrips = 0;
+const FNG_CIRCUIT_BREAKER_THRESHOLD = 3; // fail after 3 consecutive failures
 
 async function fetchFearAndGreed(): Promise<{ value: number; label: string } | null> {
   try {
+    // ✅ BUG FIX #6: Circuit breaker — stop hammering API after repeated failures
+    if (fngCircuitBreakerTrips >= FNG_CIRCUIT_BREAKER_THRESHOLD) {
+      console.warn("[Fear&Greed] Circuit breaker open — using cache or neutral");
+      if (fngCache) return { value: fngCache.value, label: fngCache.label };
+      return null;
+    }
+
     if (fngCache && Date.now() - fngCache.timestamp < FNG_CACHE_TTL) {
+      fngCircuitBreakerTrips = 0; // Reset on successful cache use
       return { value: fngCache.value, label: fngCache.label };
     }
 
     const res = await fetch("https://api.alternative.me/fng/?limit=1", {
-      signal: AbortSignal.timeout(3000) // 3s max
+      signal: AbortSignal.timeout(5000) // ✅ Increased from 3s to 5s for reliability
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      fngCircuitBreakerTrips++;
+      return fngCache ? { value: fngCache.value, label: fngCache.label } : null;
+    }
     const data = await res.json();
     const entry = data?.data?.[0];
-    if (!entry) return null;
+    if (!entry) {
+      fngCircuitBreakerTrips++;
+      return null;
+    }
 
     const result = {
       value: parseInt(entry.value),
       label: entry.value_classification as string
     };
     fngCache = { ...result, timestamp: Date.now() };
+    fngCircuitBreakerTrips = 0; // Reset on success
     return result;
-  } catch {
+  } catch (err) {
+    fngCircuitBreakerTrips++;
+    console.warn("[Fear&Greed] API error (trip count: " + fngCircuitBreakerTrips + "):", err);
     return fngCache ? { value: fngCache.value, label: fngCache.label } : null;
   }
 }

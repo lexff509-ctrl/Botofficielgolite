@@ -105,6 +105,37 @@ export async function register() {
       .catch((err) => {
         console.error("[Bootstrap] Failed:", err);
       });
+
+    // ✅ BUG FIX #5: Start periodic cleanup of stuck pending trades (every 2 min)
+    setInterval(async () => {
+      try {
+        const { db } = await import("@/db");
+        const { trades } = await import("@/db/schema");
+        const { eq } = await import("drizzle-orm");
+
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+        const stuckTrades = await db
+          .select()
+          .from(trades)
+          .where(eq(trades.result, "PENDING") as any);
+
+        const toCleanup = stuckTrades.filter(t => {
+          const openTime = new Date(t.openedAt);
+          return openTime < tenMinutesAgo;
+        });
+
+        if (toCleanup.length > 0) {
+          console.log(`[TradeCleanup] Found ${toCleanup.length} stuck pending trades, marking as LOST`);
+          for (const trade of toCleanup) {
+            await db.update(trades)
+              .set({ result: "LOSS", closedAt: new Date(), profit: "0" })
+              .where(eq(trades.id, trade.id));
+          }
+        }
+      } catch (err) {
+        console.warn("[TradeCleanup] Cleanup failed:", err);
+      }
+    }, 2 * 60 * 1000); // Every 2 minutes
   }
 }
 

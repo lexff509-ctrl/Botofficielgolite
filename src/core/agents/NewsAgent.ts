@@ -8,7 +8,7 @@ export interface NewsBias {
 
 export class NewsAgent {
   /**
-   * Analyse les événements économiques actuels et tente de prédire 
+   * Analyse les événements économiques actuels et tente de prédire
    * la direction du marché en fonction du Forecast (Prévision) et du Previous (Précédent).
    */
   public static async analyze(asset: string): Promise<NewsBias> {
@@ -16,65 +16,71 @@ export class NewsAgent {
       return { sentiment: "NEUTRAL", strength: 0, reason: "Marché OTC : Aucune influence macroéconomique." };
     }
 
-    const news = await newsService.getHighImpactNews();
-    if (!news || news.length === 0) {
-      return { sentiment: "NEUTRAL", strength: 0, reason: "Aucune annonce économique majeure à venir." };
-    }
+    try {
+      const news = await newsService.getHighImpactNews();
+      if (!news || news.length === 0) {
+        return { sentiment: "NEUTRAL", strength: 0, reason: "Aucune annonce économique majeure à venir." };
+      }
 
-    const currencies: string[] = asset.replace(/[^A-Z]/g, "").match(/.{1,3}/g) || [];
-    if (currencies.length !== 2) return { sentiment: "NEUTRAL", strength: 0, reason: "Paire de devises invalide." };
+      const currencies: string[] = asset.replace(/[^A-Z]/g, "").match(/.{1,3}/g) || [];
+      if (currencies.length !== 2) return { sentiment: "NEUTRAL", strength: 0, reason: "Paire de devises invalide." };
 
-    const baseCurrency = currencies[0]; // ex: EUR
-    const quoteCurrency = currencies[1]; // ex: USD
+      const baseCurrency = currencies[0]; // ex: EUR
+      const quoteCurrency = currencies[1]; // ex: USD
 
-    const now = new Date();
-    const IMPACT_WINDOW_MS = 30 * 60 * 1000; // 30 minutes avant et après l'annonce
+      const now = new Date();
+      const IMPACT_WINDOW_MS = 30 * 60 * 1000; // 30 minutes avant et après l'annonce
 
-    for (const event of news) {
-      if (event.impact !== "High") continue;
-      
-      const isBase = event.country === baseCurrency;
-      const isQuote = event.country === quoteCurrency;
-      
-      if (!isBase && !isQuote) continue;
+      for (const event of news) {
+        if (event.impact !== "High") continue;
 
-      const eventDate = new Date(event.date);
-      const diffMs = Math.abs(eventDate.getTime() - now.getTime());
+        const isBase = event.country === baseCurrency;
+        const isQuote = event.country === quoteCurrency;
 
-      // Si on est dans la fenêtre de volatilité de l'annonce
-      if (diffMs <= IMPACT_WINDOW_MS) {
-        // Tentative d'analyse de la direction (Basique)
-        let eventSentiment: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
-        
-        // Si on a les chiffres prévus vs précédents
-        if (event.forecast && event.previous) {
-          const forecastVal = parseFloat(event.forecast.replace(/[^\d.-]/g, ''));
-          const previousVal = parseFloat(event.previous.replace(/[^\d.-]/g, ''));
+        if (!isBase && !isQuote) continue;
 
-          if (!isNaN(forecastVal) && !isNaN(previousVal)) {
-            // Règle générale simplifiée : Un chiffre supérieur au précédent renforce la devise
-            // Attention : pour l'inflation ou le chômage, c'est l'inverse (nécessite une IA stricte pour être parfait)
-            const isPositiveForCurrency = forecastVal > previousVal;
-            
-            if (isBase) {
-              eventSentiment = isPositiveForCurrency ? "BULLISH" : "BEARISH";
-            } else if (isQuote) {
-              // Si la monnaie de cotation (USD) se renforce, la paire (EUR/USD) baisse (BEARISH)
-              eventSentiment = isPositiveForCurrency ? "BEARISH" : "BULLISH";
+        const eventDate = new Date(event.date);
+        const diffMs = Math.abs(eventDate.getTime() - now.getTime());
+
+        // Si on est dans la fenêtre de volatilité de l'annonce
+        if (diffMs <= IMPACT_WINDOW_MS) {
+          // Tentative d'analyse de la direction (Basique)
+          let eventSentiment: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
+
+          // Si on a les chiffres prévus vs précédents
+          if (event.forecast && event.previous) {
+            const forecastVal = parseFloat(event.forecast.replace(/[^\d.-]/g, ''));
+            const previousVal = parseFloat(event.previous.replace(/[^\d.-]/g, ''));
+
+            if (!isNaN(forecastVal) && !isNaN(previousVal)) {
+              const isPositiveForCurrency = forecastVal > previousVal;
+
+              if (isBase) {
+                eventSentiment = isPositiveForCurrency ? "BULLISH" : "BEARISH";
+              } else if (isQuote) {
+                eventSentiment = isPositiveForCurrency ? "BEARISH" : "BULLISH";
+              }
             }
           }
+
+          const actionStr = eventSentiment === "BULLISH" ? "Favorise les ACHATS" : eventSentiment === "BEARISH" ? "Favorise les VENTES" : "Volatilité Extrême";
+
+          return {
+            sentiment: eventSentiment,
+            strength: 80, // Impact lourd
+            reason: `[News Agent] Événement: ${event.title} (${event.country}). ${actionStr} (Forecast: ${event.forecast} vs Prev: ${event.previous})`
+          };
         }
-
-        const actionStr = eventSentiment === "BULLISH" ? "Favorise les ACHATS" : eventSentiment === "BEARISH" ? "Favorise les VENTES" : "Volatilité Extrême";
-
-        return {
-          sentiment: eventSentiment,
-          strength: 80, // Impact lourd
-          reason: `[News Agent] Événement: ${event.title} (${event.country}). ${actionStr} (Forecast: ${event.forecast} vs Prev: ${event.previous})`
-        };
       }
-    }
 
-    return { sentiment: "NEUTRAL", strength: 0, reason: "Aucun événement dans la fenêtre d'impact." };
+      return { sentiment: "NEUTRAL", strength: 0, reason: "Aucun événement dans la fenêtre d'impact." };
+    } catch (err: any) {
+      if (err?.name === "TimeoutError" || err?.code === "ABORT_ERR") {
+        console.warn("[NewsAgent] Timeout (5s) — fallback to NEUTRAL");
+        return { sentiment: "NEUTRAL", strength: 0, reason: "News timeout" };
+      }
+      console.error("[NewsAgent] Error:", err?.message);
+      return { sentiment: "NEUTRAL", strength: 0, reason: "News unavailable" };
+    }
   }
 }

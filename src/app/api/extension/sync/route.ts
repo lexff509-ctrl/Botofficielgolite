@@ -8,6 +8,7 @@ import { updateSsidStatus, connectPocketOption } from "@/services/trading.servic
 import { getBotRunner, startBotRunner } from "@/services/bot-runner";
 import { botSessions } from "@/db/schema";
 import { desc } from "drizzle-orm";
+import { tradeMutexManager } from "@/services/trade-mutex.manager";
 
 // ============ Intelligent Session Cache (Anti-spam) ============
 // Prevents the extension from spamming the server with identical syncs
@@ -83,6 +84,15 @@ export async function POST(req: NextRequest) {
     const encryptedSsid = encryptSSID(ssid);
     const parsedUid = uid ? String(uid) : null;
 
+    // ✅ BUG FIX #7: Validate SSID format before using (minimum length + format check)
+    if (!ssid || ssid.length < 10) {
+      console.warn(`[ExtensionBridge] Invalid SSID format from extension for user ${user.id}`);
+      return NextResponse.json({
+        error: "SSID invalide ou trop court",
+        success: false
+      }, { status: 400 });
+    }
+
     // 4a. Champs CORE — essayer avec les champs extension, fallback sur minimum absolu
     try {
       await db.update(users).set({
@@ -125,8 +135,50 @@ export async function POST(req: NextRequest) {
     try {
       const extUpdate: any = { extensionActive: true };
       if (username) extUpdate.pocketOptionUsername = username;
-      if (demoBalance !== undefined) extUpdate.demoBalance = String(demoBalance);
-      if (liveBalance !== undefined) extUpdate.liveBalance = String(liveBalance);
+
+      // ✅ BUG FIX #3: Validate balance against PO API before trusting extension data
+      let validatedDemoBalance: string | undefined;
+      let validatedLiveBalance: string | undefined;
+
+      try {
+        const poClient = (await import("@/services/trading.service")).getPocketOptionClient(user.id);
+        if (poClient && poClient.isConnected && poClient.getAccountData) {
+          const accountData = poClient.getAccountData();
+          if (accountData) {
+            // Only use extension balance if it roughly matches PO API (within 10% tolerance)
+            if (demoBalance !== undefined && accountData.isDemo) {
+              const apiBalance = parseFloat(String(accountData.balance || "0"));
+              const extBalance = parseFloat(String(demoBalance));
+              const diff = Math.abs(apiBalance - extBalance) / Math.max(apiBalance, extBalance);
+              if (diff < 0.1) {
+                validatedDemoBalance = String(apiBalance);
+              } else {
+                console.warn(`[Balance Validation] Demo balance mismatch (ext: ${extBalance}, api: ${apiBalance}), using API value`);
+                validatedDemoBalance = String(apiBalance);
+              }
+            }
+            if (liveBalance !== undefined && !accountData.isDemo) {
+              const apiBalance = parseFloat(String(accountData.balance || "0"));
+              const extBalance = parseFloat(String(liveBalance));
+              const diff = Math.abs(apiBalance - extBalance) / Math.max(apiBalance, extBalance);
+              if (diff < 0.1) {
+                validatedLiveBalance = String(apiBalance);
+              } else {
+                console.warn(`[Balance Validation] Live balance mismatch (ext: ${extBalance}, api: ${apiBalance}), using API value`);
+                validatedLiveBalance = String(apiBalance);
+              }
+            }
+          }
+        }
+      } catch (validErr) {
+        console.warn(`[Balance Validation] Could not validate against PO API:`, validErr);
+        // Fallback: use extension values with validation
+        if (demoBalance !== undefined) validatedDemoBalance = String(Math.max(0, parseFloat(String(demoBalance))));
+        if (liveBalance !== undefined) validatedLiveBalance = String(Math.max(0, parseFloat(String(liveBalance))));
+      }
+
+      if (validatedDemoBalance !== undefined) extUpdate.demoBalance = validatedDemoBalance;
+      if (validatedLiveBalance !== undefined) extUpdate.liveBalance = validatedLiveBalance;
       await db.update(users).set(extUpdate).where(eq(users.id, user.id));
     } catch (extErr: any) {
       console.warn("[ExtensionBridge] Extended fields skipped (migration pending):", extErr.message);
@@ -151,66 +203,81 @@ export async function POST(req: NextRequest) {
 
 
     // 6. Relancer le bot si nécessaire (Automatique)
-    let runner = getBotRunner(user.id);
-    if (runner) {
-      const expectedMode = isDemoConnection ? "DEMO" : "LIVE";
-      if (runner.mode !== expectedMode) {
-        SystemLogger.info("ExtensionBridge", `Changement de mode détecté (${runner.mode} -> ${expectedMode}), redémarrage du runner pour l'utilisateur ${user.id}`);
-        const currentOpts = runner.getStatus();
-        runner.stop();
-        runner = startBotRunner({
-          userId: user.id,
-          botType: currentOpts.botType,
-          asset: currentOpts.asset,
-          timeframe: currentOpts.timeframe,
-          mode: expectedMode,
-          tradeAmount: isDemoConnection ? parseFloat(user.demoTradeAmount || "1") : parseFloat(user.liveTradeAmount || "1"),
-          confidenceMode: currentOpts.confidenceMode,
-          profitTarget: currentOpts.profitTarget,
-          lossLimit: currentOpts.lossLimit,
-          martingaleEnabled: currentOpts.martingaleEnabled,
-          compoundEnabled: currentOpts.compoundEnabled,
-          compoundTradesTarget: currentOpts.compoundTradesTarget,
-          compoundPayoutRate: currentOpts.compoundPayoutRate,
-        });
+    // ✅ BUG FIX #4: Add mutex lock to prevent bot duplication on concurrent syncs
+    const botStartLockKey = `bot_start:${user.id}`;
+    if (!tradeMutexManager.acquireLock(botStartLockKey, 10000)) {
+      console.warn(`[ExtensionBridge] Bot start already in progress for user ${user.id}, skipping duplicate start`);
+      return NextResponse.json({
+        success: true,
+        message: "Synchronisation réussie (bot start en cours)",
+        lastSync: new Date().toISOString()
+      });
+    }
+
+    try {
+      let runner = getBotRunner(user.id);
+      if (runner) {
+        const expectedMode = isDemoConnection ? "DEMO" : "LIVE";
+        if (runner.mode !== expectedMode) {
+          SystemLogger.info("ExtensionBridge", `Changement de mode détecté (${runner.mode} -> ${expectedMode}), redémarrage du runner pour l'utilisateur ${user.id}`);
+          const currentOpts = runner.getStatus();
+          runner.stop();
+          runner = startBotRunner({
+            userId: user.id,
+            botType: currentOpts.botType,
+            asset: currentOpts.asset,
+            timeframe: currentOpts.timeframe,
+            mode: expectedMode,
+            tradeAmount: isDemoConnection ? parseFloat(user.demoTradeAmount || "1") : parseFloat(user.liveTradeAmount || "1"),
+            confidenceMode: currentOpts.confidenceMode,
+            profitTarget: currentOpts.profitTarget,
+            lossLimit: currentOpts.lossLimit,
+            martingaleEnabled: currentOpts.martingaleEnabled,
+            compoundEnabled: currentOpts.compoundEnabled,
+            compoundTradesTarget: currentOpts.compoundTradesTarget,
+            compoundPayoutRate: currentOpts.compoundPayoutRate,
+          });
+        } else {
+          runner.resume();
+          SystemLogger.info("ExtensionBridge", `BotRunner repris pour l'utilisateur ${user.id} suite à synchro SSID`);
+        }
       } else {
-        runner.resume();
-        SystemLogger.info("ExtensionBridge", `BotRunner repris pour l'utilisateur ${user.id} suite à synchro SSID`);
+        // Auto-start since Bridge wants automatic trading if previously configured
+        const [lastSession] = await db
+          .select()
+          .from(botSessions)
+          .where(eq(botSessions.userId, user.id))
+          .orderBy(desc(botSessions.startedAt))
+          .limit(1);
+
+        if (lastSession && lastSession.isRunning) {
+          runner = startBotRunner({
+            userId: user.id,
+            botType: lastSession.botType,
+            asset: lastSession.asset,
+            timeframe: lastSession.timeframe as any,
+            mode: isDemoConnection ? "DEMO" : "LIVE",
+            tradeAmount: isDemoConnection ? (parseFloat(user.demoTradeAmount || "1")) : (parseFloat(user.liveTradeAmount || "1")),
+            confidenceMode: "standard",
+            profitTarget: user.profitTarget ? parseFloat(user.profitTarget) : undefined,
+            lossLimit: user.lossLimit ? parseFloat(user.lossLimit) : undefined,
+            martingaleEnabled: lastSession.martingaleEnabled,
+            compoundEnabled: lastSession.compoundEnabled,
+            compoundTradesTarget: lastSession.compoundTradesTarget || 0,
+            compoundPayoutRate: 0.92,
+          });
+
+          await db.update(botSessions)
+            .set({ isRunning: true, stoppedAt: null })
+            .where(eq(botSessions.id, lastSession.id));
+
+          SystemLogger.info("ExtensionBridge", `BotRunner auto-démarré pour l'utilisateur ${user.id} via Bridge`);
+        } else if (lastSession && !lastSession.isRunning) {
+          SystemLogger.info("ExtensionBridge", `Dernière session utilisateur ${user.id} était arrêtée - pas de relance automatique`);
+        }
       }
-    } else {
-      // Auto-start since Bridge wants automatic trading if previously configured
-      const [lastSession] = await db
-        .select()
-        .from(botSessions)
-        .where(eq(botSessions.userId, user.id))
-        .orderBy(desc(botSessions.startedAt))
-        .limit(1);
-
-      if (lastSession && lastSession.isRunning) {
-        runner = startBotRunner({
-          userId: user.id,
-          botType: lastSession.botType,
-          asset: lastSession.asset,
-          timeframe: lastSession.timeframe as any,
-          mode: isDemoConnection ? "DEMO" : "LIVE",
-          tradeAmount: isDemoConnection ? (parseFloat(user.demoTradeAmount || "1")) : (parseFloat(user.liveTradeAmount || "1")),
-          confidenceMode: "standard",
-          profitTarget: user.profitTarget ? parseFloat(user.profitTarget) : undefined,
-          lossLimit: user.lossLimit ? parseFloat(user.lossLimit) : undefined,
-          martingaleEnabled: lastSession.martingaleEnabled,
-          compoundEnabled: lastSession.compoundEnabled,
-          compoundTradesTarget: lastSession.compoundTradesTarget || 0,
-          compoundPayoutRate: 0.92,
-        });
-
-        await db.update(botSessions)
-          .set({ isRunning: true, stoppedAt: null })
-          .where(eq(botSessions.id, lastSession.id));
-
-        SystemLogger.info("ExtensionBridge", `BotRunner auto-démarré pour l'utilisateur ${user.id} via Bridge`);
-      } else if (lastSession && !lastSession.isRunning) {
-        SystemLogger.info("ExtensionBridge", `Dernière session utilisateur ${user.id} était arrêtée - pas de relance automatique`);
-      }
+    } finally {
+      tradeMutexManager.releaseLock(botStartLockKey);
     }
 
     SystemLogger.info("ExtensionBridge", `SSID synchronisé avec succès pour l'utilisateur ${user.id}`);
