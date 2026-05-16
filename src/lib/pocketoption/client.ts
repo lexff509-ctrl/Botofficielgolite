@@ -453,7 +453,8 @@ export class PocketOptionClient {
 
     this.state = ConnectionState.UPGRADING;
     return new Promise((resolve, reject) => {
-      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
+      // Connect directly without sid, letting the WebSocket create a fresh session but with Cloudflare cookies
+      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
       let settled = false;
       const settle = (err?: Error) => {
         if (settled) return;
@@ -482,7 +483,7 @@ export class PocketOptionClient {
           this.safeCloseWs(ws);
         }, 30000);
 
-        ws.on("open", () => { this.state = ConnectionState.WS_OPEN; ws.send("2probe"); });
+        ws.on("open", () => { this.state = ConnectionState.WS_OPEN; });
         ws.on("message", (raw: WebSocket.Data) => {
           try {
             this.handleRawMessage(raw);
