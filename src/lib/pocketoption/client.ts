@@ -114,7 +114,7 @@ export interface ConnectionMonitorStats {
 export class PocketOptionClient {
   private ssid: string;
   private ws: WebSocket | null = null;
-  private state: ConnectionState = ConnectionState.DISCONNECTED;
+  public state: ConnectionState = ConnectionState.DISCONNECTED;
   private isDemo = true;
 
   // Connection Phase tracking
