@@ -294,25 +294,25 @@ export async function getBestHost(isDemo: boolean): Promise<string> {
 }
 
 /**
- * Pre-fetch cookies from PocketOption site before WebSocket connection.
+ * Pre-fetch cookies from PocketOption API host (Cloudflare + session cookies).
+ * MUST be called for the specific target host to get valid Cloudflare cookies.
  */
 export async function preFetchCookies(host: string): Promise<CookieResult> {
   return new Promise((resolve) => {
-    const targetHost = "pocketoption.com";
     const options: https.RequestOptions = {
-      hostname: targetHost,
-      path: "/",
+      hostname: host,
+      path: `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
       method: "GET",
       headers: {
         ...HTTP_HEADERS,
-        Host: targetHost,
+        Host: host,
       },
     };
 
     const req = https.get(options, (res) => {
       const setCookies = res.headers["set-cookie"] || [];
       const cookies = setCookies.map((c: string) => c.split(";")[0]);
-      console.log(`[PO-Cookie] Got ${cookies.length} cookies from ${targetHost}`);
+      console.log(`[PO-Cookie] Got ${cookies.length} Cloudflare/session cookies from ${host}`);
       res.on("data", () => {});
       res.on("end", () => {
         resolve({ cookies, cookieHeader: cookies.join("; ") });
@@ -320,12 +320,12 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
     });
 
     req.on("error", (err: Error) => {
-      console.warn(`[PO-Cookie] Pre-fetch failed: ${err.message}`);
+      console.warn(`[PO-Cookie] Pre-fetch from ${host} failed: ${err.message}`);
       resolve({ cookies: [], cookieHeader: "" });
     });
 
-    req.setTimeout(5000, () => {
-      console.warn(`[PO-Cookie] Pre-fetch timeout`);
+    req.setTimeout(10000, () => {
+      console.warn(`[PO-Cookie] Pre-fetch from ${host} timeout`);
       req.destroy();
       resolve({ cookies: [], cookieHeader: "" });
     });

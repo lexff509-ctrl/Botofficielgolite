@@ -348,6 +348,12 @@ export class PocketOptionClient {
       console.log(`[PO] Trying host: ${host}`);
       this.ssidExpired = false;
 
+      // Pre-fetch Cloudflare + session cookies from the target host
+      const { cookies: hostCookies } = await preFetchCookies(host);
+      if (hostCookies.length > 0) {
+        this.prefetchedCookies = [...new Set([...this.prefetchedCookies, ...hostCookies])];
+      }
+
       // Strategy 1: Direct WebSocket
       try {
         await this.connectDirect(host);
@@ -402,7 +408,7 @@ export class PocketOptionClient {
         const ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
           handshakeTimeout: 30000,
-          perMessageDeflate: true,
+          perMessageDeflate: false,
           followRedirects: true,
         });
         this.ws = ws;
@@ -453,8 +459,7 @@ export class PocketOptionClient {
 
     this.state = ConnectionState.UPGRADING;
     return new Promise((resolve, reject) => {
-      // Connect directly without sid, letting the WebSocket create a fresh session but with Cloudflare cookies
-      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
+      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
       let settled = false;
       const settle = (err?: Error) => {
         if (settled) return;
@@ -471,6 +476,7 @@ export class PocketOptionClient {
             ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
           },
           handshakeTimeout: 30000,
+          perMessageDeflate: false,
         };
 
         const ws = new WebSocket(wsUrl, wsOptions);
