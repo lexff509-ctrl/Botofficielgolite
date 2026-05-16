@@ -153,7 +153,6 @@ export async function POST(req: NextRequest) {
               if (diff < 0.1) {
                 validatedDemoBalance = String(apiBalance);
               } else {
-                console.warn(`[Balance Validation] Demo balance mismatch (ext: ${extBalance}, api: ${apiBalance}), using API value`);
                 validatedDemoBalance = String(apiBalance);
               }
             }
@@ -164,11 +163,14 @@ export async function POST(req: NextRequest) {
               if (diff < 0.1) {
                 validatedLiveBalance = String(apiBalance);
               } else {
-                console.warn(`[Balance Validation] Live balance mismatch (ext: ${extBalance}, api: ${apiBalance}), using API value`);
                 validatedLiveBalance = String(apiBalance);
               }
             }
           }
+        } else {
+          // Client not connected yet, trust the extension data directly
+          if (demoBalance !== undefined) validatedDemoBalance = String(Math.max(0, parseFloat(String(demoBalance))));
+          if (liveBalance !== undefined) validatedLiveBalance = String(Math.max(0, parseFloat(String(liveBalance))));
         }
       } catch (validErr) {
         console.warn(`[Balance Validation] Could not validate against PO API:`, validErr);
