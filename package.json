@@ -1,0 +1,28 @@
+{
+  "name": "botofficielgolite",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ws": "^8.18.0",
+    "uuid": "^11.0.5",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.13",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.7.3"
+  }
+}
