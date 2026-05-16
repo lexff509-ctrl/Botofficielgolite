@@ -163,7 +163,7 @@ export function testHostReachable(host: string): Promise<string> {
   return new Promise((resolve) => {
     const req = https.get({
       hostname: host,
-      path: "/socket.io/?EIO=4&transport=polling",
+      path: `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
       method: "GET",
       headers: {
         "User-Agent": CHROME_UA,

@@ -520,7 +520,7 @@ export class PocketOptionClient {
     return new Promise((resolve, reject) => {
       const req = https.get({
         hostname: host,
-        path: "/socket.io/?EIO=4&transport=polling",
+        path: `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
         method: "GET",
         headers: {
           ...CONN_HTTP_HEADERS,
