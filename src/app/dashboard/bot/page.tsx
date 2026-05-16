@@ -98,6 +98,8 @@ export default function BotPage() {
   const [user, setUser] = useState<Record<string, unknown> | null>(null);
   const [botType, setBotType] = useState<"signal" | "auto">("signal");
   const [marketType, setMarketType] = useState<"REAL" | "OTC">("REAL");
+  // ✅ BUG FIX: Real-time bridge status
+  const [bridgeStatus, setBridgeStatus] = useState<Record<string, any> | null>(null);
   const [asset, setAsset] = useState("EUR/USD");
   const [timeframe, setTimeframe] = useState("1m");
   const [tradeAmount, setTradeAmount] = useState<number | "">(1);
@@ -160,18 +162,32 @@ export default function BotPage() {
     } catch {}
   }, []);
 
+  // ✅ BUG FIX: Fetch real-time bridge status
+  const fetchBridgeStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/bridge/status");
+      const data = await res.json();
+      if (data.status) setBridgeStatus(data.status);
+    } catch (err) {
+      console.warn("[Bridge Status] Failed to fetch:", err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchUser();
     fetchSessions();
-  }, [fetchUser, fetchSessions]);
+    fetchBridgeStatus();
+  }, [fetchUser, fetchSessions, fetchBridgeStatus]);
 
   // Adaptive polling: fast (5s) while waiting for Bridge, slow (30s) when connected
   useEffect(() => {
+    const bridgeIsConnected = bridgeStatus?.bridgeConnected;
     const interval = setInterval(() => {
       fetchUser();
-    }, user?.extensionActive ? 30000 : 5000);
+      fetchBridgeStatus(); // ✅ Fetch bridge status frequently
+    }, bridgeIsConnected ? 30000 : 5000);
     return () => clearInterval(interval);
-  }, [fetchUser, user?.extensionActive]);
+  }, [fetchUser, fetchBridgeStatus, bridgeStatus?.bridgeConnected]);
 
   // Poll runner status while running
   useEffect(() => {
@@ -291,9 +307,10 @@ export default function BotPage() {
         <div className="glass-card rounded-xl p-5 border border-slate-700/50">
           <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-4">
             <div className="flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${user?.extensionActive ? 'bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'bg-red-500'}`} />
+              {/* ✅ Real-time status indicator from API */}
+              <div className={`w-3 h-3 rounded-full ${bridgeStatus?.bridgeConnected ? 'bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'bg-red-500'}`} />
               <h2 className="text-lg font-bold text-white">Bridge BotOfficiel</h2>
-              {Boolean(user?.extensionActive) && (
+              {Boolean(bridgeStatus?.bridgeConnected) && (
                 <span className="text-[10px] font-black bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20 uppercase">
                   Connected
                 </span>
@@ -301,8 +318,8 @@ export default function BotPage() {
             </div>
             <div className="text-xs text-slate-400 text-right">
               <div>Navigateur: <span className="text-white">{user?.extensionDeviceName as string || 'Inconnu'}</span></div>
-              {Boolean(user?.extensionLastSync) && (
-                <div>Dernière synchro: <span className="text-white">{new Date(user?.extensionLastSync as string).toLocaleTimeString()}</span></div>
+              {Boolean(bridgeStatus?.extensionLastSync) && (
+                <div>Dernière synchro: <span className="text-white">{new Date(bridgeStatus?.extensionLastSync as string).toLocaleTimeString()}</span></div>
               )}
             </div>
           </div>
@@ -333,38 +350,43 @@ export default function BotPage() {
           </div>
           
           {(() => {
-            const TIMEOUT = 10 * 60 * 1000; // 10 minutes
-            // Signal 1: extensionActive from API (requires DB column)
-            const apiActive = Boolean(user?.extensionActive);
-            // Signal 2: extensionLastSync (requires column)
-            const rawLastSync = user?.extensionLastSync;
-            const lastSyncTs = rawLastSync ? new Date(String(rawLastSync)).getTime() : 0;
-            const syncedRecently = lastSyncTs > 0 && (Date.now() - lastSyncTs) < TIMEOUT;
-            // Signal 3: pocketOptionUid + updatedAt fallback (works even without extension_last_sync column)
-            const rawUpdatedAt = user?.updatedAt;
-            const updatedTs = rawUpdatedAt ? new Date(String(rawUpdatedAt)).getTime() : 0;
-            const uidFallback = Boolean(user?.pocketOptionUid) && updatedTs > 0 && (Date.now() - updatedTs) < TIMEOUT;
-            const bridgeOk = apiActive || syncedRecently || uidFallback;
-            const displayTime = lastSyncTs || updatedTs;
-            return !bridgeOk ? (
-              <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-yellow-400 text-sm flex items-start gap-3">
-                <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                <div>
-                  <div className="font-bold mb-1">Extension non connectée</div>
-                  <p className="text-xs text-yellow-400/80">
-                    Installez l&apos;extension Chrome Bridge et ouvrez un onglet PocketOption. La connexion et la synchronisation seront 100% automatiques. Plus besoin de saisir le SSID.
-                  </p>
+            // ✅ Use real-time bridge status from API instead of cached user data
+            const isConnected = bridgeStatus?.bridgeConnected;
+            const displayTime = bridgeStatus?.extensionLastSync;
+            const username = bridgeStatus?.username || user?.pocketOptionUsername;
+            const ssidStatus = bridgeStatus?.ssidStatus;
+
+            if (!isConnected) {
+              const reason = bridgeStatus?.poConnected === false ? "PocketOption déconnecté" :
+                bridgeStatus?.poSsidExpired ? "SSID expiré/bloqué" :
+                !bridgeStatus?.extensionRecentlyActive ? "Extension inactif" :
+                "Non connecté";
+
+              return (
+                <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-yellow-400 text-sm flex items-start gap-3">
+                  <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                  <div>
+                    <div className="font-bold mb-1">Extension non connectée ({reason})</div>
+                    <p className="text-xs text-yellow-400/80">
+                      Assurez-vous que: 1) L'extension Bridge est installée et activée, 2) Un onglet PocketOption est ouvert, 3) Le SSID n'a pas expiré
+                    </p>
+                    {ssidStatus && ssidStatus !== "VALID" && (
+                      <p className="text-xs text-red-400/80 mt-2">⚠️ Statut SSID: {ssidStatus}</p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="mt-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 text-sm flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-                <span className="font-bold">🟢 Bridge Connecté</span>
-                <span className="text-emerald-400/60 text-xs ml-auto">
-                  Dernier sync: {displayTime ? new Date(displayTime).toLocaleTimeString('fr-FR') : '—'}
-                </span>
-              </div>
-            );
+              );
+            } else {
+              return (
+                <div className="mt-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 text-sm flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                  <span className="font-bold">🟢 Bridge Connecté</span>
+                  <span className="text-emerald-400/60 text-xs ml-auto">
+                    Sync: {displayTime ? new Date(displayTime).toLocaleTimeString('fr-FR') : '—'} | Compte: {username || '—'}
+                  </span>
+                </div>
+              );
+            }
           })()}
         </div>
 

@@ -67,12 +67,19 @@ async function fetchFearAndGreed(): Promise<{ value: number; label: string } | n
     };
     fngCache = { ...result, timestamp: Date.now() };
     fngCircuitBreakerTrips = 0; // Reset on success
-    return result;
+    return { value: result.value, label: result.label }; // Local fallback handles failures
   } catch (err) {
     fngCircuitBreakerTrips++;
     console.warn("[Fear&Greed] API error (trip count: " + fngCircuitBreakerTrips + "):", err);
     return fngCache ? { value: fngCache.value, label: fngCache.label } : null;
   }
+}
+
+// Fallback basé sur RSI si API Fear & Greed est down
+function getLocalSentiment(rsi: number): { value: number; label: string } {
+  if (rsi > 70) return { value: 75, label: "Greed" };  // Overbought = Greed
+  if (rsi < 30) return { value: 25, label: "Fear" };   // Oversold = Fear
+  return { value: 50, label: "Neutral" };               // Neutral
 }
 
 export class MarketSentimentAgent {
@@ -84,13 +91,40 @@ export class MarketSentimentAgent {
     newsBias: NewsBias | null,
     rsiValue: number = 50
   ): Promise<CombinedSentiment> {
+    const DEFAULT_NEUTRAL_RESULT: CombinedSentiment = {
+      finalScore: 0,
+      bias: "NEUTRAL",
+      confidence: 0,
+      sources: [],
+      reason: "Sentiment circuit breaker (fallback)"
+    };
+    try {
+      return await Promise.race([
+        this._doAnalysis(asset, newsBias, rsiValue),
+        new Promise<CombinedSentiment>((resolve) => setTimeout(() => resolve(DEFAULT_NEUTRAL_RESULT), 2000))
+      ]);
+    } catch (err) {
+      return DEFAULT_NEUTRAL_RESULT;
+    }
+  }
+
+  private static async _doAnalysis(
+    asset: string,
+    newsBias: NewsBias | null,
+    rsiValue: number = 50
+  ): Promise<CombinedSentiment> {
     const sources: SentimentResult[] = [];
     const isCrypto = asset.includes("BTC") || asset.includes("ETH") || asset.includes("XRP");
     const isOtc = asset.toUpperCase().includes("OTC");
 
     // ─── SOURCE 1: Fear & Greed Index (crypto + general markets) ────────────
     if (isCrypto) {
-      const fng = await fetchFearAndGreed();
+      let fng = await fetchFearAndGreed();
+      if (!fng) {
+        fng = getLocalSentiment(rsiValue); // backup local
+        console.warn("[Fear&Greed] API down, used local RSI fallback.");
+      }
+      
       if (fng) {
         // Convert 0-100 (fear=0, greed=100) to -100...+100
         const score = (fng.value - 50) * 2;
@@ -98,7 +132,7 @@ export class MarketSentimentAgent {
         sources.push({
           score,
           label: `Fear & Greed: ${fng.value}/100 (${fng.label})`,
-          source: "alternative.me",
+          source: "alternative.me (or fallback)",
           bias,
           weight: 0.35
         });

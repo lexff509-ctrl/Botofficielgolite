@@ -101,6 +101,23 @@ export class MTFAnalysisAgent {
    * @param timeframe  LTF timeframe string (e.g., "1m")
    */
   public static analyze(candles: Candle[], timeframe: string): MTFResult {
+    const DEFAULT_NEUTRAL_RESULT: MTFResult = {
+      htf1Trend: "NEUTRAL",
+      htf2Trend: "NEUTRAL",
+      alignmentScore: 0,
+      confirmation: "CONFLICT",
+      reason: "MTF circuit breaker (fallback)"
+    };
+
+    try {
+      return this._doAnalysis(candles, timeframe);
+    } catch (err) {
+      console.warn("[MTFAnalysisAgent] Error during analysis, using fallback:", (err as Error).message);
+      return DEFAULT_NEUTRAL_RESULT;
+    }
+  }
+
+  private static _doAnalysis(candles: Candle[], timeframe: string): MTFResult {
     const ltfIdx  = TF_ORDER.indexOf(timeframe);
     const ltfSec  = TF_SECONDS[timeframe] ?? 60;
 

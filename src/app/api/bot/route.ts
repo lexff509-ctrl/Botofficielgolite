@@ -68,12 +68,22 @@ export async function GET(req: NextRequest) {
       realBalance = null;
     }
 
+    // Include detailed connection status (Step 3.2)
+    const connectionStatus = client ? {
+      state: client.state,
+      isConnected: client.isConnected,
+      isSsidExpired: client.isSsidExpired,
+      reconnectAttempts: (client as any).reconnectAttempts || 0,
+      blocked: client.state === "BLOCKED" || client.state === 5, // Depending on enum value
+    } : null;
+
     return NextResponse.json({
       sessions,
       activeSession: activeSession || null,
       runnerStatus,
       realBalance,
       assets,
+      connectionStatus,
       ssidInfo: {
         hasPersonalSsid: !!activeSession?.useGlobalSsid ? false : true,
         globalSsidAvailable: globalSsidStatus === "VALID",

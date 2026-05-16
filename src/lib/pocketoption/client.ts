@@ -276,6 +276,10 @@ export class PocketOptionClient {
         if (tickCounter % 2 === 0) {
           this.ws.send('42["ps"]'); // Socket.IO keep-alive every 20s
         }
+        // ── Étape 3.1 : Balance polling périodique (toutes les 60s) ──
+        if (tickCounter % 6 === 0) {
+          this.ws.send('42["getBalance"]');
+        }
         tickCounter++;
       } catch (err) {
         console.error("[PO] Failed to send heartbeat:", err);
@@ -997,13 +1001,25 @@ export class PocketOptionClient {
 
   /** Safely close a WebSocket without triggering recursive handlers */
   private safeCloseWs(ws: WebSocket): void {
+    // Idempotent: remove all listeners FIRST to prevent recursive close events
+    try { ws.removeAllListeners(); } catch {}
     try {
-      ws.removeAllListeners();
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
+      const state = ws.readyState;
+      if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
+        // Deferred close: gives any in-flight frames time to flush
+        setTimeout(() => {
+          try {
+            if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+              ws.close();
+            }
+          } catch (innerErr) {
+            // Silently swallowed — this path is hit when WS was never fully open
+            console.warn(`[PO-SafeGuard] Ignored deferred close error:`, (innerErr as Error).message);
+          }
+        }, 200);
       }
     } catch (err) {
-      console.warn(`[PO] safeCloseWs error (ignored):`, (err as Error).message);
+      console.warn(`[PO-SafeGuard] safeCloseWs outer error (ignored):`, (err as Error).message);
     }
   }
 

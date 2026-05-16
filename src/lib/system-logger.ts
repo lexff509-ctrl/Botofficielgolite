@@ -34,6 +34,18 @@ export class SystemLogger {
         message,
         details: detailsString,
       });
+
+      // ── Étape 3.3 : Notification Discord sur erreur CRITICAL/ERROR ──
+      if (level === "ERROR" && process.env.DISCORD_WEBHOOK_URL) {
+        fetch(process.env.DISCORD_WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: `🚨 **ERROR** | ${source}\n\`\`\`${message}\n${detailsString ? detailsString.substring(0, 1000) : ''}\`\`\``
+          })
+        }).catch(() => {}); // Fire and forget
+      }
+
     } catch (e) {
       // Do not crash the app if logging fails, and DO NOT use console.error here
       // as it would trigger an infinite recursion loop with instrumentation.ts

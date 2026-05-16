@@ -999,6 +999,11 @@ export class BotRunner {
 
 const activeRunners = new Map<number, BotRunner>();
 
+// ── Étape 2.3 : Mutex anti-duplication démarrage bot ──────────────────────────
+// Empêche 2 bots de démarrer si bridge:connected se déclenche 2× rapidement
+const botStartMutex = new Map<number, number>(); // userId → timestamp expiry
+const BOT_START_MUTEX_TTL = 5000; // 5s
+
 export function startBotRunner(opts: {
   userId: number;
   botType: "signal" | "auto";
@@ -1014,6 +1019,19 @@ export function startBotRunner(opts: {
   compoundTradesTarget?: number;
   compoundPayoutRate?: number;
 }): BotRunner {
+  // ── Guard: mutex actif pour cet utilisateur → on retourne le runner existant ──
+  const mutexExpiry = botStartMutex.get(opts.userId);
+  if (mutexExpiry && Date.now() < mutexExpiry) {
+    const existing = activeRunners.get(opts.userId);
+    if (existing) {
+      console.log(`[BotRunner] Mutex actif — démarrage dupliqué ignoré pour user ${opts.userId}`);
+      return existing;
+    }
+  }
+
+  // Activer le mutex pour 5s
+  botStartMutex.set(opts.userId, Date.now() + BOT_START_MUTEX_TTL);
+
   // Stop existing runner if any
   const existing = activeRunners.get(opts.userId);
   if (existing) {

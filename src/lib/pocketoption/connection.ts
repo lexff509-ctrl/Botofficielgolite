@@ -221,23 +221,36 @@ export async function discoverReachableHosts(isDemo: boolean): Promise<string[]>
   }
 
   const hosts = isDemo ? DEMO_HOST_ORDER : LIVE_HOST_ORDER;
-  console.log(`[PO-Discovery] Testing ${hosts.length} ${isDemo ? "demo" : "live"} hosts in parallel...`);
+  // Sequential batches of 3 — prevents Render rate-limit / socket exhaustion from 15 parallel pings
+  const BATCH_SIZE = 3;
+  const allReachable: { host: string; latencyMs: number }[] = [];
 
-  const results = await Promise.all(
-    hosts.map(async (host) => {
-      const startTs = Date.now();
-      const sid = await testHostReachable(host);
-      const latencyMs = Date.now() - startTs;
-      const reachable = sid !== "";
-      if (reachable) {
-        console.log(`[PO-Discovery] ✓ ${host}: REACHABLE (${latencyMs}ms)`);
-      }
-      return { host, reachable, latencyMs };
-    })
-  );
+  console.log(`[PO-Discovery] Testing ${hosts.length} ${isDemo ? "demo" : "live"} hosts (batches of ${BATCH_SIZE})...`);
 
-  const reachable = results.filter((r) => r.reachable);
-  console.log(`[PO-Discovery] ${reachable.length}/${hosts.length} hosts reachable`);
+  for (let i = 0; i < hosts.length; i += BATCH_SIZE) {
+    const batch = hosts.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (host) => {
+        const startTs = Date.now();
+        const sid = await testHostReachable(host);
+        const latencyMs = Date.now() - startTs;
+        const reachable = sid !== "";
+        if (reachable) console.log(`[PO-Discovery] ✓ ${host}: REACHABLE (${latencyMs}ms)`);
+        return { host, reachable, latencyMs };
+      })
+    );
+    const batchReachable = batchResults.filter(r => r.reachable);
+    allReachable.push(...batchReachable);
+
+    // Early exit: found 2+ good hosts, no need to probe all 15
+    if (allReachable.length >= 2) {
+      console.log(`[PO-Discovery] Early exit — ${allReachable.length} hosts found after batch ${Math.ceil((i + BATCH_SIZE) / BATCH_SIZE)}`);
+      break;
+    }
+  }
+
+  const reachable = allReachable;
+  console.log(`[PO-Discovery] ${reachable.length}/${hosts.length} alternative hosts reachable`);
 
   // If no hosts found, add fallback with lower score but still usable
   if (reachable.length === 0) {

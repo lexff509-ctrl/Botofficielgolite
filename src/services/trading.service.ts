@@ -461,6 +461,17 @@ export async function connectPocketOption(
     return connectionMutexes.get(userId)!;
   }
 
+  // ── Étape 2.5 : Validation format SSID ──────────────────────────────────────
+  if (!isValidSsidFormat(ssid)) {
+    console.warn(`[Trading] Rejet d'un SSID au format invalide pour user ${userId}`);
+    updateSsidStatus(userId, "EXPIRED").catch(() => {}); // Force invalidation
+    return Promise.resolve({
+      success: false,
+      error: "SSID format invalide",
+      ssidExpired: true,
+    });
+  }
+
   const connectPromise = async () => {
     // Disconnect existing
     const existing = activeConnections.get(userId);
@@ -712,4 +723,18 @@ function parseTimeframe(tf: string): number {
   if (tf.endsWith("s")) return parseInt(tf);
   if (tf.endsWith("m")) return parseInt(tf) * 60;
   return 60;
+}
+
+export function isValidSsidFormat(ssid: string): boolean {
+  if (!ssid || typeof ssid !== "string") return false;
+  // PO SSID length is generally large
+  if (ssid.length < 20) return false;
+  
+  // Format classique du bridge: 42["auth",{"session":"...","isDemo":X}]
+  if (ssid.startsWith('42["auth"')) return true;
+  
+  // Format token brut
+  if (/^[a-zA-Z0-9]{20,}$/.test(ssid)) return true;
+  
+  return false;
 }

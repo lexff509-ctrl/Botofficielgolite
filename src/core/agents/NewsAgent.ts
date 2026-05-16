@@ -12,6 +12,18 @@ export class NewsAgent {
    * la direction du marché en fonction du Forecast (Prévision) et du Previous (Précédent).
    */
   public static async analyze(asset: string): Promise<NewsBias> {
+    const DEFAULT_NEUTRAL_RESULT: NewsBias = { sentiment: "NEUTRAL", strength: 0, reason: "News circuit breaker" };
+    try {
+      return await Promise.race([
+        this._doAnalysis(asset),
+        new Promise<NewsBias>((resolve) => setTimeout(() => resolve(DEFAULT_NEUTRAL_RESULT), 2000))
+      ]);
+    } catch (err) {
+      return DEFAULT_NEUTRAL_RESULT;
+    }
+  }
+
+  private static async _doAnalysis(asset: string): Promise<NewsBias> {
     if (asset.toUpperCase().includes("OTC")) {
       return { sentiment: "NEUTRAL", strength: 0, reason: "Marché OTC : Aucune influence macroéconomique." };
     }
