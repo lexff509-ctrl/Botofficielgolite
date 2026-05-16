@@ -113,6 +113,7 @@ export interface ConnectionMonitorStats {
 
 export class PocketOptionClient {
   private ssid: string;
+  private sessionToken: string = "";
   private ws: WebSocket | null = null;
   public state: ConnectionState = ConnectionState.DISCONNECTED;
   private isDemo = true;
@@ -187,31 +188,32 @@ export class PocketOptionClient {
     if (isDemo !== undefined) this.isDemo = isDemo;
     if (cookies) this.prefetchedCookies = [...cookies];
 
-    // Increase max listeners for multi-agent support
-    this.internalEvents.setMaxListeners(100);
-    this.publicEvents.setMaxListeners(100);
-
+    // Extract pure session token from SSID
     try {
-      let sessionToken = "";
       if (this.ssid.startsWith('42["auth"')) {
         const jsonPart = this.ssid.substring(2);
         const parsed = JSON.parse(jsonPart);
         if (parsed && parsed.length > 1 && typeof parsed[1] === "object" && parsed[1].session) {
-          sessionToken = parsed[1].session;
+          this.sessionToken = parsed[1].session;
         } else if (parsed && parsed.length > 1 && typeof parsed[1] === "string") {
-          sessionToken = parsed[1];
+          this.sessionToken = parsed[1];
         }
       } else {
-        sessionToken = this.ssid;
-      }
-      if (sessionToken && !this.prefetchedCookies.some((c) => c.includes("PHPSESSID"))) {
-        // Nettoyage strict pour éviter les erreurs "Invalid character in header content"
-        const cleanSessionToken = sessionToken.replace(/[\r\n]/g, "").trim();
-        this.prefetchedCookies.push(`PHPSESSID=${cleanSessionToken}`);
+        this.sessionToken = this.ssid;
       }
     } catch (err) {
-      // Ignore parse errors
+      this.sessionToken = this.ssid;
     }
+
+    // Add session token as PHPSESSID cookie if not already present
+    if (this.sessionToken && !this.prefetchedCookies.some((c) => c.includes("PHPSESSID"))) {
+      const cleanSessionToken = this.sessionToken.replace(/[\r\n]/g, "").trim();
+      this.prefetchedCookies.push(`PHPSESSID=${cleanSessionToken}`);
+    }
+
+    // Increase max listeners for multi-agent support
+    this.internalEvents.setMaxListeners(100);
+    this.publicEvents.setMaxListeners(100);
 
     this.startTickThrottler();
   }
@@ -665,37 +667,20 @@ export class PocketOptionClient {
 
     if (message.startsWith("40")) {
       this.state = ConnectionState.AUTHENTICATING;
-      let authMessage = this.ssid;
-      
-      // If SSID is just the raw session token, format it into the strict Socket.IO auth payload
-      if (!this.ssid.startsWith('42["auth"')) {
-        authMessage = '42' + JSON.stringify([
-          "auth",
-          {
-            session: this.ssid,
-            isDemo: this.isDemo ? 1 : 0,
-            uid: 0, // Fallback uid
-            platform: 2,
-            isFastHistory: true,
-            isOptimized: true
-          }
-        ]);
-      } else {
-        // Enforce isDemo flag dynamically even if pre-formatted
-        try {
-          const parsed = JSON.parse(this.ssid.substring(2));
-          if (Array.isArray(parsed) && parsed[1] && typeof parsed[1] === "object") {
-            parsed[1].isDemo = this.isDemo ? 1 : 0;
-            parsed[1].platform = 2;
-            parsed[1].isFastHistory = true;
-            parsed[1].isOptimized = true;
-            authMessage = '42' + JSON.stringify(parsed);
-          }
-        } catch (e) {
-          // Keep original if parsing fails
+
+      // Build auth message with pure session token
+      const authMessage = '42' + JSON.stringify([
+        "auth",
+        {
+          session: this.sessionToken,
+          isDemo: this.isDemo ? 1 : 0,
+          uid: 0,
+          platform: 2,
+          isFastHistory: true,
+          isOptimized: true
         }
-      }
-      
+      ]);
+
       this.ws?.send(authMessage);
       return;
     }

@@ -64,7 +64,7 @@ async function testHostReachable(host) {
   });
 }
 
-async function testDirectWebSocket(host, ssid, cookies) {
+async function testDirectWebSocket(host, sessionToken, cookies) {
   return new Promise((resolve) => {
     const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
     const headers = { ...WS_HEADERS, Cookie: cookies.join("; ") };
@@ -93,7 +93,7 @@ async function testDirectWebSocket(host, ssid, cookies) {
         const authMessage = '42' + JSON.stringify([
           "auth",
           {
-            session: ssid,
+            session: sessionToken,
             isDemo: 1,
             uid: 0,
             platform: 2,
@@ -132,7 +132,7 @@ async function testDirectWebSocket(host, ssid, cookies) {
   });
 }
 
-async function testWithUpgrade(host, ssid, prefetchedCookies) {
+async function testWithUpgrade(host, sessionToken, prefetchedCookies) {
   return new Promise((resolve) => {
     // Step 1: HTTP Polling Open
     const pollReq = https.get({
@@ -156,19 +156,19 @@ async function testWithUpgrade(host, ssid, prefetchedCookies) {
 
         try {
           const parsed = JSON.parse(body.substring(1));
-          const sid = parsed.sid;
+          const pollSid = parsed.sid;
           const pollCookies = (res.headers["set-cookie"] || []).map((c) => c.split(";")[0]);
 
-          if (!sid) {
+          if (!pollSid) {
             console.log(`  ❌ No SID in polling response`);
             resolve(false);
             return;
           }
 
-          console.log(`  📡 HTTP polling OK (SID: ${sid.substring(0, 8)}..., ${pollCookies.length} new cookies)`);
+          console.log(`  📡 HTTP polling OK (SID: ${pollSid.substring(0, 8)}..., ${pollCookies.length} new cookies)`);
 
           // Step 2: Upgrade to WebSocket with SID
-          const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
+          const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(pollSid)}`;
           const allCookies = [...prefetchedCookies, ...pollCookies];
           const wsHeaders = {
             ...WS_HEADERS,
@@ -198,7 +198,7 @@ async function testWithUpgrade(host, ssid, prefetchedCookies) {
               const authMessage = '42' + JSON.stringify([
                 "auth",
                 {
-                  session: ssid,
+                  session: sessionToken,
                   isDemo: 1,
                   uid: 0,
                   platform: 2,
@@ -252,15 +252,28 @@ async function testWithUpgrade(host, ssid, prefetchedCookies) {
 }
 
 async function main() {
-  const ssid = process.argv[2];
-  if (!ssid || ssid === "YOUR_SSID") {
+  const ssidInput = process.argv[2];
+  if (!ssidInput || ssidInput === "YOUR_SSID") {
     console.error("Usage: node test-po.js <SSID>");
     console.error("Example: node test-po.js '42[\"auth\",{\"session\":\"abc123\"}]'");
     process.exit(1);
   }
 
+  // Extract pure session token from SSID
+  let sessionToken = ssidInput;
+  if (ssidInput.startsWith('42["auth"')) {
+    try {
+      const parsed = JSON.parse(ssidInput.substring(2));
+      if (parsed && parsed.length > 1 && typeof parsed[1] === "object" && parsed[1].session) {
+        sessionToken = parsed[1].session;
+      }
+    } catch (e) {
+      // Use as-is if parsing fails
+    }
+  }
+
   console.log(`🔍 PocketOption WebSocket Diagnostic\n`);
-  console.log(`SSID: ${ssid.substring(0, 50)}...\n`);
+  console.log(`Session Token: ${sessionToken.substring(0, 30)}...\n`);
 
   console.log(`1️⃣  Discovering reachable hosts...\n`);
   const hostResults = await Promise.all(DEMO_HOSTS.map(testHostReachable));
@@ -279,13 +292,13 @@ async function main() {
     console.log(`\n📍 Host: ${host}`);
 
     console.log(`  Testing DIRECT WebSocket...`);
-    if (await testDirectWebSocket(host, ssid, cookies)) {
+    if (await testDirectWebSocket(host, sessionToken, cookies)) {
       success = true;
       break;
     }
 
     console.log(`  Testing UPGRADE WebSocket...`);
-    if (await testWithUpgrade(host, ssid, cookies)) {
+    if (await testWithUpgrade(host, sessionToken, cookies)) {
       success = true;
       break;
     }
