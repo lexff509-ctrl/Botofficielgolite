@@ -84,6 +84,11 @@ export const users = pgTable("users", {
   ),
   pocketOptionUsername: varchar("pocket_option_username", { length: 100 }),
   extensionActive: boolean("extension_active").default(false).notNull(),
+  
+  // Headless Auto-Login Credentials (Encrypted)
+  poEmail: varchar("po_email", { length: 255 }),
+  poPassword: text("po_password"),
+  
   // User-defined trading limits
   profitTarget: numeric("profit_target", { precision: 15, scale: 2 }),
   lossLimit: numeric("loss_limit", { precision: 15, scale: 2 }),

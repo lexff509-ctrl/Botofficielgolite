@@ -10,7 +10,7 @@
   "host_permissions": [
     "*://*.pocketoption.com/*",
     "*://*.po.market/*",
-    "https://botofficielgolite.onrender.com/*"
+    "https://botofficielgolite-production.up.railway.app/*"
   ],
   "background": {
     "service_worker": "background.js"
