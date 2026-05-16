@@ -451,9 +451,6 @@ export class PocketOptionClient {
     const { sid, cookies } = await this.httpPollingOpen(host);
     if (!sid) throw new Error("Failed to get sid");
 
-    await this.httpPollingPost(host, sid, "40", cookies);
-    await this.httpPollingRead(host, sid, cookies);
-
     this.state = ConnectionState.UPGRADING;
     return new Promise((resolve, reject) => {
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
