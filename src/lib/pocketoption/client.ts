@@ -535,15 +535,24 @@ export class PocketOptionClient {
         let body = "";
         res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
         res.on("end", () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`HTTP polling rejected: ${res.statusCode} - ${body.substring(0, 100)}`));
+            return;
+          }
           try {
             if (body.startsWith("0")) {
-              resolve({ sid: JSON.parse(body.substring(1)).sid || "", cookies });
+              const sid = JSON.parse(body.substring(1)).sid || "";
+              if (!sid) throw new Error("Empty sid in parsed JSON");
+              resolve({ sid, cookies });
             } else {
               const match = body.match(/"sid"\s*:\s*"([^"]+)"/);
-              resolve({ sid: match ? match[1] : "", cookies });
+              const sid = match ? match[1] : "";
+              if (!sid) throw new Error("Regex failed to find sid");
+              resolve({ sid, cookies });
             }
-          } catch (err) {
-            resolve({ sid: "", cookies });
+          } catch (err: any) {
+            console.warn(`[PO] httpPollingOpen failed to parse sid. Body: ${body.substring(0, 150)}`);
+            reject(new Error(`Failed to parse socket.io sid: ${err.message}`));
           }
         });
       });

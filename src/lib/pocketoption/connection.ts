@@ -18,6 +18,8 @@ export const WS_HEADERS = {
 // Full Chrome-like headers for HTTP requests
 export const HTTP_HEADERS = {
   "User-Agent": CHROME_UA,
+  "Origin": "https://pocketoption.com",
+  "Referer": "https://pocketoption.com/",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
   "Cache-Control": "no-cache",
