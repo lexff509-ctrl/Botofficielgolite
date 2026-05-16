@@ -16,7 +16,6 @@ const WS_HEADERS = {
   "Cache-Control": "no-cache",
   "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
   "Sec-WebSocket-Version": "13",
-  "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
 };
 
 const HTTP_HEADERS = {
