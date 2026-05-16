@@ -93,3 +93,17 @@ document.getElementById("saveBtn").addEventListener("click", function () {
     }
   );
 });
+
+document.getElementById("refreshPoBtn").addEventListener("click", function () {
+  chrome.tabs.query({ url: "*://*.pocketoption.com/*" }, function(tabs) {
+    if (tabs.length > 0) {
+      chrome.tabs.reload(tabs[0].id);
+      document.getElementById("statusText").textContent = "🔄 PO Rafraîchi !";
+      const dot = document.getElementById("statusDot");
+      if(dot) dot.className = "dot yellow";
+    } else {
+      // S'il n'y a pas d'onglet ouvert, en ouvrir un nouveau
+      chrome.tabs.create({ url: "https://pocketoption.com/fr/cabinet/demo-quick-high-low/" });
+    }
+  });
+});

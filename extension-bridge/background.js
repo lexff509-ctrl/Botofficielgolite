@@ -1,8 +1,8 @@
-// background.js — BotOfficiel Bridge v1.2 (MV3 Stable)
+// background.js — BotOfficiel Bridge v1.3 (MV3 Stable)
 // Fix: Service Worker MV3 goes to sleep after 30s → persist all state to chrome.storage.local
 // Fix: Restore state from storage on SW startup → keepalive works even after sleep
 
-const API_URL = "https://botofficielgolite.onrender.com/api/extension/sync";
+const API_URL = "https://botofficielgolite-production.up.railway.app/api/extension/sync";
 
 // In-memory state (will be restored from storage on SW restart)
 let lastSyncedSsid = "";
