@@ -396,7 +396,7 @@ export class PocketOptionClient {
       };
 
       try {
-        const wsHeaders: Record<string, string> = { ...CONN_WS_HEADERS, Host: host };
+        const wsHeaders: Record<string, string> = { ...CONN_WS_HEADERS };
         if (this.prefetchedCookies.length > 0) wsHeaders["Cookie"] = this.prefetchedCookies.join("; ");
 
         const ws = new WebSocket(wsUrl, {
@@ -470,7 +470,6 @@ export class PocketOptionClient {
         const wsOptions: WebSocket.ClientOptions = {
           headers: {
             ...CONN_WS_HEADERS,
-            Host: host,
             ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
           },
           handshakeTimeout: 30000,
