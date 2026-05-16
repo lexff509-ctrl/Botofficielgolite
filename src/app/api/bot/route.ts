@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
       isConnected: client.isConnected,
       isSsidExpired: client.isSsidExpired,
       reconnectAttempts: (client as any).reconnectAttempts || 0,
-      blocked: client.state === "BLOCKED" || client.state === 5, // Depending on enum value
+      blocked: client.isSsidExpired,
     } : null;
 
     return NextResponse.json({
