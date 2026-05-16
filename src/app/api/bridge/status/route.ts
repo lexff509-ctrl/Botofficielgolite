@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
 
     // Check 3: Is SSID valid?
     const hasSsid = !!user.pocketOptionSsid;
-    const ssidExpired = user.ssidStatus === "EXPIRED" || user.ssidStatus === "BLOCKED";
+    const ssidExpired = user.ssidStatus === "EXPIRED";
 
     // Determine overall status
     const bridgeConnected = extensionRecentlyActive && poConnected && hasSsid && !ssidExpired;
