@@ -419,7 +419,8 @@ export class PocketOptionClient {
 
     // Strategy 2: Full Engine.IO v4 HTTP Polling upgrade
     for (const host of reachableHosts) {
-      if (this.state === ConnectionState.DISCONNECTED) break; // Re-check state
+      // Use any cast to prevent TS type narrowing error in async loop
+      if ((this.state as any) === ConnectionState.DISCONNECTED) break; 
 
       try {
         console.log(`[PO] Attempting HTTP Polling Upgrade on ${host}...`);
