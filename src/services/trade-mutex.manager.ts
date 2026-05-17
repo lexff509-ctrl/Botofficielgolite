@@ -1,17 +1,29 @@
 // src/services/trade-mutex.manager.ts
 import { SystemLogger } from "@/lib/system-logger";
+import { redis } from "@/lib/redis";
 
 class TradeMutexManager {
   // --- MUTEX LOCKS ---
-  // Store the expiration timestamp of the lock
+  // Store the expiration timestamp of the lock for memory fallback
   private locks = new Map<string, number>();
 
   /**
-   * Acquire a lock.
+   * Acquire a lock. Distributed via Redis if available, else memory.
    * Returns true if successfully acquired. Returns false if already locked.
    * Lock expires automatically after `timeoutMs` to prevent deadlocks.
    */
-  acquireLock(key: string, timeoutMs: number = 60000): boolean {
+  async acquireLock(key: string, timeoutMs: number = 60000): Promise<boolean> {
+    // 1. Try Redis Lock (Production)
+    if (redis) {
+      try {
+        const result = await redis.set(key, "locked", "PX", timeoutMs, "NX");
+        return result === "OK";
+      } catch (err) {
+        console.warn(`[Mutex] Redis failed, falling back to memory:`, err);
+      }
+    }
+
+    // 2. Memory Fallback
     const now = Date.now();
     const existingExpiration = this.locks.get(key);
     if (existingExpiration && now < existingExpiration) {
@@ -21,7 +33,14 @@ class TradeMutexManager {
     return true;
   }
 
-  releaseLock(key: string): void {
+  async releaseLock(key: string): Promise<void> {
+    if (redis) {
+      try {
+        await redis.del(key);
+      } catch (err) {
+        console.warn(`[Mutex] Redis release failed:`, err);
+      }
+    }
     this.locks.delete(key);
   }
 

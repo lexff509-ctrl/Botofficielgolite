@@ -298,6 +298,54 @@ export class PocketOptionClient {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN && this.state === ConnectionState.READY;
   }
 
+  /**
+   * BUG FIX #1: Validate and sanitize cookies
+   * Removes malformed cookies that could cause HTTP 400
+   * - Strips whitespace, checks for required format, deduplicates
+   */
+  private _validateAndCleanCookies(cookies: string[]): string[] {
+    if (!Array.isArray(cookies)) return [];
+
+    const validated: string[] = [];
+    const seen = new Set<string>();
+
+    for (const cookie of cookies) {
+      if (!cookie || typeof cookie !== "string") continue;
+
+      // Trim whitespace
+      const trimmed = cookie.trim();
+      if (!trimmed) continue;
+
+      // Must have = sign (key=value format)
+      if (!trimmed.includes("=")) {
+        console.warn(`[PO] Skipping malformed cookie (no =): ${trimmed.substring(0, 30)}`);
+        continue;
+      }
+
+      // Extract key for deduplication
+      const key = trimmed.split("=")[0].toLowerCase();
+      if (seen.has(key)) {
+        console.warn(`[PO] Skipping duplicate cookie key: ${key}`);
+        continue;
+      }
+
+      // Check for invalid characters (newlines, control chars)
+      if (/[\r\n\x00-\x08\x0b\x0c\x0e-\x1f]/.test(trimmed)) {
+        console.warn(`[PO] Skipping cookie with control chars: ${key}`);
+        continue;
+      }
+
+      validated.push(trimmed);
+      seen.add(key);
+    }
+
+    if (validated.length < cookies.length) {
+      console.log(`[PO] Cleaned cookies: ${cookies.length} → ${validated.length}`);
+    }
+
+    return validated;
+  }
+
   get isSsidExpired(): boolean {
     return this.ssidExpired;
   }
@@ -404,8 +452,11 @@ export class PocketOptionClient {
       };
 
       try {
+        // BUG FIX #1: Validate and sanitize cookies before sending
+        const validatedCookies = this._validateAndCleanCookies(this.prefetchedCookies);
+
         const wsHeaders: Record<string, string> = { ...CONN_WS_HEADERS };
-        if (this.prefetchedCookies.length > 0) wsHeaders["Cookie"] = this.prefetchedCookies.join("; ");
+        if (validatedCookies.length > 0) wsHeaders["Cookie"] = validatedCookies.join("; ");
 
         const ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
@@ -461,7 +512,9 @@ export class PocketOptionClient {
 
     this.state = ConnectionState.UPGRADING;
     return new Promise((resolve, reject) => {
-      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodeURIComponent(sid)}`;
+      // BUG FIX #2: Properly encode sid for URL (base64 has +, /, =)
+      const encodedSid = encodeURIComponent(sid);
+      const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodedSid}`;
       let settled = false;
       const settle = (err?: Error) => {
         if (settled) return;
@@ -471,7 +524,9 @@ export class PocketOptionClient {
       };
 
       try {
-        const allCookies = [...this.prefetchedCookies, ...cookies];
+        // BUG FIX #1: Validate and sanitize cookies
+        const allCookies = this._validateAndCleanCookies([...this.prefetchedCookies, ...cookies]);
+
         const wsOptions: WebSocket.ClientOptions = {
           headers: {
             ...CONN_WS_HEADERS,
@@ -486,6 +541,9 @@ export class PocketOptionClient {
         this.upgradeResolve = resolve;
         this.upgradeReject = reject;
 
+        // BUG FIX #3: Track Engine.IO probe phase
+        let probePhaseComplete = false;
+
         this.connectionTimeout = setTimeout(() => {
           settle(new Error("Upgrade timeout (30s)"));
           this.safeCloseWs(ws);
@@ -494,6 +552,16 @@ export class PocketOptionClient {
         ws.on("open", () => { this.state = ConnectionState.WS_OPEN; });
         ws.on("message", (raw: WebSocket.Data) => {
           try {
+            const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+
+            // Handle Engine.IO probe phase
+            if (text === "3probe" && !probePhaseComplete) {
+              console.log("[PO] Received Engine.IO probe, responding with 5");
+              ws.send("5");
+              probePhaseComplete = true;
+              return;
+            }
+
             this.handleRawMessage(raw);
           } catch (err) {
             console.error("[PO] Message handler error:", err);
@@ -1171,14 +1239,18 @@ export class PocketOptionClient {
   }
 
   getBalances(): void {
-    this.sendEvent({ name: "get-balances", version: "1.0" });
+    this.sendEvent(["getBalance"]);
   }
 
   private sendEvent(data: unknown): void {
     if (!this.ws || this.state !== ConnectionState.READY) return;
     try {
-      this.ws.send(`42${JSON.stringify(data)}`);
-    } catch (err) {}
+      // Socket.IO 42 messages MUST be arrays of arguments
+      const payload = Array.isArray(data) ? data : [data];
+      this.ws.send(`42${JSON.stringify(payload)}`);
+    } catch (err) {
+      console.error("[PO] Send error:", err);
+    }
   }
 
   // ============ Async Public API ============

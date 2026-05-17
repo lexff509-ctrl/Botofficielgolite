@@ -1,7 +1,16 @@
 // @ts-nocheck
 
-const API_URL = "https://botofficielgolite.onrender.com/api/extension/sync";
+const DEFAULT_API_URL = "https://botofficielgolite.onrender.com/api/extension/sync";
+let API_URL = DEFAULT_API_URL;
 let lastSyncedSsid = "";
+
+// Initialize API URL from storage if available
+chrome.storage.local.get(["customApiUrl"], (result) => {
+  if (result.customApiUrl) {
+    API_URL = result.customApiUrl;
+    console.log("[BRIDGE] Using custom API URL:", API_URL);
+  }
+});
 let isSyncing = false;
 let lastUid = 0;
 let latestBalance = { demo: 0, live: 0 };

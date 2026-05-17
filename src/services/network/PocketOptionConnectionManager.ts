@@ -28,6 +28,29 @@ export type ConnectionState =
   | "COOLDOWN"
   | "BLOCKED";
 
+const VALID_TRANSITIONS: Record<ConnectionState, ConnectionState[]> = {
+  "IDLE": ["CONNECTING"],
+  "CONNECTING": ["READY", "RECONNECTING", "BLOCKED"],
+  "READY": ["RECONNECTING", "IDLE", "BLOCKED"],
+  "RECONNECTING": ["READY", "COOLDOWN", "BLOCKED"],
+  "COOLDOWN": ["IDLE", "CONNECTING"],
+  "BLOCKED": ["IDLE"]
+};
+
+function transitionTo(session: ManagedSession, newState: ConnectionState) {
+  const current = session.state;
+  if (current === newState) return;
+  
+  if (!VALID_TRANSITIONS[current].includes(newState)) {
+    console.warn(`[ConnMgr] Blocked invalid transition: ${current} -> ${newState}`);
+    return;
+  }
+  
+  session.state = newState;
+  console.log(`[ConnMgr] User ${session.userId} transition: ${current} -> ${newState}`);
+  connectionEvents.emit("state:change", { userId: session.userId, from: current, to: newState });
+}
+
 // ── Host Blacklist ─────────────────────────────────────────────────────────────
 interface BlacklistedHost {
   host: string;
@@ -162,7 +185,7 @@ export async function ensureConnected(
   };
 
   if (!sessions.has(userId)) sessions.set(userId, session);
-  session.state = "CONNECTING";
+  transitionTo(session, "CONNECTING");
   session.ssid = ssid;
   session.isDemo = isDemo;
 
@@ -174,7 +197,7 @@ export async function ensureConnected(
 
   try {
     await session.client.connect(isDemo);
-    session.state = "READY";
+    transitionTo(session, "READY");
     session.connectedAt = Date.now();
     session.reconnectAttempts = 0;
     session.lastActivityAt = Date.now();
@@ -185,7 +208,7 @@ export async function ensureConnected(
     return session.client;
   } catch (err: any) {
     console.error(`[ConnMgr] Connection failed for user ${userId}:`, err.message);
-    session.state = "RECONNECTING";
+    transitionTo(session, "RECONNECTING");
     _scheduleReconnect(session);
     return null;
   }
@@ -197,7 +220,7 @@ function _registerClientHooks(session: ManagedSession): void {
   session.client.onSsidExpired(() => {
     if (session.state === "BLOCKED") return;
     console.warn(`[ConnMgr] SSID expired for user ${session.userId} → BLOCKED`);
-    session.state = "BLOCKED";
+    transitionTo(session, "BLOCKED");
     SystemLogger.warn("ConnectionManager", `SSID expired for user ${session.userId} — awaiting Bridge sync`);
   });
 
@@ -205,7 +228,7 @@ function _registerClientHooks(session: ManagedSession): void {
   session.client.onError((err) => {
     if (session.state === "READY") {
       console.warn(`[ConnMgr] Client error for user ${session.userId}: ${err.message}`);
-      session.state = "RECONNECTING";
+      transitionTo(session, "RECONNECTING");
       _scheduleReconnect(session);
     }
   });
@@ -221,7 +244,7 @@ function _scheduleReconnect(session: ManagedSession): void {
 
   // After 5 attempts → COOLDOWN for 60s then stop
   if (attempt >= 5) {
-    session.state = "COOLDOWN";
+    transitionTo(session, "COOLDOWN");
     session.cooldownUntil = Date.now() + 60 * 1000; // 60s cooldown
     invalidateHostCache();
     console.warn(`[ConnMgr] User ${session.userId} entered COOLDOWN (60s) after ${attempt} attempts — STOPPING retries`);
@@ -231,7 +254,7 @@ function _scheduleReconnect(session: ManagedSession): void {
 
     setTimeout(() => {
       if (session.state === "COOLDOWN") {
-        session.state = "IDLE";
+        transitionTo(session, "IDLE");
         session.reconnectAttempts = 0;
         console.log(`[ConnMgr] User ${session.userId} COOLDOWN over — ready for next sync`);
         connectionEvents.emit("connection:cooldown-over", { userId: session.userId });
@@ -244,12 +267,12 @@ function _scheduleReconnect(session: ManagedSession): void {
 
   setTimeout(async () => {
     if (session.state === "BLOCKED" || session.state === "COOLDOWN") return;
-    session.state = "RECONNECTING";
+    transitionTo(session, "RECONNECTING");
     await humanDelay(200, 600);
 
     try {
       await session.client.connect(session.isDemo);
-      session.state = "READY";
+      transitionTo(session, "READY");
       session.connectedAt = Date.now();
       session.reconnectAttempts = 0;
       console.log(`[ConnMgr] ✅ User ${session.userId} reconnected`);
@@ -257,7 +280,7 @@ function _scheduleReconnect(session: ManagedSession): void {
       connectionEvents.emit("bridge:connected", { userId: session.userId, isDemo: session.isDemo });
     } catch (err: any) {
       console.warn(`[ConnMgr] Reconnect attempt ${attempt + 1} failed: ${err.message}`);
-      session.state = "RECONNECTING";
+      transitionTo(session, "RECONNECTING");
       _scheduleReconnect(session);
     }
   }, delay);
@@ -277,7 +300,7 @@ export async function refreshSession(
 
   if (existing) {
     console.log(`[ConnMgr] Bridge refresh for user ${userId} — resetting state from ${existing.state}`);
-    existing.state = "IDLE";
+    transitionTo(existing, "IDLE");
     existing.reconnectAttempts = 0;
     existing.cooldownUntil = 0;
     existing.ssidRefreshedAt = Date.now();
@@ -299,7 +322,7 @@ export function isSessionReady(userId: number): boolean {
   const silenceSec = (Date.now() - session.lastActivityAt) / 1000;
   if (silenceSec > 120) {
     console.warn(`[ConnMgr] Dead session detected for user ${userId} (${Math.round(silenceSec)}s silence)`);
-    session.state = "RECONNECTING";
+    transitionTo(session, "RECONNECTING");
     _scheduleReconnect(session);
     return false;
   }

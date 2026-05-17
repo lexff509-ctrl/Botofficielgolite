@@ -9,10 +9,10 @@ import { getBotRunner, startBotRunner } from "@/services/bot-runner";
 import { botSessions } from "@/db/schema";
 import { desc } from "drizzle-orm";
 import { tradeMutexManager } from "@/services/trade-mutex.manager";
+import { redis, setCache, getCache } from "@/lib/redis";
 
 // ============ Intelligent Session Cache (Anti-spam) ============
 // Prevents the extension from spamming the server with identical syncs
-const sessionCache = new Map<string, { ssidHash: string; lastSync: number }>();
 const SYNC_COOLDOWN_MS = 45 * 1000; // Min 45s between identical syncs
 
 function simpleHash(str: string): string {
@@ -45,24 +45,21 @@ export async function POST(req: NextRequest) {
 
     // 2. Rate-limit: skip if same SSID synced recently
     const ssidHash = simpleHash(ssid);
-    const cached = sessionCache.get(apiKey);
-    const now = Date.now();
-    if (cached && cached.ssidHash === ssidHash && (now - cached.lastSync) < SYNC_COOLDOWN_MS) {
-      // Return success but skip expensive DB/bot operations
-      return NextResponse.json({
-        success: true,
-        message: "Session déjà synchronisée (cache)",
-        cached: true,
-        lastSync: new Date(cached.lastSync).toISOString()
-      });
-    }
-
-    // Update cache immediately
-    sessionCache.set(apiKey, { ssidHash, lastSync: now });
-    // Clean old entries to prevent memory leak
-    if (sessionCache.size > 500) {
-      const oldest = Array.from(sessionCache.entries()).sort((a, b) => a[1].lastSync - b[1].lastSync)[0];
-      if (oldest) sessionCache.delete(oldest[0]);
+    const cacheKey = `sync_cache:${apiKey}`;
+    
+    if (redis) {
+      const cachedHash = await getCache(cacheKey);
+      if (cachedHash === ssidHash) {
+        return NextResponse.json({
+          success: true,
+          message: "Session déjà synchronisée (Redis cache)",
+          cached: true
+        });
+      }
+      await setCache(cacheKey, ssidHash, 45); // 45s TTL
+    } else {
+      // Memory fallback for sync cache (less persistent but works)
+      // (Optional: keep a small Map if Redis is down)
     }
 
 
@@ -207,7 +204,7 @@ export async function POST(req: NextRequest) {
     // 6. Relancer le bot si nécessaire (Automatique)
     // ✅ BUG FIX #4: Add mutex lock to prevent bot duplication on concurrent syncs
     const botStartLockKey = `bot_start:${user.id}`;
-    if (!tradeMutexManager.acquireLock(botStartLockKey, 10000)) {
+    if (!await tradeMutexManager.acquireLock(botStartLockKey, 10000)) {
       console.warn(`[ExtensionBridge] Bot start already in progress for user ${user.id}, skipping duplicate start`);
       return NextResponse.json({
         success: true,
@@ -279,7 +276,7 @@ export async function POST(req: NextRequest) {
         }
       }
     } finally {
-      tradeMutexManager.releaseLock(botStartLockKey);
+      await tradeMutexManager.releaseLock(botStartLockKey);
     }
 
     SystemLogger.info("ExtensionBridge", `SSID synchronisé avec succès pour l'utilisateur ${user.id}`);

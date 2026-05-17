@@ -427,7 +427,7 @@ export class BotRunner {
     }
 
     // Acquire lock for this tick evaluation
-    if (!tradeMutexManager.acquireLock(tradeKey, 60000)) {
+    if (!await tradeMutexManager.acquireLock(tradeKey, 60000)) {
       return; // Already evaluating or trading for this user/asset/tf
     }
 
@@ -798,7 +798,7 @@ export class BotRunner {
     } finally {
       // Always release the tick lock at the end of the tick
       if (!this.isInPosition) {
-        tradeMutexManager.releaseLock(tradeKey);
+        await tradeMutexManager.releaseLock(tradeKey);
       }
     }
   }
