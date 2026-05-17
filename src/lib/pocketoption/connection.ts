@@ -299,38 +299,54 @@ export async function getBestHost(isDemo: boolean): Promise<string> {
  * MUST be called for the specific target host to get valid Cloudflare cookies.
  */
 export async function preFetchCookies(host: string): Promise<CookieResult> {
-  return new Promise((resolve) => {
-    // Try both API host and main domain if needed
+  // Try preferred host first, then main domain as fallback
+  const hostsToTry = [host, "pocketoption.com"];
+  let allCookies: string[] = [];
+
+  for (const currentHost of hostsToTry) {
+    try {
+      const cookies = await _fetchFromHost(currentHost);
+      if (cookies.length > 0) {
+        allCookies = [...allCookies, ...cookies];
+        console.log(`[PO-Cookie] Got ${cookies.length} cookies from ${currentHost}`);
+      }
+    } catch (err) {
+      console.warn(`[PO-Cookie] Failed to fetch from ${currentHost}`);
+    }
+  }
+
+  // Remove duplicates
+  const uniqueCookies = [...new Set(allCookies)];
+  return {
+    cookies: uniqueCookies,
+    cookieHeader: uniqueCookies.join("; ")
+  };
+}
+
+async function _fetchFromHost(host: string): Promise<string[]> {
+  return new Promise((resolve, reject) => {
     const options: https.RequestOptions = {
       hostname: host,
-      path: `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
+      path: host.includes("pocketoption.com") ? "/" : `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
       method: "GET",
       headers: {
         ...HTTP_HEADERS,
         Host: host,
       },
-      timeout: 10000,
+      timeout: 8000,
     };
 
     const req = https.get(options, (res) => {
       const setCookies = res.headers["set-cookie"] || [];
       const cookies = setCookies.map((c: string) => c.split(";")[0]);
-      
-      if (cookies.length > 0) {
-        console.log(`[PO-Cookie] Got ${cookies.length} Cloudflare/session cookies from ${host}`);
-      } else {
-        console.warn(`[PO-Cookie] No cookies found in response headers from ${host}. Status: ${res.statusCode}`);
-      }
-
       res.on("data", () => {});
-      res.on("end", () => {
-        resolve({ cookies, cookieHeader: cookies.join("; ") });
-      });
+      res.on("end", () => resolve(cookies));
     });
 
-    req.on("error", (err: Error) => {
-      console.warn(`[PO-Cookie] Pre-fetch from ${host} failed: ${err.message}`);
-      resolve({ cookies: [], cookieHeader: "" });
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Timeout"));
     });
   });
 }

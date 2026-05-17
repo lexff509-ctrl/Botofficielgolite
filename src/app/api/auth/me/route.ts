@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/auth";
 import { getUserProfile, validateSessionVersion } from "@/services/auth.service";
+import { getSessionState } from "@/services/network/PocketOptionConnectionManager";
 
 export async function GET(req: NextRequest) {
   try {
@@ -38,6 +39,9 @@ export async function GET(req: NextRequest) {
 
     const bridgeIsReallyActive = syncedRecently || uidUpdatedRecently;
 
+    // Signal 3: Real-time connection state from ConnectionManager
+    const connectionState = getSessionState(payload.userId);
+
     return NextResponse.json({
       user: {
         id: user.id,
@@ -62,6 +66,7 @@ export async function GET(req: NextRequest) {
         extensionLastSync: user.extensionLastSync,
         extensionDeviceName: user.extensionDeviceName,
         extensionActive: bridgeIsReallyActive,
+        connectionState: connectionState, // REAL-TIME STATE
         updatedAt: user.updatedAt,       // Fallback for bridge detection when extensionLastSync column missing
         liveBalance: user.liveBalance,
         pocketOptionUsername: user.pocketOptionUsername,

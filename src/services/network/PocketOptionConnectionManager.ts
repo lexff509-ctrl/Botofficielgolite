@@ -29,7 +29,7 @@ export type ConnectionState =
   | "BLOCKED";
 
 const VALID_TRANSITIONS: Record<ConnectionState, ConnectionState[]> = {
-  "IDLE": ["CONNECTING"],
+  "IDLE": ["CONNECTING", "RECONNECTING"],
   "CONNECTING": ["READY", "RECONNECTING", "BLOCKED", "IDLE"],
   "READY": ["RECONNECTING", "IDLE", "BLOCKED"],
   "RECONNECTING": ["READY", "COOLDOWN", "BLOCKED", "IDLE"],
@@ -284,6 +284,10 @@ function _scheduleReconnect(session: ManagedSession): void {
       _scheduleReconnect(session);
     }
   }, delay);
+}
+
+export function getSessionState(userId: number): ConnectionState {
+  return sessions.get(userId)?.state || "IDLE";
 }
 
 // ── Session Refresh (Bridge sync) ─────────────────────────────────────────────

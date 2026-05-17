@@ -10,6 +10,15 @@ const ssidStatusConfig: Record<string, { label: string; color: string }> = {
   NOT_SET: { label: "Non configuré", color: "bg-slate-500/20 text-slate-400" },
 };
 
+const connectionStateConfig: Record<string, { label: string; color: string }> = {
+  IDLE: { label: "En attente", color: "bg-slate-500/20 text-slate-400" },
+  CONNECTING: { label: "Connexion...", color: "bg-blue-500/20 text-blue-400" },
+  READY: { label: "Connecté", color: "bg-emerald-500/20 text-emerald-400" },
+  RECONNECTING: { label: "Reconnexion...", color: "bg-amber-500/20 text-amber-400" },
+  COOLDOWN: { label: "Pause (Sécurité)", color: "bg-violet-500/20 text-violet-400" },
+  BLOCKED: { label: "Bloqué (SSID Expiré)", color: "bg-red-500/20 text-red-400" },
+};
+
 // No more manual SSID validation needed as it's handled by the Bridge extension
 
 export default function ProfilePage() {
@@ -142,6 +151,9 @@ export default function ProfilePage() {
 
   const ssidStatus = (user?.ssidStatus as string) || "NOT_SET";
   const statusConfig = ssidStatusConfig[ssidStatus] || ssidStatusConfig.NOT_SET;
+  
+  const connState = (user?.connectionState as string) || "IDLE";
+  const connConfig = connectionStateConfig[connState] || connectionStateConfig.IDLE;
 
   return (
     <DashboardLayout>
@@ -271,11 +283,27 @@ export default function ProfilePage() {
 
           {/* ===== POCKETOPTION CONFIG ===== */}
           <div className="glass-card rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-slate-400 text-xs font-medium">STATUT CONNEXION POCKETOPTION</div>
-              <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusConfig.color}`}>
-                {statusConfig.label}
-              </span>
+            <div className="text-slate-400 text-xs font-medium mb-4">STATUT DE CONNEXION POCKETOPTION</div>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-slate-800">
+                <div>
+                  <div className="text-xs text-slate-400">Vérification SSID</div>
+                  <div className="text-[10px] text-slate-500">Validité des cookies stockés</div>
+                </div>
+                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusConfig.color}`}>
+                  {statusConfig.label}
+                </span>
+              </div>
+              
+              <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-slate-800">
+                <div>
+                  <div className="text-xs text-slate-400">Flux de Trading</div>
+                  <div className="text-[10px] text-slate-500">Connexion temps-réel au marché</div>
+                </div>
+                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${connConfig.color}`}>
+                  {connConfig.label}
+                </span>
+              </div>
             </div>
           </div>
 
