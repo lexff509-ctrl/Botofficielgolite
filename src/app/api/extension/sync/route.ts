@@ -9,7 +9,7 @@ import { getBotRunner, startBotRunner } from "@/services/bot-runner";
 import { botSessions } from "@/db/schema";
 import { desc } from "drizzle-orm";
 import { tradeMutexManager } from "@/services/trade-mutex.manager";
-import { redis, setCache, getCache } from "@/lib/redis";
+import { redis, setCache, getCache, isRedisReady } from "@/lib/redis";
 
 // ============ Intelligent Session Cache (Anti-spam) ============
 // Prevents the extension from spamming the server with identical syncs
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     const ssidHash = simpleHash(ssid);
     const cacheKey = `sync_cache:${apiKey}`;
     
-    if (redis) {
+    if (isRedisReady()) {
       const cachedHash = await getCache(cacheKey);
       if (cachedHash === ssidHash) {
         return NextResponse.json({

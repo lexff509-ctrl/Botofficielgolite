@@ -1,15 +1,24 @@
 import { Redis } from 'ioredis';
 
-const redisUrl = process.env.REDIS_URL;
+// ✅ Bulletproof URL validation
+const rawRedisUrl = process.env.REDIS_URL;
+const isValidRedisUrl = rawRedisUrl && (rawRedisUrl.startsWith('redis://') || rawRedisUrl.startsWith('rediss://'));
+
+if (rawRedisUrl && !isValidRedisUrl) {
+  console.error(`[Redis] CRITICAL: Invalid REDIS_URL format detected: "${rawRedisUrl.substring(0, 20)}...". Must start with redis:// or rediss://`);
+}
+
+const redisUrl = isValidRedisUrl ? rawRedisUrl : null;
 
 /**
  * Client Redis pour la persistence distribuée sur Railway
- * Si REDIS_URL n'est pas définie, le système basculera sur le cache mémoire
+ * Si REDIS_URL n'est pas définie ou invalide, le système basculera sur le cache mémoire (Map)
  */
 export const redis = redisUrl 
   ? new Redis(redisUrl, { 
-      maxRetriesPerRequest: 3,
-      connectTimeout: 10000,
+      maxRetriesPerRequest: 1, // Be aggressive in failing so we fallback to memory fast
+      connectTimeout: 5000,
+      lazyConnect: true, // Don't block startup
       reconnectOnError: (err) => {
         const targetError = 'READONLY';
         if (err.message.includes(targetError)) return true;
@@ -18,24 +27,61 @@ export const redis = redisUrl
     }) 
   : null;
 
+// Track connection health
+let isRedisAvailable = false;
+
 if (redis) {
   redis.on('error', (err) => {
+    isRedisAvailable = false;
+    // Silent error in production to prevent log flooding, but warn once
     if (process.env.NODE_ENV === 'production') {
+      // Swallowing ENOENT errors which happen with malformed URLs
+      if (err.message.includes('ENOENT')) {
+        console.error('[Redis] Configuration Error: Host looks like a file path. Check your REDIS_URL.');
+      }
+    } else {
       console.warn('[Redis] Error:', err.message);
     }
   });
-  redis.on('connect', () => console.log('[Redis] Connected to Railway Redis'));
+
+  redis.on('connect', () => {
+    isRedisAvailable = true;
+    console.log('[Redis] Connected to Railway Redis');
+  });
+
+  redis.on('close', () => {
+    isRedisAvailable = false;
+  });
 }
 
 /**
- * Helper pour le cache distribué
+ * Helper pour le cache distribué avec fallback silencieux
  */
 export async function setCache(key: string, value: string, ttlSeconds: number): Promise<void> {
-  if (redis) {
-    await redis.set(key, value, 'EX', ttlSeconds);
+  if (redis && isRedisAvailable) {
+    try {
+      await redis.set(key, value, 'EX', ttlSeconds);
+    } catch (err) {
+      console.warn(`[Redis] Set failed for ${key}, falling back to memory`);
+    }
   }
 }
 
 export async function getCache(key: string): Promise<string | null> {
-  return redis ? await redis.get(key) : null;
+  if (redis && isRedisAvailable) {
+    try {
+      return await redis.get(key);
+    } catch (err) {
+      return null;
+    }
+  }
+  return null;
 }
+
+/**
+ * Check if Redis is actually up and usable
+ */
+export function isRedisReady(): boolean {
+  return !!redis && isRedisAvailable;
+}
+

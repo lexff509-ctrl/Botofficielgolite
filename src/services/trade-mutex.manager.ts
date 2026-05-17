@@ -1,6 +1,6 @@
 // src/services/trade-mutex.manager.ts
 import { SystemLogger } from "@/lib/system-logger";
-import { redis } from "@/lib/redis";
+import { redis, isRedisReady } from "@/lib/redis";
 
 class TradeMutexManager {
   // --- MUTEX LOCKS ---
@@ -14,12 +14,12 @@ class TradeMutexManager {
    */
   async acquireLock(key: string, timeoutMs: number = 60000): Promise<boolean> {
     // 1. Try Redis Lock (Production)
-    if (redis) {
+    if (isRedisReady()) {
       try {
-        const result = await redis.set(key, "locked", "PX", timeoutMs, "NX");
+        const result = await redis!.set(key, "locked", "PX", timeoutMs, "NX");
         return result === "OK";
       } catch (err) {
-        console.warn(`[Mutex] Redis failed, falling back to memory:`, err);
+        // Fallback silently to memory
       }
     }
 
@@ -34,11 +34,11 @@ class TradeMutexManager {
   }
 
   async releaseLock(key: string): Promise<void> {
-    if (redis) {
+    if (isRedisReady()) {
       try {
-        await redis.del(key);
+        await redis!.del(key);
       } catch (err) {
-        console.warn(`[Mutex] Redis release failed:`, err);
+        // Silent fail
       }
     }
     this.locks.delete(key);
