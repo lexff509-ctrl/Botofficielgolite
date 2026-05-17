@@ -587,3 +587,214 @@ If tests fail:
 **Test Guide Owner:** Engineering  
 **Last Updated:** 2026-05-16  
 **Questions:** Check logs first, then review FIXES_APPLIED.md
+
+---
+
+## 🆕 ADDITIONAL TESTS (May 2026)
+
+### Test 8: Orphan Trade Cleanup
+
+**File:** `src/services/orphan-trade-cleanup.service.ts`
+
+#### Test 8.1: Manual Cleanup Endpoint
+
+```bash
+# Insert test PENDING trade > 10 minutes old
+psql -d botofficiel_dev -c "
+  INSERT INTO trades (user_id, mode, asset, direction, amount, timeframe, result, opened_at)
+  VALUES (1, 'DEMO', 'EUR/USD', 'CALL', 1, '1m', 'PENDING', NOW() - INTERVAL '15 minutes')
+  RETURNING id;"
+
+# Get the trade ID, then cleanup
+curl -X POST http://localhost:3000/api/trades/cleanup \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Expected response:
+# {
+#   "message": "1 trade(s) orphelin(s) nettoyé(s)",
+#   "cleaned": 1,
+#   "trades": [{ "id": 1, "asset": "EUR/USD", "direction": "CALL", "amount": "1.00", "openedAt": "..." }]
+# }
+
+# Verify trade is marked as LOSS
+psql -d botofficiel_dev -c "
+  SELECT result, profit, closed_at FROM trades WHERE id = <trade_id>"
+# Expected: result=LOSS, profit=0, closed_at=NOW()
+```
+
+**Result:** `✓ PASSED` | `✗ FAILED`
+
+#### Test 8.2: Automatic Cleanup Service
+
+```bash
+# Cleanup runs automatically every 5 minutes on server startup
+# Check logs for:
+grep "\[OrphanTradeCleanup\]" logs/app.log
+
+# Expected output:
+# [OrphanTradeCleanup] Starting automatic orphan trade cleanup service
+# [OrphanTradeCleanup] Cleaned 0 orphan trades (runs every 5 min)
+```
+
+**Result:** `✓ PASSED` | `✗ FAILED`
+
+---
+
+### Test 9: SSID Refresh Endpoint
+
+**File:** `src/app/api/auth/ssid-refresh/route.ts`
+
+#### Test 9.1: Check SSID Status
+
+```bash
+curl -X GET http://localhost:3000/api/auth/ssid-refresh \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Expected response:
+# {
+#   "ssidStatus": "VALID" | "EXPIRED" | "UNKNOWN" | "NOT_SET",
+#   "lastUpdated": "2026-05-17T10:30:00.000Z",
+#   "hasPersonalSsid": true | false,
+#   "suggestion": "Cliquez sur 'Resynchroniser SSID' pour mettre à jour" (if EXPIRED)
+# }
+```
+
+**Result:** `✓ PASSED` | `✗ FAILED`
+
+#### Test 9.2: Force SSID Refresh (DEMO Mode)
+
+```bash
+curl -X POST http://localhost:3000/api/auth/ssid-refresh \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{ "mode": "DEMO" }'
+
+# Expected success response:
+# {
+#   "success": true,
+#   "message": "SSID resynchronisé avec succès",
+#   "ssidStatus": "VALID",
+#   "mode": "DEMO"
+# }
+
+# Or expected failure (no SSID available):
+# {
+#   "success": false,
+#   "error": "Aucun SSID disponible",
+#   "ssidStatus": "UNKNOWN",
+#   "suggestion": "Veuillez configurer un SSID personnel..."
+# }
+```
+
+**Result:** `✓ PASSED` | `✗ FAILED`
+
+---
+
+### Test 10: Enhanced Balance Validation
+
+**File:** `src/services/balance-validator.service.ts`
+
+#### Test 10.1: Balance Check with Fallback
+
+```bash
+# Test balance validation with all sources
+curl -X POST http://localhost:3000/api/trades \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{
+    "asset": "EUR/USD",
+    "direction": "CALL",
+    "amount": 1,
+    "timeframe": "1m",
+    "mode": "DEMO"
+  }'
+
+# Check server logs for balance validation:
+grep "\[BalanceValidator\]" logs/app.log
+
+# Expected output:
+# [BalanceValidator] ✅ Solde validé: $9999.00 (source: db)
+# [BalanceValidator] Multi-tier fallback: PO → cache → DB
+```
+
+**Result:** `✓ PASSED` | `✗ FAILED`
+
+#### Test 10.2: Insufficient Balance Error
+
+```bash
+# Set demo balance to 0
+psql -d botofficiel_dev -c "UPDATE users SET demo_balance = 0 WHERE id = 1"
+
+# Try to trade
+curl -X POST http://localhost:3000/api/trades \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{
+    "asset": "EUR/USD",
+    "direction": "CALL",
+    "amount": 1,
+    "timeframe": "1m",
+    "mode": "DEMO"
+  }'
+
+# Expected error response:
+# {
+#   "error": "Solde DEMO insuffisant: $0.00 < $1.00"
+# }
+
+# Restore balance
+psql -d botofficiel_dev -c "UPDATE users SET demo_balance = 10000 WHERE id = 1"
+```
+
+**Result:** `✓ PASSED` | `✗ FAILED`
+
+#### Test 10.3: Balance Cache (30s TTL)
+
+```bash
+# Trade 1 - balance from DB
+curl -X POST http://localhost:3000/api/trades \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '...'
+# Logs: source: db
+
+# Immediately trade 2 - balance from cache
+curl -X POST http://localhost:3000/api/trades \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '...'
+# Logs: source: cache (30s TTL)
+
+# Wait 35 seconds, trade 3 - balance from DB again
+sleep 35
+curl -X POST http://localhost:3000/api/trades \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '...'
+# Logs: source: db (cache expired)
+```
+
+**Result:** `✓ PASSED` | `✗ FAILED`
+
+---
+
+## 📋 UPDATED TEST COMPLETION CHECKLIST
+
+```
+[ ] FIX #1: NewsAgent timeout (2s works, fallback returns NEUTRAL)
+[ ] FIX #2: Circuit breaker activates after 3 failures
+[ ] FIX #3: OrchestratorAgent timeout (5s), fallback to Bollinger
+[ ] FIX #4: Mutex prevents duplicate bot starts
+[ ] FIX #5: Balance validation checks against PO API
+[ ] FIX #6: SSID validation rejects short SSIDs
+[ ] FIX #7: MAX_RECONNECT_ATTEMPTS = 15 (verified in code)
+[ ] TEST #8: Orphan trade cleanup works (manual & automatic)
+[ ] TEST #9: SSID refresh endpoint responds correctly
+[ ] TEST #10: Enhanced balance validation with fallback logic
+[ ] Full signal pipeline generates signals
+[ ] Fallback mechanisms work without PO connection
+[ ] Performance meets baseline expectations
+```
+
+**Overall Result:** 
+- `✅ ALL TESTS PASSED — Ready for Railway`
+- `⚠️ SOME TESTS FAILED — Fix issues before deploying`
+- `❌ CRITICAL FAILURES — Do not deploy`
+
