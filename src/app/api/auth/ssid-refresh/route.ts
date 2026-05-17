@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
         mode: mode,
       });
     } else {
-      let newStatus = "UNKNOWN";
+      let newStatus: "VALID" | "EXPIRED" | "UNKNOWN" | "NOT_SET" = "UNKNOWN";
       if (result.ssidExpired) {
         newStatus = "EXPIRED";
       }

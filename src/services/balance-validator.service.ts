@@ -85,30 +85,44 @@ export async function validateBalance(
       try {
         const poBalance = await poClient.getBalance();
         if (poBalance !== null && poBalance !== undefined) {
-          const balanceNum = typeof poBalance === "string" ? parseFloat(poBalance) : poBalance;
+          let balanceNum = 0;
 
-          // Update cache
-          balanceCache.set(userId, {
-            balance: balanceNum,
-            timestamp: Date.now(),
-          });
-
-          const info: BalanceInfo = {
-            balance: balanceNum,
-            source: "pocketoption",
-            isValid: balanceNum >= requiredAmount,
-            lastUpdated: new Date(),
-          };
-
-          if (!info.isValid) {
-            return {
-              valid: false,
-              balance: info,
-              error: `Solde LIVE insuffisant: $${balanceNum.toFixed(2)} < $${requiredAmount.toFixed(2)}`,
-            };
+          // Handle different return types
+          if (typeof poBalance === "number") {
+            balanceNum = poBalance;
+          } else if (typeof poBalance === "string") {
+            balanceNum = parseFloat(poBalance);
+          } else if (typeof poBalance === "object" && "live" in poBalance) {
+            // If it's an object with demo/live properties, use live
+            balanceNum = parseFloat((poBalance as any).live || "0");
+          } else {
+            balanceNum = 0;
           }
 
-          return { valid: true, balance: info };
+          if (!isNaN(balanceNum)) {
+            // Update cache
+            balanceCache.set(userId, {
+              balance: balanceNum,
+              timestamp: Date.now(),
+            });
+
+            const info: BalanceInfo = {
+              balance: balanceNum,
+              source: "pocketoption",
+              isValid: balanceNum >= requiredAmount,
+              lastUpdated: new Date(),
+            };
+
+            if (!info.isValid) {
+              return {
+                valid: false,
+                balance: info,
+                error: `Solde LIVE insuffisant: $${balanceNum.toFixed(2)} < $${requiredAmount.toFixed(2)}`,
+              };
+            }
+
+            return { valid: true, balance: info };
+          }
         }
       } catch (err) {
         console.warn(`[BalanceValidator] Failed to get PO balance:`, err);

@@ -26,7 +26,7 @@ import { hasActiveSubscription } from "@/services/payment.service";
 
 import { DataOrchestrator, NonOtcSignalGenerator } from "@/services/data-orchestrator.service";
 import { signalTracker } from "@/services/signal-tracker";
-import { validateBalance, updateBalanceCache } from "@/services/balance-validator.service";
+import { validateBalance, updateBalanceCache, getBalanceFromCache } from "@/services/balance-validator.service";
 
 // ============ CONFIG ============
 
@@ -896,10 +896,11 @@ export class BotRunner {
         }
         this.dailyProfit += result.profit;
 
-        // Update balance cache with new balance
-        if (this.mode === "DEMO") {
-          const newDemoBalance = parseFloat(result.newBalance || "0") || this.tradeAmount;
-          updateBalanceCache(this.userId, newDemoBalance);
+        // Update balance cache with profit delta
+        // Cache will be refreshed on next trade or from DB if expired
+        const currentCacheBalance = getBalanceFromCache(this.userId);
+        if (currentCacheBalance !== null) {
+          updateBalanceCache(this.userId, currentCacheBalance + result.profit);
         }
 
         // === Compound interest logic ===
