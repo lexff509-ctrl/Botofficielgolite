@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { decryptSSID } from "@/lib/auth";
 import { connectPocketOption, connectSharedPocketOption, getGlobalSsid } from "@/services/trading.service";
 import { startBotRunner } from "@/services/bot-runner";
+import { startAutomaticCleanup } from "@/services/orphan-trade-cleanup.service";
 import type { Timeframe } from "@/lib/trading";
 import { TIMEFRAMES } from "@/lib/trading";
 
@@ -120,6 +121,9 @@ export async function recoverActiveSessions(): Promise<{
   } catch (err) {
     errors.push(`Bootstrap query failed: ${err instanceof Error ? err.message : "Unknown error"}`);
   }
+
+  // Start automatic orphan trade cleanup service
+  startAutomaticCleanup();
 
   return { recovered, failed, errors };
 }
