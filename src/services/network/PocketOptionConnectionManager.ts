@@ -286,10 +286,6 @@ function _scheduleReconnect(session: ManagedSession): void {
   }, delay);
 }
 
-export function getSessionState(userId: number): ConnectionState {
-  return sessions.get(userId)?.state || "IDLE";
-}
-
 // ── Session Refresh (Bridge sync) ─────────────────────────────────────────────
 /**
  * Called by Bridge sync route to inject a fresh SSID.
