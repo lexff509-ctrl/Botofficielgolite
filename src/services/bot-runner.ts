@@ -26,6 +26,7 @@ import { hasActiveSubscription } from "@/services/payment.service";
 
 import { DataOrchestrator, NonOtcSignalGenerator } from "@/services/data-orchestrator.service";
 import { signalTracker } from "@/services/signal-tracker";
+import { validateBalance, updateBalanceCache } from "@/services/balance-validator.service";
 
 // ============ CONFIG ============
 
@@ -733,6 +734,14 @@ export class BotRunner {
 
     // === 5. Trade Execution & State Management ===
     if (this.botType === "auto") {
+      // Validate balance before trading
+      const balanceCheck = await validateBalance(this.userId, this.tradeAmount, this.mode);
+      if (!balanceCheck.valid) {
+        console.warn(`[BotRunner] ⚠️  Trade bloqué: ${balanceCheck.error} (source: ${balanceCheck.balance.source})`);
+        return;
+      }
+      console.log(`[BotRunner] ✅ Solde validé: $${balanceCheck.balance.balance.toFixed(2)} (source: ${balanceCheck.balance.source})`);
+
       // Vérification/Reconnexion Pocket Option AVANT le trade
       if (!poClient || !poClient.isConnected) {
         console.warn(`[BotRunner] Signal prêt mais PO déconnecté. Tentative de reconnexion express pour ${this.asset}...`);
@@ -886,6 +895,12 @@ export class BotRunner {
           this.dailyLosses++;
         }
         this.dailyProfit += result.profit;
+
+        // Update balance cache with new balance
+        if (this.mode === "DEMO") {
+          const newDemoBalance = parseFloat(result.newBalance || "0") || this.tradeAmount;
+          updateBalanceCache(this.userId, newDemoBalance);
+        }
 
         // === Compound interest logic ===
         if (this.compoundEnabled) {
