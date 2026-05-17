@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
         extensionLastSync: new Date(),
         extensionDeviceName: deviceName || "Unknown Browser",
         updatedAt: new Date(),
-        ssidStatus: "VALID",   // ← toujours inclus dans le bloc principal
+        ssidStatus: "UNKNOWN",   // Mark as UNKNOWN until ConnectionManager verifies it
       }).where(eq(users.id, user.id));
     } catch {
       // Fallback: colonnes extension absentes en prod
@@ -108,13 +108,14 @@ export async function POST(req: NextRequest) {
           pocketOptionSsid: encryptedSsid,
           pocketOptionUid: parsedUid,
           updatedAt: new Date(),
-          ssidStatus: "VALID",  // ← inclus aussi dans le fallback
+          ssidStatus: "UNKNOWN",
         }).where(eq(users.id, user.id));
       } catch {
         // dernier recours: uniquement SSID
         await db.update(users).set({
           pocketOptionSsid: encryptedSsid,
           updatedAt: new Date(),
+          ssidStatus: "UNKNOWN",
         }).where(eq(users.id, user.id));
       }
     }

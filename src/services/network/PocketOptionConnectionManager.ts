@@ -13,6 +13,7 @@
 import { PocketOptionClient } from "@/lib/pocketoption/client";
 import { invalidateHostCache } from "@/lib/pocketoption/connection";
 import { SystemLogger } from "@/lib/system-logger";
+import { updateSsidStatus } from "@/services/trading.service";
 import { EventEmitter } from "events";
 
 // Global event bus for connection state changes
@@ -201,6 +202,7 @@ export async function ensureConnected(
     session.connectedAt = Date.now();
     session.reconnectAttempts = 0;
     session.lastActivityAt = Date.now();
+    updateSsidStatus(userId, "VALID").catch(() => {}); // Update DB status on success
     SystemLogger.info("ConnectionManager", `User ${userId} connected (${isDemo ? "DEMO" : "LIVE"})`);
     console.log(`[ConnMgr] ✅ User ${userId} READY`);
     // Emit bridge:connected to trigger bot sync
@@ -221,6 +223,7 @@ function _registerClientHooks(session: ManagedSession): void {
     if (session.state === "BLOCKED") return;
     console.warn(`[ConnMgr] SSID expired for user ${session.userId} → BLOCKED`);
     transitionTo(session, "BLOCKED");
+    updateSsidStatus(session.userId, "EXPIRED").catch(() => {}); // Update DB status
     SystemLogger.warn("ConnectionManager", `SSID expired for user ${session.userId} — awaiting Bridge sync`);
   });
 
