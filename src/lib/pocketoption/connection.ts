@@ -9,6 +9,7 @@ const CHROME_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 export const WS_HEADERS = {
   "User-Agent": CHROME_UA,
   "Origin": "https://pocketoption.com",
+  "Referer": "https://pocketoption.com/",
   "Cache-Control": "no-cache",
   "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
   "Sec-WebSocket-Version": "13",
@@ -19,9 +20,10 @@ export const HTTP_HEADERS = {
   "User-Agent": CHROME_UA,
   "Origin": "https://pocketoption.com",
   "Referer": "https://pocketoption.com/",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
   "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
   "Cache-Control": "no-cache",
+  "Pragma": "no-cache",
   "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
   "Sec-Ch-Ua-Mobile": "?0",
   "Sec-Ch-Ua-Platform": '"Windows"',
@@ -298,6 +300,7 @@ export async function getBestHost(isDemo: boolean): Promise<string> {
  */
 export async function preFetchCookies(host: string): Promise<CookieResult> {
   return new Promise((resolve) => {
+    // Try both API host and main domain if needed
     const options: https.RequestOptions = {
       hostname: host,
       path: `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
@@ -306,12 +309,19 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
         ...HTTP_HEADERS,
         Host: host,
       },
+      timeout: 10000,
     };
 
     const req = https.get(options, (res) => {
       const setCookies = res.headers["set-cookie"] || [];
       const cookies = setCookies.map((c: string) => c.split(";")[0]);
-      console.log(`[PO-Cookie] Got ${cookies.length} Cloudflare/session cookies from ${host}`);
+      
+      if (cookies.length > 0) {
+        console.log(`[PO-Cookie] Got ${cookies.length} Cloudflare/session cookies from ${host}`);
+      } else {
+        console.warn(`[PO-Cookie] No cookies found in response headers from ${host}. Status: ${res.statusCode}`);
+      }
+
       res.on("data", () => {});
       res.on("end", () => {
         resolve({ cookies, cookieHeader: cookies.join("; ") });
@@ -320,12 +330,6 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
 
     req.on("error", (err: Error) => {
       console.warn(`[PO-Cookie] Pre-fetch from ${host} failed: ${err.message}`);
-      resolve({ cookies: [], cookieHeader: "" });
-    });
-
-    req.setTimeout(10000, () => {
-      console.warn(`[PO-Cookie] Pre-fetch from ${host} timeout`);
-      req.destroy();
       resolve({ cookies: [], cookieHeader: "" });
     });
   });

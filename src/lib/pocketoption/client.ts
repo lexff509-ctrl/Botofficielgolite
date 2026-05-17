@@ -452,11 +452,17 @@ export class PocketOptionClient {
       };
 
       try {
-        // BUG FIX #1: Validate and sanitize cookies before sending
         const validatedCookies = this._validateAndCleanCookies(this.prefetchedCookies);
 
-        const wsHeaders: Record<string, string> = { ...CONN_WS_HEADERS };
+        const wsHeaders: Record<string, string> = { 
+          ...CONN_WS_HEADERS,
+          "Host": host,
+        };
         if (validatedCookies.length > 0) wsHeaders["Cookie"] = validatedCookies.join("; ");
+
+        if (validatedCookies.length === 0) {
+          console.warn(`[PO] Warning: Direct connection to ${host} with NO cookies.`);
+        }
 
         const ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
@@ -515,6 +521,8 @@ export class PocketOptionClient {
       // BUG FIX #2: Properly encode sid for URL (base64 has +, /, =)
       const encodedSid = encodeURIComponent(sid);
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodedSid}`;
+      console.log(`[PO] Upgrading to WebSocket on ${host} with sid: ${sid.substring(0, 10)}...`);
+
       let settled = false;
       const settle = (err?: Error) => {
         if (settled) return;
@@ -530,11 +538,16 @@ export class PocketOptionClient {
         const wsOptions: WebSocket.ClientOptions = {
           headers: {
             ...CONN_WS_HEADERS,
-            ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
+            "Host": host,
+            ...(allCookies.length > 0 ? { "Cookie": allCookies.join("; ") } : {}),
           },
           handshakeTimeout: 30000,
           perMessageDeflate: false,
         };
+
+        if (allCookies.length === 0) {
+          console.warn(`[PO] Warning: Connecting to ${host} with NO cookies. This may cause 400 error.`);
+        }
 
         const ws = new WebSocket(wsUrl, wsOptions);
         this.ws = ws;

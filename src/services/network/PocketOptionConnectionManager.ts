@@ -30,9 +30,9 @@ export type ConnectionState =
 
 const VALID_TRANSITIONS: Record<ConnectionState, ConnectionState[]> = {
   "IDLE": ["CONNECTING"],
-  "CONNECTING": ["READY", "RECONNECTING", "BLOCKED"],
+  "CONNECTING": ["READY", "RECONNECTING", "BLOCKED", "IDLE"],
   "READY": ["RECONNECTING", "IDLE", "BLOCKED"],
-  "RECONNECTING": ["READY", "COOLDOWN", "BLOCKED"],
+  "RECONNECTING": ["READY", "COOLDOWN", "BLOCKED", "IDLE"],
   "COOLDOWN": ["IDLE", "CONNECTING"],
   "BLOCKED": ["IDLE"]
 };
@@ -301,6 +301,7 @@ export async function refreshSession(
   if (existing) {
     console.log(`[ConnMgr] Bridge refresh for user ${userId} — resetting state from ${existing.state}`);
     transitionTo(existing, "IDLE");
+    invalidateHostCache();
     existing.reconnectAttempts = 0;
     existing.cooldownUntil = 0;
     existing.ssidRefreshedAt = Date.now();
