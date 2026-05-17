@@ -415,9 +415,14 @@ export class PocketOptionClient {
           break;
         }
       }
+    }
 
-      // Strategy 2: Full Engine.IO v4 HTTP Polling upgrade
+    // Strategy 2: Full Engine.IO v4 HTTP Polling upgrade
+    for (const host of reachableHosts) {
+      if (this.state === ConnectionState.DISCONNECTED) break; // Re-check state
+
       try {
+        console.log(`[PO] Attempting HTTP Polling Upgrade on ${host}...`);
         await this.connectWithUpgrade(host);
         return;
       } catch (upgradeErr: any) {

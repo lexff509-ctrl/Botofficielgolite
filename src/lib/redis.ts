@@ -1,7 +1,18 @@
 import { Redis } from 'ioredis';
 
 // ✅ Bulletproof URL validation
-const rawRedisUrl = process.env.REDIS_URL;
+let rawRedisUrl = process.env.REDIS_URL;
+
+// BUG FIX: Railway sometimes provides double quotes or extra space in env vars
+if (rawRedisUrl) {
+  rawRedisUrl = rawRedisUrl.replace(/"/g, '').trim();
+  // Fix "Redis.REDIS_URL" type errors from Railway variable referencing
+  if (rawRedisUrl.includes('Redis.REDIS_')) {
+    console.error(`[Redis] ERROR: Detected Railway reference placeholder instead of real value: "${rawRedisUrl}"`);
+    rawRedisUrl = undefined;
+  }
+}
+
 const isValidRedisUrl = rawRedisUrl && (rawRedisUrl.startsWith('redis://') || rawRedisUrl.startsWith('rediss://'));
 
 if (rawRedisUrl && !isValidRedisUrl) {
