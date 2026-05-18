@@ -341,11 +341,19 @@ async function _fetchFromHost(host: string): Promise<string[]> {
     const req = https.get(options, (res) => {
       const setCookies = res.headers["set-cookie"] || [];
       const cookies = setCookies.map((c: string) => c.split(";")[0]);
+      
+      if (res.statusCode !== 200) {
+        console.warn(`[PO-Cookie] Host ${host} returned status ${res.statusCode}`);
+      }
+      
       res.on("data", () => {});
       res.on("end", () => resolve(cookies));
     });
 
-    req.on("error", reject);
+    req.on("error", (err) => {
+      console.error(`[PO-Cookie] Request error for ${host}:`, err.message);
+      reject(err);
+    });
     req.on("timeout", () => {
       req.destroy();
       reject(new Error("Timeout"));

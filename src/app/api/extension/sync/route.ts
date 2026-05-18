@@ -186,9 +186,10 @@ export async function POST(req: NextRequest) {
     } catch (extErr: any) {
       console.warn("[ExtensionBridge] Extended fields skipped (migration pending):", extErr.message);
     }
+    }
 
-    // Mettre à jour ssidStatus via fonction dédiée (fallback supplémentaire)
-    updateSsidStatus(user.id, "VALID").catch(() => {});
+    // ✅ BUG FIX: REMOVED premature updateSsidStatus(user.id, "VALID")
+    // Status MUST remain "UNKNOWN" until ConnectionManager confirms success.
 
     // 5. Connection Manager: refresh ou connect (remplace connectPocketOption direct)
     const isDemoConnection = isDemo !== undefined ? isDemo : (user.tradeMode === "DEMO");
