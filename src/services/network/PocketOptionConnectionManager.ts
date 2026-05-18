@@ -106,6 +106,7 @@ interface ManagedSession {
 
 // ── Global Session Registry ────────────────────────────────────────────────────
 const sessions = new Map<number, ManagedSession>();
+const connectionLocks = new Set<number>(); // Mutex to prevent concurrent connects for same user
 
 // ── Backoff Schedule ───────────────────────────────────────────────────────────
 // 5s, 10s, 20s, 40s, 60s (capped) - strict exponential backoff
@@ -162,6 +163,12 @@ export async function ensureConnected(
     return null;
   }
 
+  // Mutex check
+  if (connectionLocks.has(userId)) {
+    console.log(`[ConnMgr] User ${userId} connection lock active — skipping duplicate`);
+    return null;
+  }
+
   // In cooldown → reject until ready
   if (existing && existing.state === "COOLDOWN" && Date.now() < existing.cooldownUntil) {
     const remainSec = Math.round((existing.cooldownUntil - Date.now()) / 1000);
@@ -211,10 +218,11 @@ export async function ensureConnected(
   // Register self-healing callbacks
   _registerClientHooks(session);
 
-  // Human-like delay before connect (anti-detection)
-  await humanDelay(300, 800);
-
+  connectionLocks.add(userId);
   try {
+    // Human-like delay before connect (anti-detection)
+    await humanDelay(300, 800);
+
     await session.client.connect(isDemo);
     transitionTo(session, "READY");
     session.connectedAt = Date.now();
@@ -231,6 +239,8 @@ export async function ensureConnected(
     transitionTo(session, "RECONNECTING");
     _scheduleReconnect(session);
     return null;
+  } finally {
+    connectionLocks.delete(userId);
   }
 }
 

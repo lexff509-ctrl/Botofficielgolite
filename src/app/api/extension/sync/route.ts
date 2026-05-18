@@ -99,34 +99,40 @@ export async function POST(req: NextRequest) {
     }
 
     // 4a. Champs CORE — essayer avec les champs extension, fallback sur minimum absolu
+    const dbUpdate: any = {
+      pocketOptionSsid: encryptedSsid,
+      pocketOptionCookies: cookies || null,
+      pocketOptionUid: parsedUid,
+      extensionLastSync: new Date(),
+      extensionDeviceName: deviceName || "Unknown Browser",
+      updatedAt: new Date(),
+    };
+
+    // Only set to UNKNOWN if not already VALID to prevent dashboard flickering
+    if (user.ssidStatus !== "VALID") {
+      dbUpdate.ssidStatus = "UNKNOWN";
+    }
+
     try {
-      await db.update(users).set({
-        pocketOptionSsid: encryptedSsid,
-        pocketOptionCookies: cookies || null,
-        pocketOptionUid: parsedUid,
-        extensionLastSync: new Date(),
-        extensionDeviceName: deviceName || "Unknown Browser",
-        updatedAt: new Date(),
-        ssidStatus: "UNKNOWN",   // Mark as UNKNOWN until ConnectionManager verifies it
-      }).where(eq(users.id, user.id));
+      await db.update(users).set(dbUpdate).where(eq(users.id, user.id));
     } catch {
       // Fallback: colonnes extension absentes en prod
       console.warn("[ExtensionBridge] Extension columns missing, using minimal update");
+      const minimalUpdate: any = {
+        pocketOptionSsid: encryptedSsid,
+        pocketOptionCookies: cookies || null,
+        updatedAt: new Date(),
+      };
+      if (user.ssidStatus !== "VALID") minimalUpdate.ssidStatus = "UNKNOWN";
+      
       try {
-        await db.update(users).set({
-          pocketOptionSsid: encryptedSsid,
-          pocketOptionCookies: cookies || null,
-          pocketOptionUid: parsedUid,
-          updatedAt: new Date(),
-          ssidStatus: "UNKNOWN",
-        }).where(eq(users.id, user.id));
+        await db.update(users).set(minimalUpdate).where(eq(users.id, user.id));
       } catch {
         // dernier recours: uniquement SSID
         await db.update(users).set({
           pocketOptionSsid: encryptedSsid,
           pocketOptionCookies: cookies || null,
           updatedAt: new Date(),
-          ssidStatus: "UNKNOWN",
         }).where(eq(users.id, user.id));
       }
     }

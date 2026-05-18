@@ -6,6 +6,15 @@ let rawRedisUrl = process.env.REDIS_URL;
 // BUG FIX: Railway sometimes provides double quotes or extra space in env vars
 if (rawRedisUrl) {
   rawRedisUrl = rawRedisUrl.replace(/"/g, '').trim();
+
+  // FIX: If user accidentally pasted a command like "redis-cli -u redis://..."
+  if (rawRedisUrl.includes('redis://') || rawRedisUrl.includes('rediss://')) {
+    const match = rawRedisUrl.match(/(rediss?:\/\/[^\s]+)/);
+    if (match) {
+      rawRedisUrl = match[1];
+    }
+  }
+
   // Fix "Redis.REDIS_URL" type errors from Railway variable referencing
   // Also fix accidental pasting of dashboard URL
   if (rawRedisUrl.includes('Redis.REDIS_') || rawRedisUrl.includes('up.railway.app/dashboard')) {
