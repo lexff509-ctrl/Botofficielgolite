@@ -34,6 +34,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { apiKey, ssid, cookies, uid, deviceName, isDemo, demoBalance, liveBalance, username } = body;
 
+    // ✅ DEBUG LOG for cookies investigation
+    console.log(`[ExtensionBridge] Sync request: SSID=${ssid?.substring(0, 10)}..., Cookies=${cookies ? cookies.length : 0} bytes, UID=${uid}, Demo=${isDemo}`);
+
     // 1. Validation stricte
     if (!apiKey || typeof apiKey !== "string") {
       return NextResponse.json({ error: "API Key manquante ou invalide" }, { status: 401 });

@@ -37,6 +37,7 @@ export async function register() {
       "EHOSTUNREACH",
       "socket hang up",
       "Disconnected before READY",
+      "Opening handshake has timed out",
     ];
 
     process.on("uncaughtException", (err: Error) => {

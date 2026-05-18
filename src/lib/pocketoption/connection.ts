@@ -160,20 +160,26 @@ export interface CookieResult {
  * Test if a host is reachable by doing a quick HTTP polling handshake.
  * Returns { reachable, latencyMs }.
  */
-export function testHostReachable(host: string): Promise<string> {
+export function testHostReachable(host: string, cookies: string[] = []): Promise<string> {
   const startTs = Date.now();
   return new Promise((resolve) => {
+    const headers: Record<string, string> = {
+      "User-Agent": CHROME_UA,
+      Accept: "*/*",
+      Host: host,
+      Origin: "https://pocketoption.com",
+      Referer: "https://pocketoption.com/",
+    };
+
+    if (cookies && cookies.length > 0) {
+      headers["Cookie"] = cookies.join("; ");
+    }
+
     const req = https.get({
       hostname: host,
       path: `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
       method: "GET",
-      headers: {
-        "User-Agent": CHROME_UA,
-        Accept: "*/*",
-        Host: host,
-        Origin: "https://pocketoption.com",
-        Referer: "https://pocketoption.com/",
-      },
+      headers: headers,
     }, (res) => {
       let body = "";
       res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
@@ -212,7 +218,7 @@ export function testHostReachable(host: string): Promise<string> {
  * Tests the preferred hosts in parallel and returns those that respond.
  * Uses a broader host pool for Render production compatibility.
  */
-export async function discoverReachableHosts(isDemo: boolean): Promise<string[]> {
+export async function discoverReachableHosts(isDemo: boolean, cookies: string[] = []): Promise<string[]> {
   const now = Date.now();
 
   const cached = reachableHostsCache.filter(
@@ -236,7 +242,7 @@ export async function discoverReachableHosts(isDemo: boolean): Promise<string[]>
     const batchResults = await Promise.all(
       batch.map(async (host) => {
         const startTs = Date.now();
-        const sid = await testHostReachable(host);
+        const sid = await testHostReachable(host, cookies);
         const latencyMs = Date.now() - startTs;
         const reachable = sid !== "";
         if (reachable) console.log(`[PO-Discovery] ✓ ${host}: REACHABLE (${latencyMs}ms)`);
@@ -290,8 +296,8 @@ export function invalidateHostCache(): void {
 /**
  * Get the best host for a demo or live connection.
  */
-export async function getBestHost(isDemo: boolean): Promise<string> {
-  const reachable = await discoverReachableHosts(isDemo);
+export async function getBestHost(isDemo: boolean, cookies: string[] = []): Promise<string> {
+  const reachable = await discoverReachableHosts(isDemo, cookies);
   return reachable[0] || (isDemo ? PO_REGIONS.DEMO : PO_REGIONS.EUROPA);
 }
 

@@ -179,6 +179,15 @@ export async function ensureConnected(
   const cookieArr = cookies ? cookies.split(";").map(c => c.trim()) : undefined;
   const parsedUid = uid ? parseInt(uid) : undefined;
   
+  if (existing && existing.ssid === ssid) {
+    // If SSID is the same but we got new cookies, update the client
+    if (cookieArr && cookieArr.length > 0) {
+      existing.cookies = cookies;
+      existing.client.updateCookies(cookieArr);
+    }
+    if (parsedUid !== undefined) existing.uid = uid;
+  }
+
   const session: ManagedSession = existing && existing.ssid === ssid ? existing : {
     userId,
     ssid,

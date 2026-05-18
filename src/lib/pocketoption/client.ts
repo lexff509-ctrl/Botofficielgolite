@@ -119,11 +119,6 @@ export class PocketOptionClient {
   public state: ConnectionState = ConnectionState.DISCONNECTED;
   private isDemo = true;
 
-  // Connection Phase tracking
-  private upgradeResolve: ((value: void) => void) | null = null;
-  private upgradeReject: ((error: Error) => void) | null = null;
-  private connectionTimeout: ReturnType<typeof setTimeout> | null = null;
-
   // Event Driven Architecture
   private publicEvents = new EventEmitter();
   private internalEvents = new EventEmitter();
@@ -184,6 +179,10 @@ export class PocketOptionClient {
 
   // Track pending promises to reject them on disconnect (prevent memory leaks)
   private pendingRequests = new Set<(err: Error) => void>();
+
+  private upgradeResolve: ((ws: WebSocket) => void) | null = null;
+  private upgradeReject: ((err: Error) => void) | null = null;
+  private connectionTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ssid: string, isDemo?: boolean, cookies?: string[], uid?: number) {
     this.ssid = ssid;
@@ -259,9 +258,17 @@ export class PocketOptionClient {
     });
   }
 
-  // ============ Connection Management ============
+  public updateCookies(cookies: string[]): void {
+    if (cookies && cookies.length > 0) {
+      console.log(`[PO] Updating cookies (${cookies.length} provided)`);
+      this.externalCookies = [...cookies];
+      this.prefetchedCookies = [...new Set([...this.prefetchedCookies, ...cookies])];
+    }
+  }
 
-  private startHeartbeats(): void {
+  // ============ Connection Lifecycle ============
+ 
+   private startHeartbeats(): void {
     if (this.socketIoHeartbeat) clearInterval(this.socketIoHeartbeat);
     this.lastPongAt = Date.now();
     this.lastConnectedAt = Date.now();
@@ -392,7 +399,13 @@ export class PocketOptionClient {
     this.intentionallyClosed = false;
     this.ssidExpired = false;
 
-    let reachableHosts = await discoverReachableHosts(this.isDemo);
+    // ✅ DEBUG: Check if we have cookies before connecting
+    const validatedCookies = this._validateAndCleanCookies(this.prefetchedCookies);
+    if (validatedCookies.length === 0) {
+      console.warn(`[PO] No extension cookies found. This will likely fail Cloudflare check.`);
+    }
+
+    let reachableHosts = await discoverReachableHosts(this.isDemo, validatedCookies);
     if (reachableHosts.length === 0) {
       const fallback = this.isDemo ? LEGACY_HOSTS.demo : LEGACY_HOSTS.real;
       reachableHosts = [fallback];
@@ -401,46 +414,48 @@ export class PocketOptionClient {
     let gotNotAuthorizedOnMatchingHost = false;
 
     // Strategy 1: Parallel Direct WebSocket (Force Connect)
-    // We try the top 3 hosts in parallel to minimize latency and bypass regional blocks faster
     const topHosts = reachableHosts.slice(0, 3);
     console.log(`[PO] Strategy 1: Attempting Parallel Force Connect on ${topHosts.length} hosts...`);
 
-    const directResults = await Promise.allSettled(
-       topHosts.map(async (host) => {
-         // IMPORTANT: We ONLY use cookies from extension.
-         // Server-side pre-fetch is removed as it's often blocked by Cloudflare (Error 400).
-         if (this.externalCookies.length > 0) {
-           this.prefetchedCookies = [...this.externalCookies];
-         } else {
-           console.warn(`[PO] No extension cookies for ${host}. This will likely fail Cloudflare check.`);
-           this.prefetchedCookies = [];
-         }
-         return this.connectDirect(host);
-       })
-     );
+    // ✅ DEBUG: Check cookies for each host
+    for (const host of topHosts) {
+      const hasCookies = validatedCookies.some(c => c.toLowerCase().includes("cf_") || c.toLowerCase().includes("phpsessid"));
+      if (!hasCookies) {
+        console.error(`[PO] No extension cookies for ${host}. This will likely fail Cloudflare check.`);
+        console.error(`[PO] Warning: Direct connection to ${host} with NO cookies.`);
+      }
+    }
 
-    const successful = directResults.find(r => r.status === "fulfilled");
-    if (successful) return;
-
-    // Check if any failed due to Auth (SSID expired)
-    const authFail = directResults.find(r => r.status === "rejected" && (r.reason?.message?.includes("authorized") || r.reason?.message?.includes("expired")));
-    if (authFail) {
-      this.ssidExpired = true;
-      gotNotAuthorizedOnMatchingHost = true;
-      this.state = ConnectionState.DISCONNECTED;
-      throw new Error("SSID expiré ou invalide (NotAuthorized)");
+    try {
+      const winner = await this._parallelConnect(topHosts);
+      if (winner) {
+        this.ws = winner;
+        this.state = ConnectionState.READY; // Or let the internal handlers finish it
+        return;
+      }
+    } catch (err: any) {
+      if (err.message.includes("NotAuthorized")) {
+        this.ssidExpired = true;
+        gotNotAuthorizedOnMatchingHost = true;
+        this.state = ConnectionState.DISCONNECTED;
+        throw err;
+      }
+      console.warn(`[PO] Strategy 1 failed: ${err.message}`);
     }
 
     // Strategy 2: Fallback to Sequential HTTP Polling Upgrade for all hosts
     console.log(`[PO] Strategy 2: Fallback to Sequential HTTP Polling Upgrade...`);
     for (const host of reachableHosts) {
-      // Use any cast to prevent TS type narrowing error in async loop
       if ((this.state as any) === ConnectionState.DISCONNECTED) break; 
 
       try {
         console.log(`[PO] Attempting HTTP Polling Upgrade on ${host}...`);
-        await this.connectWithUpgrade(host);
-        return;
+        const winner = await this.connectWithUpgrade(host);
+        if (winner) {
+          this.ws = winner;
+          this.state = ConnectionState.READY;
+          return;
+        }
       } catch (upgradeErr: any) {
         console.warn(`[PO] Upgrade failed on ${host}: ${upgradeErr.message}`);
         if (this.checkAuthFailure(host)) {
@@ -461,29 +476,58 @@ export class PocketOptionClient {
     return this.ssidExpired;
   }
 
-  private connectDirect(host: string): Promise<void> {
+  private async _parallelConnect(hosts: string[]): Promise<WebSocket | null> {
+    const attempts = hosts.map(host => this.connectDirect(host));
+    
     return new Promise((resolve, reject) => {
+      let settledCount = 0;
+      let winningWs: WebSocket | null = null;
+      const errors: string[] = [];
+
+      attempts.forEach(async (p, i) => {
+        try {
+          const ws = await p;
+          if (winningWs) {
+            this.safeCloseWs(ws);
+          } else {
+            winningWs = ws;
+            resolve(ws);
+          }
+        } catch (err: any) {
+          errors.push(`${hosts[i]}: ${err.message}`);
+        } finally {
+          settledCount++;
+          if (settledCount === hosts.length && !winningWs) {
+            reject(new Error(`Toutes les tentatives ont échoué: ${errors.join("; ")}`));
+          }
+        }
+      });
+    });
+  }
+
+  private connectDirect(host: string): Promise<WebSocket> {
+    return new Promise((resolve, reject) => {
+      this.upgradeResolve = resolve;
+      this.upgradeReject = reject;
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket`;
       let settled = false;
-      const settle = (err?: Error) => {
+
+      const settle = (ws?: WebSocket, err?: Error) => {
         if (settled) return;
         settled = true;
         if (this.connectionTimeout) { clearTimeout(this.connectionTimeout); this.connectionTimeout = null; }
-        if (err) reject(err); else resolve();
+        this.upgradeResolve = null;
+        this.upgradeReject = null;
+        if (err) reject(err); else if (ws) resolve(ws);
       };
 
       try {
         const validatedCookies = this._validateAndCleanCookies(this.prefetchedCookies);
-
         const wsHeaders: Record<string, string> = { 
           ...CONN_WS_HEADERS,
           "Host": host,
         };
         if (validatedCookies.length > 0) wsHeaders["Cookie"] = validatedCookies.join("; ");
-
-        if (validatedCookies.length === 0) {
-          console.warn(`[PO] Warning: Direct connection to ${host} with NO cookies.`);
-        }
 
         const ws = new WebSocket(wsUrl, {
           headers: wsHeaders,
@@ -491,69 +535,80 @@ export class PocketOptionClient {
           perMessageDeflate: false,
           followRedirects: true,
         });
-        this.ws = ws;
-        this.upgradeResolve = resolve;
-        this.upgradeReject = reject;
 
         this.connectionTimeout = setTimeout(() => {
-          settle(new Error("Connection timeout (30s)"));
           this.safeCloseWs(ws);
+          settle(undefined, new Error("Connection timeout (30s)"));
         }, 30000);
 
-        ws.on("open", () => { this.state = ConnectionState.WS_OPEN; });
+        ws.on("open", () => { 
+          // After open, we still need to wait for 'successauth' event
+          // which is emitted via handleSocketIOEvent -> internalEvents
+        });
+
+        const authListener = () => {
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          settle(ws);
+        };
+
+        const authFailListener = (err: Error) => {
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          this.safeCloseWs(ws);
+          settle(undefined, err);
+        };
+
+        this.internalEvents.once("authenticated", authListener);
+        this.internalEvents.once("auth_failed", authFailListener);
+
         ws.on("message", (raw: WebSocket.Data) => {
-          try {
-            this.handleRawMessage(raw);
-          } catch (err) {
-            console.error("[PO] Message handler error:", err);
-          }
+          this.handleRawMessage(raw, ws);
         });
+
         ws.on("close", () => {
-          try {
-            if (!settled) settle(new Error("Disconnected before READY"));
-            if (this.ws === ws) this.handleDisconnect();
-          } catch (err) {
-            console.error("[PO] Close handler error:", err);
-          }
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          settle(undefined, new Error("Disconnected before READY"));
         });
+
         ws.on("error", (err: Error) => {
-          try {
-            console.warn(`[PO] WebSocket error:`, err.message);
-            settle(err);
-            if (this.ws === ws) { this.ws = null; }
-            this.safeCloseWs(ws);
-          } catch (err2) {
-            console.error("[PO] Error handler crashed:", err2);
-          }
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          this.safeCloseWs(ws);
+          settle(undefined, err);
         });
       } catch (err: any) {
-        settle(err);
+        settle(undefined, err);
       }
     });
   }
 
-  private async connectWithUpgrade(host: string): Promise<void> {
+  private async connectWithUpgrade(host: string): Promise<WebSocket> {
     this.state = ConnectionState.POLLING;
     const { sid, cookies } = await this.httpPollingOpen(host);
     if (!sid) throw new Error("Failed to get sid");
 
     this.state = ConnectionState.UPGRADING;
     return new Promise((resolve, reject) => {
-      // BUG FIX #2: Properly encode sid for URL (base64 has +, /, =)
+      this.upgradeResolve = resolve;
+      this.upgradeReject = reject;
       const encodedSid = encodeURIComponent(sid);
       const wsUrl = `wss://${host}/socket.io/?EIO=4&transport=websocket&sid=${encodedSid}`;
       console.log(`[PO] Upgrading to WebSocket on ${host} with sid: ${sid.substring(0, 10)}...`);
 
       let settled = false;
-      const settle = (err?: Error) => {
+
+      const settle = (ws?: WebSocket, err?: Error) => {
         if (settled) return;
         settled = true;
         if (this.connectionTimeout) { clearTimeout(this.connectionTimeout); this.connectionTimeout = null; }
-        if (err) reject(err); else resolve();
+        this.upgradeResolve = null;
+        this.upgradeReject = null;
+        if (err) reject(err); else if (ws) resolve(ws);
       };
 
       try {
-        // BUG FIX #1: Validate and sanitize cookies
         const allCookies = this._validateAndCleanCookies([...this.prefetchedCookies, ...cookies]);
 
         const wsOptions: WebSocket.ClientOptions = {
@@ -566,22 +621,29 @@ export class PocketOptionClient {
           perMessageDeflate: false,
         };
 
-        if (allCookies.length === 0) {
-          console.warn(`[PO] Warning: Connecting to ${host} with NO cookies. This may cause 400 error.`);
-        }
-
         const ws = new WebSocket(wsUrl, wsOptions);
-        this.ws = ws;
-        this.upgradeResolve = resolve;
-        this.upgradeReject = reject;
-
-        // BUG FIX #3: Track Engine.IO probe phase
         let probePhaseComplete = false;
 
         this.connectionTimeout = setTimeout(() => {
-          settle(new Error("Upgrade timeout (30s)"));
           this.safeCloseWs(ws);
+          settle(undefined, new Error("Upgrade timeout (30s)"));
         }, 30000);
+
+        const authListener = () => {
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          settle(ws);
+        };
+
+        const authFailListener = (err: Error) => {
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          this.safeCloseWs(ws);
+          settle(undefined, err);
+        };
+
+        this.internalEvents.once("authenticated", authListener);
+        this.internalEvents.once("auth_failed", authFailListener);
 
         ws.on("open", () => { this.state = ConnectionState.WS_OPEN; });
         ws.on("message", (raw: WebSocket.Data) => {
@@ -596,31 +658,24 @@ export class PocketOptionClient {
               return;
             }
 
-            this.handleRawMessage(raw);
+            this.handleRawMessage(raw, ws);
           } catch (err) {
             console.error("[PO] Message handler error:", err);
           }
         });
         ws.on("close", () => {
-          try {
-            if (!settled) settle(new Error("Disconnected before READY"));
-            if (this.ws === ws) this.handleDisconnect();
-          } catch (err) {
-            console.error("[PO] Close handler error:", err);
-          }
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          settle(undefined, new Error("Disconnected before READY"));
         });
         ws.on("error", (err: Error) => {
-          try {
-            console.warn(`[PO] WebSocket upgrade error:`, err.message);
-            settle(err);
-            if (this.ws === ws) { this.ws = null; }
-            this.safeCloseWs(ws);
-          } catch (err2) {
-            console.error("[PO] Error handler crashed:", err2);
-          }
+          this.internalEvents.off("authenticated", authListener);
+          this.internalEvents.off("auth_failed", authFailListener);
+          this.safeCloseWs(ws);
+          settle(undefined, err);
         });
       } catch (err: any) {
-        settle(err);
+        settle(undefined, err);
       }
     });
   }
@@ -629,6 +684,7 @@ export class PocketOptionClient {
 
   private httpPollingOpen(host: string): Promise<{ sid: string; cookies: string[] }> {
     return new Promise((resolve, reject) => {
+      const validatedCookies = this._validateAndCleanCookies(this.prefetchedCookies);
       const req = https.get({
         hostname: host,
         path: `/socket.io/?EIO=4&transport=polling&t=${Date.now()}`,
@@ -636,7 +692,7 @@ export class PocketOptionClient {
         headers: {
           ...CONN_HTTP_HEADERS,
           Host: host,
-          ...(this.prefetchedCookies.length > 0 ? { Cookie: this.prefetchedCookies.join("; ") } : {}),
+          ...(validatedCookies.length > 0 ? { Cookie: validatedCookies.join("; ") } : {}),
         },
       }, (res) => {
         const cookies = (res.headers["set-cookie"] || []).map((c: string) => c.split(";")[0]);
@@ -672,7 +728,7 @@ export class PocketOptionClient {
   private httpPollingPost(host: string, sid: string, body: string, cookies: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
       const bodyBuf = Buffer.from(body, "utf8");
-      const allCookies = [...this.prefetchedCookies, ...cookies];
+      const validatedCookies = this._validateAndCleanCookies([...this.prefetchedCookies, ...cookies]);
       const req = https.request({
         hostname: host,
         path: `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`,
@@ -682,7 +738,7 @@ export class PocketOptionClient {
           Host: host,
           "Content-Type": "text/plain; charset=UTF-8",
           "Content-Length": bodyBuf.length,
-          ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
+          ...(validatedCookies.length > 0 ? { Cookie: validatedCookies.join("; ") } : {}),
         },
       }, (res) => {
         res.on("data", () => {});
@@ -697,7 +753,7 @@ export class PocketOptionClient {
 
   private httpPollingRead(host: string, sid: string, cookies: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      const allCookies = [...this.prefetchedCookies, ...cookies];
+      const validatedCookies = this._validateAndCleanCookies([...this.prefetchedCookies, ...cookies]);
       const req = https.request({
         hostname: host,
         path: `/socket.io/?EIO=4&transport=polling&sid=${encodeURIComponent(sid)}`,
@@ -705,7 +761,7 @@ export class PocketOptionClient {
         headers: {
           ...CONN_HTTP_HEADERS,
           Host: host,
-          ...(allCookies.length > 0 ? { Cookie: allCookies.join("; ") } : {}),
+          ...(validatedCookies.length > 0 ? { Cookie: validatedCookies.join("; ") } : {}),
         },
       }, (res) => {
         let data = "";
@@ -720,7 +776,7 @@ export class PocketOptionClient {
 
   // ============ Message Routing ============
 
-  private handleRawMessage(raw: WebSocket.Data): void {
+  private handleRawMessage(raw: WebSocket.Data, targetWs: WebSocket): void {
     try {
       let text: string;
       if (Buffer.isBuffer(raw)) text = raw.toString("utf8");
@@ -729,10 +785,10 @@ export class PocketOptionClient {
 
       const firstChar = text.charAt(0);
       if (["0", "1", "2", "3", "4", "5", "6"].includes(firstChar)) {
-        this.handleTextMessage(text);
+        this.handleTextMessage(text, targetWs);
       } else {
         const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(typeof raw === "string" ? raw : new Uint8Array(raw as ArrayBuffer));
-        this.handleBinaryMessage(buf);
+        this.handleBinaryMessage(buf, targetWs);
       }
     } catch (err) {
       console.error("[PO] Message handling error:", err);
@@ -741,24 +797,24 @@ export class PocketOptionClient {
 
   // ============ Text Message Handler ============
 
-  private handleTextMessage(message: string): void {
+  private handleTextMessage(message: string, targetWs: WebSocket): void {
     if (message.startsWith("0")) {
-      this.ws?.send("40"); // Socket.IO CONNECT
+      targetWs.send("40"); // Socket.IO CONNECT
       // Engine.IO requires waiting for '0' before starting ping/pong
-      this.startHeartbeats();
+      if (this.ws === targetWs) this.startHeartbeats();
       return;
     }
     if (message.startsWith("1")) {
-      this.ws?.close();
+      targetWs.close();
       return;
     }
     if (message === "2") {
-      this.ws?.send("3"); // PONG
+      targetWs.send("3"); // PONG
       return;
     }
     if (message === "3probe") {
-      this.ws?.send("5");
-      if (this.state === ConnectionState.UPGRADING) this.ws?.send("40");
+      targetWs.send("5");
+      if (this.state === ConnectionState.UPGRADING) targetWs.send("40");
       return;
     }
     if (message === "3") {
@@ -783,7 +839,7 @@ export class PocketOptionClient {
         }
       ]);
 
-      this.ws?.send(authMessage);
+      targetWs.send(authMessage);
       return;
     }
 
@@ -828,7 +884,7 @@ export class PocketOptionClient {
     this.intentionallyClosed = true;
     this.state = ConnectionState.DISCONNECTED;
     
-    // Secure callback execution
+    this.internalEvents.emit("auth_failed", new Error("NotAuthorized: SSID invalide"));
     for (const cb of this.onSsidExpiredCallbacks) {
       try {
         if (typeof cb === "function") cb();
@@ -842,8 +898,6 @@ export class PocketOptionClient {
     // We do NOT attempt to reconnect from here to prevent infinite loop spamming.
     console.warn(`[PO] Halting all reconnection attempts due to expired SSID.`);
 
-    if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-    if (this.upgradeReject) this.upgradeReject(new Error("NotAuthorized: SSID invalide"));
     this.ws?.close();
   }
 
@@ -869,14 +923,13 @@ export class PocketOptionClient {
     switch (eventName) {
       case "successauth":
         this.state = ConnectionState.READY;
+        this.internalEvents.emit("authenticated", eventData);
         // Reset circuit breaker on successful auth
         this.reconnectAttempts = 0;
         this.consecutiveFailures = 0;
         this.circuitOpen = false;
         this.isReconnecting = false;
         this.startHeartbeats();
-        if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-        if (this.upgradeResolve) this.upgradeResolve();
 
         for (const [, sub] of this.activeSubscriptions) {
           this.changeSymbol(sub.asset, sub.size);
@@ -928,7 +981,10 @@ export class PocketOptionClient {
 
   // ============ Binary Message Handler ============
 
-  private handleBinaryMessage(buffer: Buffer): void {
+  private handleBinaryMessage(buffer: Buffer, targetWs: WebSocket): void {
+    // Only process binary if it's the active socket
+    if (this.ws && this.ws !== targetWs) return;
+
     let message: any;
     try {
       const raw = buffer.toString("utf8");
@@ -1099,26 +1155,22 @@ export class PocketOptionClient {
   // ============ Disconnect & Cleanup ============
 
   /** Safely close a WebSocket without triggering recursive handlers */
-  private safeCloseWs(ws: WebSocket): void {
-    // Idempotent: remove all listeners FIRST to prevent recursive close events
-    try { ws.removeAllListeners(); } catch {}
+  private safeCloseWs(ws: WebSocket | null): void {
+    if (!ws) return;
     try {
+      // 1. Remove all listeners immediately to prevent recursive events
+      ws.removeAllListeners();
+      
+      // 2. Add a no-op error listener to prevent uncaughtException if late errors occur
+      ws.on("error", () => {});
+      
       const state = ws.readyState;
       if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) {
-        // Deferred close: gives any in-flight frames time to flush
-        setTimeout(() => {
-          try {
-            if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
-              ws.close();
-            }
-          } catch (innerErr) {
-            // Silently swallowed — this path is hit when WS was never fully open
-            console.warn(`[PO-SafeGuard] Ignored deferred close error:`, (innerErr as Error).message);
-          }
-        }, 200);
+        // 3. Terminate immediately instead of graceful close() during connection phase
+        ws.terminate();
       }
     } catch (err) {
-      console.warn(`[PO-SafeGuard] safeCloseWs outer error (ignored):`, (err as Error).message);
+      // Silent ignore — process must not die here
     }
   }
 
@@ -1147,6 +1199,12 @@ export class PocketOptionClient {
     if (this.ws) {
       this.safeCloseWs(this.ws);
       this.ws = null;
+    }
+
+    const wasReady = prevState === ConnectionState.READY;
+    if (wasReady && !this.intentionallyClosed && !this.ssidExpired) {
+      this.publicEvents.emit("disconnect", { reason: "connection_lost" });
+      this.onErrorCallbacks.forEach((cb) => cb(new Error("Connection lost")));
     }
 
     // Never reconnect if SSID expired or closed intentionally
