@@ -186,7 +186,6 @@ export async function POST(req: NextRequest) {
     } catch (extErr: any) {
       console.warn("[ExtensionBridge] Extended fields skipped (migration pending):", extErr.message);
     }
-    }
 
     // ✅ BUG FIX: REMOVED premature updateSsidStatus(user.id, "VALID")
     // Status MUST remain "UNKNOWN" until ConnectionManager confirms success.

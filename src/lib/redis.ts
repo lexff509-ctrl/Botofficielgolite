@@ -33,7 +33,7 @@ if (rawRedisUrl && !isValidRedisUrl) {
  * Client Redis pour la persistence distribuée sur Railway
  * Si REDIS_URL n'est pas définie ou invalide, le système basculera sur le cache mémoire (Map)
  */
-export const redis = isValidRedisUrl 
+export const redis = (isValidRedisUrl && rawRedisUrl) 
   ? new Redis(rawRedisUrl, { 
       maxRetriesPerRequest: 1, 
       connectTimeout: 5000,
