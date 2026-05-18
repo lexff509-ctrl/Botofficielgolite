@@ -379,16 +379,65 @@ export default function BotPage() {
               }
 
               return (
-                <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-yellow-400 text-sm flex items-start gap-3">
-                  <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                  <div>
-                    <div className="font-bold mb-1">Bot en attente ({reason})</div>
-                    <p className="text-xs text-yellow-400/80">
-                      Assurez-vous que: 1) L'extension Bridge est installée et activée, 2) Un onglet PocketOption est ouvert et connecté à votre compte.
-                    </p>
-                    {ssidStatus && ssidStatus !== "VALID" && (
-                      <p className="text-xs text-red-400/80 mt-2">⚠️ Statut SSID: {ssidStatus}</p>
-                    )}
+                <div className="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-5 text-yellow-400">
+                  <div className="flex items-start gap-3 mb-4">
+                    <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <div>
+                      <div className="font-bold text-base mb-1">Bot en attente ({reason})</div>
+                      <p className="text-xs text-yellow-400/80">
+                        Le système de trading automatique nécessite une synchronisation active avec votre navigateur.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                    <div className={`flex items-center gap-3 p-3 rounded-lg border ${bridgeStatus?.extensionRecentlyActive ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}>
+                      <div className={`w-2 h-2 rounded-full ${bridgeStatus?.extensionRecentlyActive ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-red-500'}`}></div>
+                      <div className="flex-1">
+                        <div className="text-xs font-bold uppercase tracking-wider">Extension Bridge</div>
+                        <div className="text-[10px] opacity-80">{bridgeStatus?.extensionRecentlyActive ? 'Synchronisée' : 'Inactif / Non installée'}</div>
+                      </div>
+                    </div>
+
+                    <div className={`flex items-center gap-3 p-3 rounded-lg border ${bridgeStatus?.cookieSize > 0 ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}>
+                      <div className={`w-2 h-2 rounded-full ${bridgeStatus?.cookieSize > 0 ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-red-500'}`}></div>
+                      <div className="flex-1">
+                        <div className="text-xs font-bold uppercase tracking-wider">Cookies Session</div>
+                        <div className="text-[10px] opacity-80">
+                          {bridgeStatus?.cookieSize > 0 
+                            ? (bridgeStatus?.hasCloudflare ? "Valides (Cloudflare OK)" : "Incomplets (Rafraîchir PO)")
+                            : "Manquants (Ouvrez PO)"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`flex items-center gap-3 p-3 rounded-lg border ${ssidStatus === 'VALID' ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}>
+                      <div className={`w-2 h-2 rounded-full ${ssidStatus === 'VALID' ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-red-500'}`}></div>
+                      <div className="flex-1">
+                        <div className="text-xs font-bold uppercase tracking-wider">Statut SSID</div>
+                        <div className="text-[10px] opacity-80">{ssidStatus || 'UNKNOWN'}</div>
+                      </div>
+                    </div>
+
+                    <div className={`flex items-center gap-3 p-3 rounded-lg border ${bridgeStatus?.poConnected ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}>
+                      <div className={`w-2 h-2 rounded-full ${bridgeStatus?.poConnected ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-red-500'}`}></div>
+                      <div className="flex-1">
+                        <div className="text-xs font-bold uppercase tracking-wider">Connexion Serveur</div>
+                        <div className="text-[10px] opacity-80">{bridgeStatus?.poConnected ? 'Établie' : 'En attente...'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-black/20 rounded-lg p-3 border border-white/5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs font-bold text-white uppercase tracking-wider">Solution rapide</span>
+                    </div>
+                    <ul className="text-[11px] text-zinc-300 space-y-1.5 list-disc list-inside">
+                      <li>Ouvrez votre navigateur sur la page <a href="https://pocketoption.com" target="_blank" rel="noreferrer" className="text-cyan-400 underline hover:text-cyan-300">PocketOption</a>.</li>
+                      <li>Vérifiez que vous êtes connecté à votre compte.</li>
+                      <li><b>Appuyez sur F5 (Rafraîchir)</b> sur la page de trading.</li>
+                      <li>L'extension synchronisera les cookies et le bot se connectera automatiquement.</li>
+                    </ul>
                   </div>
                 </div>
               );

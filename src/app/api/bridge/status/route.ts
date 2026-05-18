@@ -44,8 +44,13 @@ export async function GET(req: NextRequest) {
     const hasSsid = !!user.pocketOptionSsid;
     const ssidExpired = user.ssidStatus === "EXPIRED";
 
+    // Check 4: Cookies diagnostics
+    const cookies = user.pocketOptionCookies || "";
+    const cookieSize = cookies.length;
+    const hasCloudflare = cookies.toLowerCase().includes("cf_clearance");
+    
     // Determine overall status
-    const bridgeConnected = extensionRecentlyActive && poConnected && hasSsid && !ssidExpired;
+    const bridgeConnected = extensionRecentlyActive && poConnected && hasSsid && !ssidExpired && cookieSize > 0;
 
     return NextResponse.json({
       success: true,
@@ -57,6 +62,8 @@ export async function GET(req: NextRequest) {
         poConnected,
         poSsidExpired: ssidExpired,
         hasSsid,
+        cookieSize,
+        hasCloudflare,
         lastSyncMinutesAgo: lastSyncTime > 0 ? Math.floor((now - lastSyncTime) / 60000) : null,
         username: user.pocketOptionUsername,
         tradeMode: user.tradeMode,
