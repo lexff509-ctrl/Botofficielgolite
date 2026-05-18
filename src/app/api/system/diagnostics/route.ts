@@ -39,9 +39,12 @@ export async function GET() {
         problems.push("MISSING_CLOUDFLARE: Connection might be blocked by Cloudflare (403/400). Refresh PO page.");
       }
 
-      if (u.ssidStatus === "EXPIRED") {
+      if (u.ssidStatus === "EXPIRED" || u.ssidStatus === "NOT_SET") {
         status = "CRITICAL";
         problems.push(`SSID_${u.ssidStatus}: Please refresh PocketOption page in your browser.`);
+      } else if (u.ssidStatus === "UNKNOWN") {
+        status = "WARNING";
+        problems.push("SSID_UNKNOWN: Waiting for connection verification.");
       }
 
       if (session && session.state === "RECONNECTING") {

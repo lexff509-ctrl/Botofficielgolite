@@ -434,9 +434,9 @@ export default function BotPage() {
                     </div>
                     <ul className="text-[11px] text-zinc-300 space-y-1.5 list-disc list-inside">
                       <li>Ouvrez votre navigateur sur la page <a href="https://pocketoption.com" target="_blank" rel="noreferrer" className="text-cyan-400 underline hover:text-cyan-300">PocketOption</a>.</li>
-                      <li>Vérifiez que vous êtes connecté à votre compte.</li>
+                      <li><b>Déconnectez-vous puis reconnectez-vous</b> à votre compte PO pour rafraîchir la session.</li>
                       <li><b>Appuyez sur F5 (Rafraîchir)</b> sur la page de trading.</li>
-                      <li>L'extension synchronisera les cookies et le bot se connectera automatiquement.</li>
+                      <li>L'extension synchronisera les nouveaux cookies et le bot se connectera automatiquement.</li>
                     </ul>
                   </div>
                 </div>
