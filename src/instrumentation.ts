@@ -82,7 +82,8 @@ export async function register() {
             ADD COLUMN IF NOT EXISTS cooldown_until TIMESTAMP,
             ADD COLUMN IF NOT EXISTS profit_target NUMERIC(15,2),
             ADD COLUMN IF NOT EXISTS loss_limit NUMERIC(15,2),
-            ADD COLUMN IF NOT EXISTS backtesting_days_granted INTEGER DEFAULT 0
+            ADD COLUMN IF NOT EXISTS backtesting_days_granted INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS pocket_option_cookies TEXT
         `);
         console.log("[Migration] Auto-migration OK — all columns verified");
       } catch (err: any) {

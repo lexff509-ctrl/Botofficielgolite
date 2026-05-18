@@ -179,6 +179,7 @@ export class PocketOptionClient {
 
   // Trade Lock
   private prefetchedCookies: string[] = [];
+  private externalCookies: string[] = [];
 
   // Track pending promises to reject them on disconnect (prevent memory leaks)
   private pendingRequests = new Set<(err: Error) => void>();
@@ -186,7 +187,10 @@ export class PocketOptionClient {
   constructor(ssid: string, isDemo?: boolean, cookies?: string[]) {
     this.ssid = ssid;
     if (isDemo !== undefined) this.isDemo = isDemo;
-    if (cookies) this.prefetchedCookies = [...cookies];
+    if (cookies) {
+      this.prefetchedCookies = [...cookies];
+      this.externalCookies = [...cookies];
+    }
 
     // Extract pure session token from SSID
     try {
@@ -398,10 +402,17 @@ export class PocketOptionClient {
       console.log(`[PO] Trying host: ${host}`);
       this.ssidExpired = false;
 
-      // Pre-fetch Cloudflare + session cookies from the target host
-      const { cookies: hostCookies } = await preFetchCookies(host);
-      if (hostCookies.length > 0) {
-        this.prefetchedCookies = [...new Set([...this.prefetchedCookies, ...hostCookies])];
+      // IMPORTANT: If we have cookies from the extension, use them and SKIP pre-fetching
+      // because the server-side pre-fetch is often blocked by Cloudflare (Error 400).
+      if (this.externalCookies.length > 0) {
+        console.log(`[PO] Using ${this.externalCookies.length} cookies from extension — skipping pre-fetch`);
+        this.prefetchedCookies = [...this.externalCookies];
+      } else {
+        // Fallback: try to fetch cookies if extension didn't provide them
+        const { cookies: hostCookies } = await preFetchCookies(host);
+        if (hostCookies.length > 0) {
+          this.prefetchedCookies = [...new Set([...this.prefetchedCookies, ...hostCookies])];
+        }
       }
 
       // Strategy 1: Direct WebSocket

@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { apiKey, ssid, uid, deviceName, isDemo, demoBalance, liveBalance, username } = body;
+    const { apiKey, ssid, cookies, uid, deviceName, isDemo, demoBalance, liveBalance, username } = body;
 
     // 1. Validation stricte
     if (!apiKey || typeof apiKey !== "string") {
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Rate-limit: skip if same SSID synced recently
-    const ssidHash = simpleHash(ssid);
+    const ssidHash = simpleHash(ssid + (cookies || ""));
     const cacheKey = `sync_cache:${apiKey}`;
     
     if (isRedisReady()) {
@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
     try {
       await db.update(users).set({
         pocketOptionSsid: encryptedSsid,
+        pocketOptionCookies: cookies || null,
         pocketOptionUid: parsedUid,
         extensionLastSync: new Date(),
         extensionDeviceName: deviceName || "Unknown Browser",
@@ -106,6 +107,7 @@ export async function POST(req: NextRequest) {
       try {
         await db.update(users).set({
           pocketOptionSsid: encryptedSsid,
+          pocketOptionCookies: cookies || null,
           pocketOptionUid: parsedUid,
           updatedAt: new Date(),
           ssidStatus: "UNKNOWN",
@@ -114,6 +116,7 @@ export async function POST(req: NextRequest) {
         // dernier recours: uniquement SSID
         await db.update(users).set({
           pocketOptionSsid: encryptedSsid,
+          pocketOptionCookies: cookies || null,
           updatedAt: new Date(),
           ssidStatus: "UNKNOWN",
         }).where(eq(users.id, user.id));
@@ -191,7 +194,7 @@ export async function POST(req: NextRequest) {
     const isDemoConnection = isDemo !== undefined ? isDemo : (user.tradeMode === "DEMO");
     try {
       const { refreshSession } = await import("@/services/network/PocketOptionConnectionManager");
-      refreshSession(user.id, ssid, isDemoConnection).catch(err =>
+      refreshSession(user.id, ssid, isDemoConnection, cookies).catch(err =>
         console.error("[ExtensionBridge] ConnectionManager refresh error:", err.message)
       );
     } catch {

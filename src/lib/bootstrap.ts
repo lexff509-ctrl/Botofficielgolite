@@ -78,7 +78,7 @@ export async function recoverActiveSessions(): Promise<{
             "";
 
           if (rawSsid) {
-            const connectResult = await connectPocketOption(session.userId, rawSsid, isDemo);
+            const connectResult = await connectPocketOption(session.userId, rawSsid, isDemo, user.pocketOptionCookies || undefined);
             if (!connectResult.success) {
               errors.push(`User ${session.userId}: PocketOption connection failed - ${connectResult.error}`);
               if (connectResult.ssidExpired) {

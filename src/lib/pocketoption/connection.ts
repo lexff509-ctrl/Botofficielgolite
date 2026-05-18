@@ -13,6 +13,7 @@ export const WS_HEADERS = {
   "Cache-Control": "no-cache",
   "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
   "Sec-WebSocket-Version": "13",
+  "Pragma": "no-cache",
 };
 
 // Full Chrome-like headers for HTTP requests
@@ -311,7 +312,7 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
         console.log(`[PO-Cookie] Got ${cookies.length} cookies from ${currentHost}`);
       }
     } catch (err) {
-      console.warn(`[PO-Cookie] Failed to fetch from ${currentHost}`);
+      console.warn(`[PO-Cookie] Failed to fetch from ${currentHost}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -331,7 +332,8 @@ async function _fetchFromHost(host: string): Promise<string[]> {
       method: "GET",
       headers: {
         ...HTTP_HEADERS,
-        Host: host,
+        "Host": host,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       },
       timeout: 8000,
     };

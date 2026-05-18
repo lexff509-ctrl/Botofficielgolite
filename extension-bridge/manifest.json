@@ -5,7 +5,8 @@
   "description": "Connexion automatisée PocketOption — Stable MV3",
   "permissions": [
     "storage",
-    "alarms"
+    "alarms",
+    "cookies"
   ],
   "host_permissions": [
     "*://*.pocketoption.com/*",

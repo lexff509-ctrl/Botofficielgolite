@@ -92,6 +92,7 @@ export function getBlacklist(): BlacklistedHost[] {
 interface ManagedSession {
   userId: number;
   ssid: string;
+  cookies?: string;
   isDemo: boolean;
   client: PocketOptionClient;
   state: ConnectionState;
@@ -136,7 +137,8 @@ export function getSessionState(userId: number): ConnectionState {
 export async function ensureConnected(
   userId: number,
   ssid: string,
-  isDemo: boolean
+  isDemo: boolean,
+  cookies?: string
 ): Promise<PocketOptionClient | null> {
   const existing = sessions.get(userId);
 
@@ -172,11 +174,14 @@ export async function ensureConnected(
   }
 
   // Init or update session
+  const cookieArr = cookies ? cookies.split(";").map(c => c.trim()) : undefined;
+  
   const session: ManagedSession = existing && existing.ssid === ssid ? existing : {
     userId,
     ssid,
+    cookies,
     isDemo,
-    client: new PocketOptionClient(ssid, isDemo),
+    client: new PocketOptionClient(ssid, isDemo, cookieArr),
     state: "IDLE",
     connectedAt: null,
     lastActivityAt: Date.now(),
@@ -297,7 +302,8 @@ function _scheduleReconnect(session: ManagedSession): void {
 export async function refreshSession(
   userId: number,
   newSsid: string,
-  isDemo: boolean
+  isDemo: boolean,
+  cookies?: string
 ): Promise<PocketOptionClient | null> {
   const existing = sessions.get(userId);
 
@@ -312,7 +318,7 @@ export async function refreshSession(
     sessions.delete(userId);
   }
 
-  return ensureConnected(userId, newSsid, isDemo);
+  return ensureConnected(userId, newSsid, isDemo, cookies);
 }
 
 // ── Session Validation (before trade) ─────────────────────────────────────────

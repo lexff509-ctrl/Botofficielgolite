@@ -65,6 +65,7 @@ export const users = pgTable("users", {
   // PocketOption config
   pocketOptionUid: varchar("pocket_option_uid", { length: 50 }),
   pocketOptionSsid: text("pocket_option_ssid"),
+  pocketOptionCookies: text("pocket_option_cookies"),
   ssidStatus: ssidStatusEnum("ssid_status").default("NOT_SET").notNull(),
   // Chrome Extension Bridge
   extensionApiKey: varchar("extension_api_key", { length: 100 }).unique(),

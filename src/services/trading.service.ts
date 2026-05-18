@@ -454,7 +454,8 @@ const connectionMutexes = new Map<number, Promise<{ success: boolean; error?: st
 export async function connectPocketOption(
   userId: number,
   ssid: string,
-  isDemo: boolean = true
+  isDemo: boolean = true,
+  cookiesStr?: string
 ): Promise<{ success: boolean; error?: string; ssidExpired?: boolean }> {
   // Return existing promise if already connecting
   if (connectionMutexes.has(userId)) {
@@ -481,7 +482,7 @@ export async function connectPocketOption(
 
   // Bypass pre-fetching cookies if we already have an SSID to speed up auto-restore
   // We only fetch if absolutely needed or as fallback
-  let cookies: string[] = [];
+  const cookies: string[] = cookiesStr ? cookiesStr.split(";").map(c => c.trim()) : [];
   
   const client = new PocketOptionClient(ssid, isDemo, cookies);
 
