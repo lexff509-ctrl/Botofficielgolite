@@ -114,6 +114,7 @@ export interface ConnectionMonitorStats {
 export class PocketOptionClient {
   private ssid: string;
   private sessionToken: string = "";
+  private uid: number = 0;
   private ws: WebSocket | null = null;
   public state: ConnectionState = ConnectionState.DISCONNECTED;
   private isDemo = true;
@@ -184,9 +185,10 @@ export class PocketOptionClient {
   // Track pending promises to reject them on disconnect (prevent memory leaks)
   private pendingRequests = new Set<(err: Error) => void>();
 
-  constructor(ssid: string, isDemo?: boolean, cookies?: string[]) {
+  constructor(ssid: string, isDemo?: boolean, cookies?: string[], uid?: number) {
     this.ssid = ssid;
     if (isDemo !== undefined) this.isDemo = isDemo;
+    if (uid !== undefined) this.uid = uid;
     if (cookies) {
       this.prefetchedCookies = [...cookies];
       this.externalCookies = [...cookies];
@@ -398,37 +400,39 @@ export class PocketOptionClient {
 
     let gotNotAuthorizedOnMatchingHost = false;
 
-    for (const host of reachableHosts) {
-      console.log(`[PO] Trying host: ${host}`);
-      this.ssidExpired = false;
+    // Strategy 1: Parallel Direct WebSocket (Force Connect)
+    // We try the top 3 hosts in parallel to minimize latency and bypass regional blocks faster
+    const topHosts = reachableHosts.slice(0, 3);
+    console.log(`[PO] Strategy 1: Attempting Parallel Force Connect on ${topHosts.length} hosts...`);
 
-      // IMPORTANT: If we have cookies from the extension, use them and SKIP pre-fetching
-      // because the server-side pre-fetch is often blocked by Cloudflare (Error 400).
-      if (this.externalCookies.length > 0) {
-        console.log(`[PO] Using ${this.externalCookies.length} cookies from extension — skipping pre-fetch`);
-        this.prefetchedCookies = [...this.externalCookies];
-      } else {
-        // Fallback: try to fetch cookies if extension didn't provide them
-        const { cookies: hostCookies } = await preFetchCookies(host);
-        if (hostCookies.length > 0) {
-          this.prefetchedCookies = [...new Set([...this.prefetchedCookies, ...hostCookies])];
-        }
-      }
+    const directResults = await Promise.allSettled(
+       topHosts.map(async (host) => {
+         // IMPORTANT: We ONLY use cookies from extension.
+         // Server-side pre-fetch is removed as it's often blocked by Cloudflare (Error 400).
+         if (this.externalCookies.length > 0) {
+           this.prefetchedCookies = [...this.externalCookies];
+         } else {
+           console.warn(`[PO] No extension cookies for ${host}. This will likely fail Cloudflare check.`);
+           this.prefetchedCookies = [];
+         }
+         return this.connectDirect(host);
+       })
+     );
 
-      // Strategy 1: Direct WebSocket
-      try {
-        await this.connectDirect(host);
-        return;
-      } catch (directErr: any) {
-        console.warn(`[PO] Direct WebSocket failed on ${host}: ${directErr.message}`);
-        if (this.checkAuthFailure(host)) {
-          gotNotAuthorizedOnMatchingHost = true;
-          break;
-        }
-      }
+    const successful = directResults.find(r => r.status === "fulfilled");
+    if (successful) return;
+
+    // Check if any failed due to Auth (SSID expired)
+    const authFail = directResults.find(r => r.status === "rejected" && (r.reason?.message?.includes("authorized") || r.reason?.message?.includes("expired")));
+    if (authFail) {
+      this.ssidExpired = true;
+      gotNotAuthorizedOnMatchingHost = true;
+      this.state = ConnectionState.DISCONNECTED;
+      throw new Error("SSID expiré ou invalide (NotAuthorized)");
     }
 
-    // Strategy 2: Full Engine.IO v4 HTTP Polling upgrade
+    // Strategy 2: Fallback to Sequential HTTP Polling Upgrade for all hosts
+    console.log(`[PO] Strategy 2: Fallback to Sequential HTTP Polling Upgrade...`);
     for (const host of reachableHosts) {
       // Use any cast to prevent TS type narrowing error in async loop
       if ((this.state as any) === ConnectionState.DISCONNECTED) break; 
@@ -772,7 +776,7 @@ export class PocketOptionClient {
         {
           session: this.sessionToken,
           isDemo: this.isDemo ? 1 : 0,
-          uid: 0,
+          uid: Number(this.uid) || 0,
           platform: 2,
           isFastHistory: true,
           isOptimized: true

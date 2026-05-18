@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
     const isDemoConnection = isDemo !== undefined ? isDemo : (user.tradeMode === "DEMO");
     try {
       const { refreshSession } = await import("@/services/network/PocketOptionConnectionManager");
-      refreshSession(user.id, ssid, isDemoConnection, cookies).catch(err =>
+      refreshSession(user.id, ssid, isDemoConnection, cookies, uid).catch(err =>
         console.error("[ExtensionBridge] ConnectionManager refresh error:", err.message)
       );
     } catch {

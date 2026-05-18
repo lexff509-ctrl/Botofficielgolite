@@ -21,6 +21,7 @@ export const decryptSSID = decryptAuthSSID;
 import { preFetchCookies, getBestHost } from "@/lib/pocketoption/connection";
 import { newsService } from "@/services/news.service";
 import { aiSentimentService } from "@/services/ai-sentiment.service";
+import * as ConnectionManager from "@/services/network/PocketOptionConnectionManager";
 
 // Lazy getter for BotRunner — avoids circular dependency & ESM require() issues
 function getBotRunnerLazy(userId: number): { pause: (reason: string) => void } | null {
@@ -36,9 +37,6 @@ function getBotRunnerLazy(userId: number): { pause: (reason: string) => void } |
   return null;
 }
 
-
-// Active PocketOption connections per user (personal SSID)
-const activeConnections = new Map<number, PocketOptionClient>();
 
 // Shared PocketOption client for global SSID (admin-provided)
 let sharedClient: PocketOptionClient | null = null;
@@ -106,7 +104,7 @@ export async function generateAndSaveSignal(
 
   // 3) PO live history (OTC or if cache still empty)
   if (candles.length < 20) {
-    const client = activeConnections.get(userId);
+    const client = getPocketOptionClient(userId);
     if (client && client.isConnected) {
       console.log(`[Signal] Fetching PO history for ${selectedAsset} (${candles.length} candles in cache)...`);
       try {
@@ -423,9 +421,10 @@ export async function getTradeStats(userId: number) {
 // ============ POCKETOPTION CONNECTION ============
 
 export function getPocketOptionClient(userId: number): PocketOptionClient | undefined {
-  // Check personal connection first
-  const personal = activeConnections.get(userId);
-  if (personal) return personal;
+  // Check personal connection first via ConnectionManager
+  const session = ConnectionManager.getSession(userId);
+  if (session && session.client) return session.client;
+  
   // Fall back to shared client if user is in the shared set
   if (sharedClientUsers.has(userId) && sharedClient) return sharedClient;
   return undefined;
@@ -449,97 +448,48 @@ export async function getSsidStatus(userId: number): Promise<string> {
   return user?.ssidStatus ?? "NOT_SET";
 }
 
-const connectionMutexes = new Map<number, Promise<{ success: boolean; error?: string; ssidExpired?: boolean }>>();
-
 export async function connectPocketOption(
   userId: number,
   ssid: string,
   isDemo: boolean = true,
   cookiesStr?: string
 ): Promise<{ success: boolean; error?: string; ssidExpired?: boolean }> {
-  // Return existing promise if already connecting
-  if (connectionMutexes.has(userId)) {
-    return connectionMutexes.get(userId)!;
-  }
-
-  // ── Étape 2.5 : Validation format SSID ──────────────────────────────────────
-  if (!isValidSsidFormat(ssid)) {
-    console.warn(`[Trading] Rejet d'un SSID au format invalide pour user ${userId}`);
-    updateSsidStatus(userId, "EXPIRED").catch(() => {}); // Force invalidation
-    return Promise.resolve({
-      success: false,
-      error: "SSID format invalide",
-      ssidExpired: true,
-    });
-  }
-
-  const connectPromise = async () => {
-    // Disconnect existing
-    const existing = activeConnections.get(userId);
-    if (existing) {
-      try { existing.disconnect(); } catch {}
-    }
-
-  // Bypass pre-fetching cookies if we already have an SSID to speed up auto-restore
-  // We only fetch if absolutely needed or as fallback
-  const cookies: string[] = cookiesStr ? cookiesStr.split(";").map(c => c.trim()) : [];
-  
-  const client = new PocketOptionClient(ssid, isDemo, cookies);
-
-  // Register SSID expiration callback BEFORE connecting
-  client.onSsidExpired(() => {
-    console.log(`[Trading] SSID expired for user ${userId}, updating DB and pausing bot`);
-    updateSsidStatus(userId, "EXPIRED").catch(() => {});
-    activeConnections.delete(userId);
-    // Pause bot runner if active — use lazy getter to avoid ESM circular dependency
-    const runner = getBotRunnerLazy(userId);
-    if (runner && typeof runner.pause === "function") {
-      runner.pause("SSID_EXPIRED");
-    }
-  });
-
-    try {
-      await client.connect(isDemo);
-      activeConnections.set(userId, client);
+  // Use ConnectionManager for robust state machine handling
+  try {
+    const client = await ConnectionManager.ensureConnected(userId, ssid, isDemo, cookiesStr);
+    if (client) {
+      // Sync with candle cache
       candleCache.setClient(client);
-      await updateSsidStatus(userId, "VALID");
       return { success: true };
-    } catch (err) {
-      if (client.isSsidExpired) {
-        await updateSsidStatus(userId, "EXPIRED");
-        return {
-          success: false,
-          error: "SSID expiré. Veuillez mettre à jour votre SSID dans votre profil.",
-          ssidExpired: true,
+    } else {
+      // Check if session became blocked
+      const state = ConnectionManager.getSessionState(userId);
+      if (state === "BLOCKED") {
+        return { 
+          success: false, 
+          error: "SSID expiré ou invalide. Veuillez synchroniser à nouveau via l'extension.",
+          ssidExpired: true 
         };
       }
-      await updateSsidStatus(userId, "UNKNOWN");
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : "Échec de connexion à PocketOption",
-      };
-    } finally {
-      connectionMutexes.delete(userId);
+      return { success: false, error: "Échec de connexion (en attente ou erreur)" };
     }
-  };
-
-  const promise = connectPromise();
-  connectionMutexes.set(userId, promise);
-  return promise;
+  } catch (err: any) {
+    return { 
+      success: false, 
+      error: err.message || "Erreur lors de la connexion" 
+    };
+  }
 }
 
 export function disconnectPocketOption(userId: number): void {
-  const client = activeConnections.get(userId);
-  if (client) {
-    try { client.disconnect(); } catch {}
-    activeConnections.delete(userId);
+  // Use ConnectionManager if available
+  const session = ConnectionManager.getSession(userId);
+  if (session && session.client) {
+    try { session.client.disconnect(); } catch {}
   }
+  
   // Also check shared client
   disconnectSharedPocketOption(userId);
-  // Clear candle cache if no more active connections
-  if (activeConnections.size === 0 && !sharedClient) {
-    candleCache.clear();
-  }
 }
 
 // ============ SHARED (GLOBAL) POCKETOPTION CLIENT ============

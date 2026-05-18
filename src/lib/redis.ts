@@ -15,27 +15,42 @@ if (rawRedisUrl) {
 
 const isValidRedisUrl = rawRedisUrl && (rawRedisUrl.startsWith('redis://') || rawRedisUrl.startsWith('rediss://'));
 
+// Railway also provides individual variables
+const redisConfig = {
+  host: process.env.REDISHOST || process.env.REDIS_HOST,
+  port: parseInt(process.env.REDISPORT || process.env.REDIS_PORT || '6379'),
+  username: process.env.REDISUSER || process.env.REDIS_USER,
+  password: process.env.REDISPASSWORD || process.env.REDIS_PASSWORD,
+};
+
+const hasIndividualConfig = !!(redisConfig.host && redisConfig.password);
+
 if (rawRedisUrl && !isValidRedisUrl) {
   console.error(`[Redis] CRITICAL: Invalid REDIS_URL format detected: "${rawRedisUrl.substring(0, 20)}...". Must start with redis:// or rediss://`);
 }
-
-const redisUrl = isValidRedisUrl ? rawRedisUrl : null;
 
 /**
  * Client Redis pour la persistence distribuée sur Railway
  * Si REDIS_URL n'est pas définie ou invalide, le système basculera sur le cache mémoire (Map)
  */
-export const redis = redisUrl 
-  ? new Redis(redisUrl, { 
-      maxRetriesPerRequest: 1, // Be aggressive in failing so we fallback to memory fast
+export const redis = isValidRedisUrl 
+  ? new Redis(rawRedisUrl, { 
+      maxRetriesPerRequest: 1, 
       connectTimeout: 5000,
-      lazyConnect: true, // Don't block startup
-      reconnectOnError: (err) => {
-        const targetError = 'READONLY';
-        if (err.message.includes(targetError)) return true;
-        return false;
-      }
+      lazyConnect: true,
+      reconnectOnError: (err) => err.message.includes('READONLY')
     }) 
+  : hasIndividualConfig
+  ? new Redis({
+      host: redisConfig.host,
+      port: redisConfig.port,
+      username: redisConfig.username,
+      password: redisConfig.password,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 5000,
+      lazyConnect: true,
+      reconnectOnError: (err) => err.message.includes('READONLY')
+    })
   : null;
 
 // Track connection health
