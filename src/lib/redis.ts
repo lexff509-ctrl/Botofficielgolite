@@ -7,8 +7,9 @@ let rawRedisUrl = process.env.REDIS_URL;
 if (rawRedisUrl) {
   rawRedisUrl = rawRedisUrl.replace(/"/g, '').trim();
   // Fix "Redis.REDIS_URL" type errors from Railway variable referencing
-  if (rawRedisUrl.includes('Redis.REDIS_')) {
-    console.error(`[Redis] ERROR: Detected Railway reference placeholder instead of real value: "${rawRedisUrl}"`);
+  // Also fix accidental pasting of dashboard URL
+  if (rawRedisUrl.includes('Redis.REDIS_') || rawRedisUrl.includes('up.railway.app/dashboard')) {
+    console.error(`[Redis] ERROR: Detected invalid value or Railway placeholder: "${rawRedisUrl.substring(0, 50)}..."`);
     rawRedisUrl = undefined;
   }
 }

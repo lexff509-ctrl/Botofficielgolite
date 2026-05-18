@@ -35,7 +35,12 @@ export async function POST(req: NextRequest) {
     const { apiKey, ssid, cookies, uid, deviceName, isDemo, demoBalance, liveBalance, username } = body;
 
     // ✅ DEBUG LOG for cookies investigation
-    console.log(`[ExtensionBridge] Sync request: SSID=${ssid?.substring(0, 10)}..., Cookies=${cookies ? cookies.length : 0} bytes, UID=${uid}, Demo=${isDemo}`);
+    const cookieSize = cookies ? String(cookies).length : 0;
+    console.log(`[ExtensionBridge] Sync request: SSID=${ssid?.substring(0, 10)}..., Cookies=${cookieSize} bytes, UID=${uid}, Demo=${isDemo}`);
+
+    if (cookieSize === 0) {
+      SystemLogger.warn("ExtensionBridge", "Cookies manquants dans la synchronisation. La connexion Cloudflare risque d'échouer.");
+    }
 
     // 1. Validation stricte
     if (!apiKey || typeof apiKey !== "string") {

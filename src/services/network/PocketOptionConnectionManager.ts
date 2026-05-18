@@ -30,7 +30,7 @@ export type ConnectionState =
   | "BLOCKED";
 
 const VALID_TRANSITIONS: Record<ConnectionState, ConnectionState[]> = {
-  "IDLE": ["CONNECTING", "RECONNECTING"],
+  "IDLE": ["CONNECTING", "RECONNECTING", "READY", "BLOCKED"],
   "CONNECTING": ["READY", "RECONNECTING", "BLOCKED", "IDLE"],
   "READY": ["RECONNECTING", "IDLE", "BLOCKED"],
   "RECONNECTING": ["READY", "COOLDOWN", "BLOCKED", "IDLE"],

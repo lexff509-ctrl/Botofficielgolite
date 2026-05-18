@@ -1146,8 +1146,8 @@ export class PocketOptionClient {
     }
 
     const filtered = parsed.filter((c) => c && c.timestamp > 0 && c.close > 0).sort((a, b) => a.timestamp - b.timestamp);
-    if (filtered.length === 0) {
-      console.warn(`[PO] parseCandleData yielded 0 valid candles for ${asset}. Raw parsed length: ${parsed.length}`);
+    if (filtered.length === 0 && parsed.length > 0) {
+      console.warn(`[PO] parseCandleData filtered all ${parsed.length} candles for ${asset}. Example raw:`, JSON.stringify(parsed[0]));
     }
     return filtered;
   }

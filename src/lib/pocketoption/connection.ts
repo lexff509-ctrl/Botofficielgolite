@@ -324,6 +324,9 @@ export async function preFetchCookies(host: string): Promise<CookieResult> {
 
   // Remove duplicates
   const uniqueCookies = [...new Set(allCookies)];
+  if (uniqueCookies.length === 0) {
+    console.warn(`[PO-Cookie] ⚠ NO cookies obtained for ${host}. Cloudflare will likely block WebSocket.`);
+  }
   return {
     cookies: uniqueCookies,
     cookieHeader: uniqueCookies.join("; ")
