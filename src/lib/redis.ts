@@ -90,21 +90,6 @@ if (redis) {
   });
 }
 
-export function isRedisReady(): boolean {
-  return isRedisAvailable;
-}
-
-export function getRedisStatus() {
-  return {
-    available: isRedisAvailable,
-    usingUrl: isValidRedisUrl,
-    usingIndividual: hasIndividualConfig,
-    urlPrefix: rawRedisUrl ? rawRedisUrl.substring(0, 15) + "..." : "none",
-    host: redisConfig.host || "none",
-    error: !isRedisAvailable && (rawRedisUrl || hasIndividualConfig) ? "Connection failed or invalid config" : null
-  };
-}
-
 /**
  * Helper pour le cache distribué avec fallback silencieux
  */
@@ -134,5 +119,16 @@ export async function getCache(key: string): Promise<string | null> {
  */
 export function isRedisReady(): boolean {
   return !!redis && isRedisAvailable;
+}
+
+export function getRedisStatus() {
+  return {
+    available: isRedisAvailable,
+    usingUrl: isValidRedisUrl,
+    usingIndividual: hasIndividualConfig,
+    urlPrefix: rawRedisUrl ? rawRedisUrl.substring(0, 15) + "..." : "none",
+    host: redisConfig.host || "none",
+    error: !isRedisAvailable && (rawRedisUrl || hasIndividualConfig) ? "Connection failed or invalid config" : null
+  };
 }
 
