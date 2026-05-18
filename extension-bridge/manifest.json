@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "BotOfficiel Bridge",
-  "version": "1.3.0",
-  "description": "Connexion automatisée PocketOption — Stable MV3",
+  "version": "1.3.1",
+  "description": "Connexion automatisée PocketOption — Stable v1.3.1",
   "permissions": [
     "storage",
     "alarms",
